@@ -47,16 +47,8 @@
     cancellable: boolean;
   }
 
-  let {
-    capture,
-    defaultDestination,
-    oncopy,
-    onshow,
-    onopen,
-    onannotate,
-    onpin,
-    ondelete,
-  }: Props = $props();
+  let { capture, defaultDestination, oncopy, onshow, onopen, onannotate, onpin, ondelete }: Props =
+    $props();
 
   let copyFailed = $state(false);
   let actionError = $state('');
@@ -446,7 +438,7 @@
 
     <Thumb
       id={capture.id}
-      alt={capture.name}
+      alt=""
       duration={capture.durationMs === null ? undefined : formatDuration(capture.durationMs)}
       tag={capture.durationMs === null ? undefined : typeTag(capture.kind, capture.name)}
     />
@@ -523,7 +515,7 @@
     <section class="sharing" aria-label="Sharing">
       <div class="sharinghead">
         <h2 class="heading">Link</h2>
-        <Badge status={share.status} long />
+        <Badge status={share.status === 'uploaded' ? 'ok' : share.status} long />
       </div>
 
       {#if share.status === 'uploaded'}
@@ -586,11 +578,7 @@
           </button>
           {#if menuOpen}
             {#if destinations.length === 0}
-              <div
-                class="menu menuempty"
-                role="status"
-                bind:this={menuElement}
-              >
+              <div class="menu menuempty" role="status" bind:this={menuElement}>
                 No destinations configured.
               </div>
             {:else}

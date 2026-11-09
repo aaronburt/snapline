@@ -138,7 +138,8 @@ export function typeLabel(kind: CaptureKindDto, name: string): string {
   if (kind === 'video') {
     return `${extension.toUpperCase()} video`;
   }
-  const image = extension === 'jpg' ? 'JPEG' : extension === 'webp' ? 'WebP' : extension.toUpperCase();
+  const image =
+    extension === 'jpg' ? 'JPEG' : extension === 'webp' ? 'WebP' : extension.toUpperCase();
   return `${image || 'Image'} image`;
 }
 

@@ -43,9 +43,7 @@ pub struct RecordStatusDto {
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum RecordReq {
     Ping,
-    Start {
-        kind: RecordKindDto,
-    },
+    Start { kind: RecordKindDto },
     Stop,
     State,
 }
@@ -54,9 +52,7 @@ pub enum RecordReq {
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum RecordResp {
     Pong,
-    Status {
-        status: RecordStatusDto,
-    },
+    Status { status: RecordStatusDto },
 }
 
 #[cfg(test)]
@@ -86,8 +82,14 @@ mod tests {
         ] {
             let req = RecordReq::Start { kind };
             let json = serde_json::to_string(&req).expect("serialise");
-            assert_eq!(json, format!(r#"{{"kind":"start","data":{{"kind":"{text}"}}}}"#));
-            assert_eq!(serde_json::from_str::<RecordReq>(&json).expect("parse"), req);
+            assert_eq!(
+                json,
+                format!(r#"{{"kind":"start","data":{{"kind":"{text}"}}}}"#)
+            );
+            assert_eq!(
+                serde_json::from_str::<RecordReq>(&json).expect("parse"),
+                req
+            );
         }
     }
 
@@ -95,7 +97,10 @@ mod tests {
     fn stop_and_state_requests_round_trip() {
         for req in [RecordReq::Stop, RecordReq::State, RecordReq::Ping] {
             let json = serde_json::to_string(&req).expect("serialise");
-            assert_eq!(serde_json::from_str::<RecordReq>(&json).expect("parse"), req);
+            assert_eq!(
+                serde_json::from_str::<RecordReq>(&json).expect("parse"),
+                req
+            );
         }
         assert_eq!(
             serde_json::to_string(&RecordReq::Stop).expect("serialise"),
@@ -110,7 +115,10 @@ mod tests {
         assert!(json.contains(r#""state":"recording""#));
         assert!(json.contains(r#""kind":"video""#));
         assert!(json.contains(r#""elapsedMs":42000"#));
-        assert_eq!(serde_json::from_str::<RecordResp>(&json).expect("parse"), resp);
+        assert_eq!(
+            serde_json::from_str::<RecordResp>(&json).expect("parse"),
+            resp
+        );
     }
 
     #[test]

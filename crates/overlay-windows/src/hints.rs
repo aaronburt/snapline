@@ -1,9 +1,7 @@
 use snapline_core::geometry::{Px, Rect};
 use snapline_core::overlay::Tool;
 
-use windows::Win32::Graphics::DirectWrite::{
-    DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_NORMAL,
-};
+use windows::Win32::Graphics::DirectWrite::{DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_NORMAL};
 
 use crate::d2d::{self, Gpu};
 use crate::tokens::Palette;
@@ -35,9 +33,7 @@ pub(crate) fn hint_text(tool: Tool, next_step: u32) -> String {
         Tool::Move => "Select: click an annotation to move or resize it".to_string(),
         Tool::Rect => "Rectangle: drag to draw · Shift for a square".to_string(),
         Tool::Ellipse => "Ellipse: drag to draw · Shift for a circle".to_string(),
-        Tool::Arrow => {
-            "Arrow: drag from tail to tip · drag the middle to curve it".to_string()
-        }
+        Tool::Arrow => "Arrow: drag from tail to tip · drag the middle to curve it".to_string(),
         Tool::Pen => "Pen: draw freehand".to_string(),
         Tool::Highlighter => "Highlighter: drag over text".to_string(),
         Tool::Text => "Text: click to type a label".to_string(),
@@ -66,7 +62,12 @@ pub(crate) fn keyboard_segments(annotating: bool) -> &'static [(&'static str, &'
     }
 }
 
-fn text_width(gpu: &mut Gpu, size: f32, weight: windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT, text: &str) -> f32 {
+fn text_width(
+    gpu: &mut Gpu,
+    size: f32,
+    weight: windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT,
+    text: &str,
+) -> f32 {
     let Some(format) = gpu.text.format(&gpu.write, size, weight, false) else {
         return 0.0;
     };
@@ -109,13 +110,7 @@ pub(crate) fn keyboard_pill(monitor: Rect, scale: f32, width: f32) -> Rect {
     )
 }
 
-pub(crate) fn draw_hint(
-    gpu: &mut Gpu,
-    palette: &Palette,
-    scale: f32,
-    area: Rect,
-    text: &str,
-) {
+pub(crate) fn draw_hint(gpu: &mut Gpu, palette: &Palette, scale: f32, area: Rect, text: &str) {
     crate::readout::draw_hint_pill(gpu, palette, scale, area, text);
 }
 
@@ -158,10 +153,7 @@ mod tests {
         );
         assert_eq!(hint_text(Tool::Text, 1), "Text: click to type a label");
         assert_eq!(hint_text(Tool::Step, 4), "Step: click to place 4 next");
-        assert_eq!(
-            hint_text(Tool::Blur, 1),
-            "Blur: drag over anything private"
-        );
+        assert_eq!(hint_text(Tool::Blur, 1), "Blur: drag over anything private");
         assert_eq!(hint_text(Tool::Crop, 1), "Crop: drag the selection edges");
         assert_eq!(
             hint_text(Tool::Colour, 1),

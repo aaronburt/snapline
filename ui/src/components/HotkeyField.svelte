@@ -7,13 +7,7 @@
     onchange?: (value: string) => void;
   }
 
-  let {
-    value = $bindable(''),
-    label,
-    buttonLabel = 'Change',
-    clash,
-    onchange,
-  }: Props = $props();
+  let { value = $bindable(''), label, buttonLabel = 'Change', clash, onchange }: Props = $props();
 
   const id = $props.id();
   const messageId = `${id}-message`;
@@ -108,12 +102,7 @@
       aria-describedby={message !== '' || (clash ?? '') !== '' ? messageId : undefined}
       value={capturing ? 'Press keys…' : value}
     />
-    <button
-      type="button"
-      class="hv"
-      aria-label={`${buttonLabel} ${label}`}
-      onclick={begin}
-    >
+    <button type="button" class="hv" aria-label={`${buttonLabel} ${label}`} onclick={begin}>
       {buttonLabel}
     </button>
   </div>

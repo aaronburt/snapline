@@ -112,9 +112,7 @@ impl SftpConfig {
 
     pub fn public_url(&self, file_name: &str) -> Result<String, UploadError> {
         if self.host.trim().is_empty() {
-            return Err(UploadError::Permanent(
-                "Enter the SFTP host.".to_owned(),
-            ));
+            return Err(UploadError::Permanent("Enter the SFTP host.".to_owned()));
         }
         if self.port == 0 {
             return Err(UploadError::Permanent(
@@ -338,7 +336,9 @@ impl SftpConnection for Ssh2Connection {
             available_path(sftp, folder, file_name)?
         };
         let sftp = self.sftp()?;
-        let mut file = sftp.create(Path::new(&path)).map_err(|error| map_sftp_error(&error))?;
+        let mut file = sftp
+            .create(Path::new(&path))
+            .map_err(|error| map_sftp_error(&error))?;
         if let Err(error) = file.write_all(bytes) {
             let _ = file.close();
             return Err(map_io_error(&error));
@@ -416,9 +416,7 @@ impl SftpUploader {
                     .clone()
                     .filter(|path| !path.as_os_str().is_empty())
                     .ok_or_else(|| {
-                        UploadError::Permanent(
-                            "Choose the SFTP private key file.".to_owned(),
-                        )
+                        UploadError::Permanent("Choose the SFTP private key file.".to_owned())
                     })?;
                 if !path.is_file() {
                     return Err(UploadError::Permanent(
@@ -431,21 +429,16 @@ impl SftpUploader {
         }
     }
 
-    fn connect(
-        &self,
-        secrets: &dyn SecretStore,
-    ) -> Result<Box<dyn SftpConnection>, UploadError> {
+    fn connect(&self, secrets: &dyn SecretStore) -> Result<Box<dyn SftpConnection>, UploadError> {
         let credentials = self.credentials(secrets)?;
         let mut connection =
             self.connector
                 .connect(&self.config.host, self.config.port, self.timeout)?;
         let host_key = connection.host_key()?;
         let fingerprint = fingerprint_sha256(&host_key.bytes);
-        let state = self.known_hosts.state(
-            &self.config.host,
-            self.config.port,
-            &host_key.bytes,
-        )?;
+        let state = self
+            .known_hosts
+            .state(&self.config.host, self.config.port, &host_key.bytes)?;
         let mut confirmed = false;
         match state {
             HostKeyState::Match => {}
@@ -545,8 +538,7 @@ impl Uploader for SftpUploader {
             remote_path.trim_start_matches('/')
         );
         Ok(Uploaded::new(url).with_deletion_link(
-            DeletionLink::new(self.config.dest_id.clone(), deletion_url)
-                .with_token(remote_path),
+            DeletionLink::new(self.config.dest_id.clone(), deletion_url).with_token(remote_path),
         ))
     }
 
@@ -567,11 +559,7 @@ pub fn fingerprint_sha256(key: &[u8]) -> String {
 }
 
 fn safe_file_name(name: &str) -> String {
-    let name = name
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(name)
-        .trim();
+    let name = name.rsplit(['/', '\\']).next().unwrap_or(name).trim();
     if name.is_empty() || name == "." || name == ".." {
         return "upload".to_owned();
     }
@@ -641,11 +629,7 @@ fn ensure_dirs(sftp: &Sftp, folder: &str) -> Result<(), UploadError> {
     Ok(())
 }
 
-fn available_path(
-    sftp: &Sftp,
-    folder: &str,
-    file_name: &str,
-) -> Result<String, UploadError> {
+fn available_path(sftp: &Sftp, folder: &str, file_name: &str) -> Result<String, UploadError> {
     let (stem, extension) = split_extension(file_name);
     for index in 0..MAX_COLLISION_ATTEMPTS {
         let candidate = if index == 0 {
@@ -736,16 +720,16 @@ fn map_session_error(error: &ssh2::Error) -> UploadError {
 
 fn map_sftp_error(error: &ssh2::Error) -> UploadError {
     match error.code() {
-        ErrorCode::SFTP(SFTP_NO_SUCH_FILE | SFTP_NO_SUCH_PATH) => UploadError::Permanent(
-            "The remote file or folder was not found.".to_owned(),
-        ),
+        ErrorCode::SFTP(SFTP_NO_SUCH_FILE | SFTP_NO_SUCH_PATH) => {
+            UploadError::Permanent("The remote file or folder was not found.".to_owned())
+        }
         ErrorCode::SFTP(SFTP_PERMISSION_DENIED | SFTP_WRITE_PROTECT) => UploadError::Auth,
         ErrorCode::SFTP(SFTP_NO_CONNECTION | SFTP_CONNECTION_LOST) => {
             UploadError::Retryable("The connection to the server was lost.".to_owned())
         }
-        ErrorCode::SFTP(SFTP_OP_UNSUPPORTED) => UploadError::Permanent(
-            "The server does not support that SFTP operation.".to_owned(),
-        ),
+        ErrorCode::SFTP(SFTP_OP_UNSUPPORTED) => {
+            UploadError::Permanent("The server does not support that SFTP operation.".to_owned())
+        }
         ErrorCode::SFTP(SFTP_FILE_ALREADY_EXISTS) => {
             UploadError::Permanent("The remote file already exists.".to_owned())
         }
@@ -785,8 +769,7 @@ fn map_io_error(error: &std::io::Error) -> UploadError {
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut encoded = String::with_capacity((bytes.len() + 2) / 3 * 4);
     for chunk in bytes.chunks(3) {
         let first = chunk[0];
@@ -873,12 +856,7 @@ mod tests {
     }
 
     impl HostKeyStore for FakeHostKeys {
-        fn state(
-            &self,
-            _host: &str,
-            _port: u16,
-            _key: &[u8],
-        ) -> Result<HostKeyState, UploadError> {
+        fn state(&self, _host: &str, _port: u16, _key: &[u8]) -> Result<HostKeyState, UploadError> {
             match &self.error {
                 Some(error) => Err(error.clone()),
                 None => Ok(self.state),
@@ -1012,9 +990,7 @@ mod tests {
             credentials: &SftpCredentials,
         ) -> Result<(), UploadError> {
             let mut state = self.state.lock().expect("state");
-            state
-                .auths
-                .push((username.to_owned(), credentials.clone()));
+            state.auths.push((username.to_owned(), credentials.clone()));
             match &state.auth_error {
                 Some(error) => Err(error.clone()),
                 None => Ok(()),
@@ -1076,13 +1052,7 @@ mod tests {
         known: Arc<FakeHostKeys>,
         confirmer: Arc<FakeConfirmer>,
     ) -> SftpUploader {
-        SftpUploader::new(
-            config,
-            connector,
-            known,
-            confirmer,
-            Duration::from_secs(30),
-        )
+        SftpUploader::new(config, connector, known, confirmer, Duration::from_secs(30))
     }
 
     #[test]
@@ -1103,9 +1073,14 @@ mod tests {
         let known = FakeHostKeys::new(HostKeyState::Unknown);
         let confirmer = FakeConfirmer::new(true);
         let secrets = StubSecrets::with("sftp", PASSWORD_FIELD, "correct horse");
-        let uploaded = uploader(config("/srv/shots"), connector, known.clone(), confirmer.clone())
-            .upload(&file(), &secrets)
-            .expect("upload");
+        let uploaded = uploader(
+            config("/srv/shots"),
+            connector,
+            known.clone(),
+            confirmer.clone(),
+        )
+        .upload(&file(), &secrets)
+        .expect("upload");
 
         let state = state.lock().expect("state");
         assert_eq!(state.connects.len(), 1);
@@ -1122,20 +1097,14 @@ mod tests {
         assert_eq!(state.writes[0].0, "/srv/shots");
         assert_eq!(state.writes[0].1, "shot.png");
         assert_eq!(state.writes[0].2, vec![1_u8, 2, 3]);
-        assert_eq!(
-            state.host_key.bytes,
-            known.remembered()[0].3
-        );
+        assert_eq!(state.host_key.bytes, known.remembered()[0].3);
         drop(state);
 
         assert_eq!(uploaded.link, "https://example.test/shots/shot.png");
         let deletion = uploaded.deletion_link.expect("deletion link");
         assert_eq!(deletion.dest, "sftp");
         assert_eq!(deletion.token.as_deref(), Some("/srv/shots/shot.png"));
-        assert_eq!(
-            deletion.url,
-            "sftp://example.com:2222/srv/shots/shot.png"
-        );
+        assert_eq!(deletion.url, "sftp://example.com:2222/srv/shots/shot.png");
         let prompts = confirmer.prompts();
         assert_eq!(prompts.len(), 1);
         assert_eq!(prompts[0].host, "example.com");
@@ -1158,9 +1127,14 @@ mod tests {
         let known = FakeHostKeys::new(HostKeyState::Match);
         let confirmer = FakeConfirmer::new(false);
         let secrets = StubSecrets::with("sftp", PASSWORD_FIELD, "correct horse");
-        uploader(config("/srv/shots"), connector, known.clone(), confirmer.clone())
-            .upload(&file(), &secrets)
-            .expect("upload");
+        uploader(
+            config("/srv/shots"),
+            connector,
+            known.clone(),
+            confirmer.clone(),
+        )
+        .upload(&file(), &secrets)
+        .expect("upload");
         assert!(confirmer.prompts().is_empty());
         assert!(known.remembered().is_empty());
     }
@@ -1270,8 +1244,9 @@ mod tests {
     #[test]
     fn connection_failures_are_retryable() {
         let (connector, state) = FakeConnector::new();
-        state.lock().expect("state").connect_error =
-            Some(UploadError::Retryable("The server could not be reached.".to_owned()));
+        state.lock().expect("state").connect_error = Some(UploadError::Retryable(
+            "The server could not be reached.".to_owned(),
+        ));
         let known = FakeHostKeys::new(HostKeyState::Match);
         let confirmer = FakeConfirmer::new(false);
         let error = uploader(config("/srv/shots"), connector, known, confirmer)
@@ -1288,8 +1263,7 @@ mod tests {
         let (connector, state) = FakeConnector::new();
         let known = FakeHostKeys::new(HostKeyState::Match);
         let confirmer = FakeConfirmer::new(false);
-        let config = config("/srv/shots")
-            .public_url_pattern("https://example.test/no-token");
+        let config = config("/srv/shots").public_url_pattern("https://example.test/no-token");
         let error = uploader(config, connector, known, confirmer)
             .upload(
                 &file(),
@@ -1304,8 +1278,7 @@ mod tests {
     #[test]
     fn a_collision_remote_name_is_used_for_the_public_url() {
         let (connector, state) = FakeConnector::new();
-        state.lock().expect("state").remote_path =
-            Some("/srv/shots/shot-1.png".to_owned());
+        state.lock().expect("state").remote_path = Some("/srv/shots/shot-1.png".to_owned());
         let known = FakeHostKeys::new(HostKeyState::Match);
         let confirmer = FakeConfirmer::new(false);
         let uploaded = uploader(config("/srv/shots"), connector, known, confirmer)
@@ -1401,8 +1374,8 @@ mod tests {
         state.lock().expect("state").supports_delete = false;
         let known = FakeHostKeys::new(HostKeyState::Match);
         let confirmer = FakeConfirmer::new(false);
-        let link = DeletionLink::new("sftp", "/srv/shots/shot.png")
-            .with_token("/srv/shots/shot.png");
+        let link =
+            DeletionLink::new("sftp", "/srv/shots/shot.png").with_token("/srv/shots/shot.png");
         let error = uploader(config("/srv/shots"), connector, known, confirmer)
             .delete(
                 &link,

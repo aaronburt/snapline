@@ -12,9 +12,7 @@
   const page = $derived($currentRoute.page);
   let query = $state('');
 
-  const otherMatches = $derived(
-    searchSettings(query).filter((entry) => entry.page !== page),
-  );
+  const otherMatches = $derived(searchSettings(query).filter((entry) => entry.page !== page));
 </script>
 
 <div class="shell">
@@ -43,9 +41,27 @@
         {/each}
       </div>
     {/if}
-    <NavItem label="General" icon="gear" height={40} active={page === 'settings-general'} href="#/settings/general" />
-    <NavItem label="Capture" icon="region" height={40} active={page === 'settings-capture'} href="#/settings/capture" />
-    <NavItem label="Hotkeys" icon="grid" height={40} active={page === 'settings-hotkeys'} href="#/settings/hotkeys" />
+    <NavItem
+      label="General"
+      icon="gear"
+      height={40}
+      active={page === 'settings-general'}
+      href="#/settings/general"
+    />
+    <NavItem
+      label="Capture"
+      icon="region"
+      height={40}
+      active={page === 'settings-capture'}
+      href="#/settings/capture"
+    />
+    <NavItem
+      label="Hotkeys"
+      icon="grid"
+      height={40}
+      active={page === 'settings-hotkeys'}
+      href="#/settings/hotkeys"
+    />
     <NavItem
       label="Upload destinations"
       icon="cloud"

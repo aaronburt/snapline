@@ -341,11 +341,7 @@ fn magnifier(settings: &Settings) -> CoreMagnifierSettings {
     }
 }
 
-fn monitor_for<'a>(
-    desktop: &'a FrozenDesktop,
-    id: Option<u32>,
-    point: Point,
-) -> Option<&'a FrozenMonitor> {
+fn monitor_for(desktop: &FrozenDesktop, id: Option<u32>, point: Point) -> Option<&FrozenMonitor> {
     id.and_then(|id| desktop.monitors.iter().find(|item| item.monitor.id == id))
         .or_else(|| {
             desktop

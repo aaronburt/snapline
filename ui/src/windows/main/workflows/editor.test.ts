@@ -161,7 +161,7 @@ describe('Workflow editor', () => {
     route('/workflows/new');
     install();
     const { container } = render(WorkflowEditor);
-    const add = screen.getByLabelText('Add step') as HTMLSelectElement;
+    const add = (await screen.findByLabelText('Add step')) as HTMLSelectElement;
     await fireEvent.change(add, { target: { value: 'capture' } });
     await waitFor(() => {
       expect(labels(container)).toEqual(['Capture region']);
@@ -176,7 +176,7 @@ describe('Workflow editor', () => {
     route('/workflows/new');
     install();
     const { container } = render(WorkflowEditor);
-    const add = screen.getByLabelText('Add step') as HTMLSelectElement;
+    const add = (await screen.findByLabelText('Add step')) as HTMLSelectElement;
     await fireEvent.change(add, { target: { value: 'capture' } });
     await fireEvent.change(add, { target: { value: 'save' } });
     expect(labels(container)).toEqual(['Capture region', 'Save']);
@@ -196,7 +196,7 @@ describe('Workflow editor', () => {
     route('/workflows/new');
     install();
     render(WorkflowEditor);
-    const add = screen.getByLabelText('Add step') as HTMLSelectElement;
+    const add = (await screen.findByLabelText('Add step')) as HTMLSelectElement;
     await fireEvent.change(add, { target: { value: 'capture' } });
     await fireEvent.change(add, { target: { value: 'upload' } });
     await fireEvent.change(add, { target: { value: 'copy_link' } });
@@ -214,7 +214,7 @@ describe('Workflow editor', () => {
     route('/workflows/new');
     install();
     render(WorkflowEditor);
-    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
     expect(mocks.invoke).not.toHaveBeenCalledWith('ipc_workflow', {
       req: expect.objectContaining({ kind: 'create' }),
     });
@@ -228,10 +228,10 @@ describe('Workflow editor', () => {
     route('/workflows/new');
     install();
     render(WorkflowEditor);
-    await fireEvent.input(screen.getByLabelText('Name'), {
+    await fireEvent.input(await screen.findByLabelText('Name'), {
       target: { value: 'Save quietly' },
     });
-    const add = screen.getByLabelText('Add step') as HTMLSelectElement;
+    const add = (await screen.findByLabelText('Add step')) as HTMLSelectElement;
     await fireEvent.change(add, { target: { value: 'capture' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => {

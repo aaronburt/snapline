@@ -1,7 +1,7 @@
 use snapline_core::annotate::{
     crop_image, label_rect, label_text_origin, smooth, step_rect, text_advance, text_scale,
-    text_size, Canvas, Document, Rgba, Shape, BLUR_BLOCK, CORNER_RADIUS, LABEL_RADIUS,
-    STEP_RADIUS, STEP_SIZE, TEXT_SIZE,
+    text_size, Canvas, Document, Rgba, Shape, BLUR_BLOCK, CORNER_RADIUS, LABEL_RADIUS, STEP_RADIUS,
+    STEP_SIZE, TEXT_SIZE,
 };
 use snapline_core::geometry::{Point, Px, Rect};
 use snapline_core::image::Image;
@@ -9,8 +9,8 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_IGNORE, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Bitmap1, ID2D1DeviceContext5, ID2D1Factory, ID2D1Factory1,
-    ID2D1Image, ID2D1SolidColorBrush, ID2D1StrokeStyle, D2D1_ANTIALIAS_MODE_ALIASED,
+    D2D1CreateFactory, ID2D1Bitmap1, ID2D1DeviceContext5, ID2D1Factory, ID2D1Factory1, ID2D1Image,
+    ID2D1SolidColorBrush, ID2D1StrokeStyle, D2D1_ANTIALIAS_MODE_ALIASED,
     D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
     D2D1_BITMAP_OPTIONS_CPU_READ, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
     D2D1_CAP_STYLE_ROUND, D2D1_ELLIPSE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_LINE_JOIN_ROUND,
@@ -92,13 +92,7 @@ impl<'a> D2dCanvas<'a> {
         self.antialias(D2D1_ANTIALIAS_MODE_ALIASED);
     }
 
-    fn stroke(
-        &self,
-        area: D2D_RECT_F,
-        radius: f32,
-        width: f32,
-        colour: Rgba,
-    ) {
+    fn stroke(&self, area: D2D_RECT_F, radius: f32, width: f32, colour: Rgba) {
         let Some(brush) = self.brush(colour) else {
             return;
         };
@@ -106,9 +100,7 @@ impl<'a> D2dCanvas<'a> {
             self.antialias(D2D1_ANTIALIAS_MODE_ALIASED);
             // SAFETY: the rectangle, brush and width are valid values.
             unsafe {
-                let _ = self
-                    .context
-                    .DrawRectangle(&area, &brush, width, None);
+                let _ = self.context.DrawRectangle(&area, &brush, width, None);
             }
         } else {
             self.antialias(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -119,12 +111,9 @@ impl<'a> D2dCanvas<'a> {
             };
             // SAFETY: the rounded rectangle, brush and width are valid values.
             unsafe {
-                let _ = self.context.DrawRoundedRectangle(
-                    &rounded,
-                    &brush,
-                    width,
-                    self.stroke,
-                );
+                let _ = self
+                    .context
+                    .DrawRoundedRectangle(&rounded, &brush, width, self.stroke);
             }
         }
         self.antialias(D2D1_ANTIALIAS_MODE_ALIASED);
@@ -241,14 +230,8 @@ impl<'a> D2dCanvas<'a> {
         let back_x = f64::from(tip.x.0) - ux * head;
         let back_y = f64::from(tip.y.0) - uy * head;
         let wing = head * 0.5;
-        let first = Point::new(
-            Px(round(back_x - uy * wing)),
-            Px(round(back_y + ux * wing)),
-        );
-        let second = Point::new(
-            Px(round(back_x + uy * wing)),
-            Px(round(back_y - ux * wing)),
-        );
+        let first = Point::new(Px(round(back_x - uy * wing)), Px(round(back_y + ux * wing)));
+        let second = Point::new(Px(round(back_x + uy * wing)), Px(round(back_y - ux * wing)));
         self.polyline_with(&shaft, width, colour);
         self.polyline_with(&[tip, first], width, colour);
         self.polyline_with(&[tip, second], width, colour);
@@ -288,12 +271,7 @@ impl<'a> D2dCanvas<'a> {
 impl Canvas for D2dCanvas<'_> {
     fn fill_rect(&mut self, rect: Rect, radius: Px, colour: Rgba) {
         let (x, y) = self.position(rect.origin());
-        let area = d2d::rect(
-            x,
-            y,
-            rect.width.get() as f32,
-            rect.height.get() as f32,
-        );
+        let area = d2d::rect(x, y, rect.width.get() as f32, rect.height.get() as f32);
         self.fill(area, radius.0.max(0) as f32, colour);
     }
 
@@ -327,9 +305,7 @@ impl Canvas for D2dCanvas<'_> {
         self.antialias(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         // SAFETY: the ellipse, brush and width are live values.
         unsafe {
-            let _ = self
-                .context
-                .DrawEllipse(&ellipse, &brush, stroke, None);
+            let _ = self.context.DrawEllipse(&ellipse, &brush, stroke, None);
         }
         self.antialias(D2D1_ANTIALIAS_MODE_ALIASED);
     }
@@ -362,12 +338,7 @@ impl Canvas for D2dCanvas<'_> {
                     let y = origin.y.0 + row as i32 * scale;
                     let width = scale + if bold { 1 } else { 0 };
                     let (left, top) = self.position(Point::new(Px(x), Px(y)));
-                    let area = d2d::rect(
-                        left,
-                        top,
-                        width as f32,
-                        scale as f32,
-                    );
+                    let area = d2d::rect(left, top, width as f32, scale as f32);
                     // SAFETY: the rectangle and brush are live values.
                     unsafe {
                         let _ = self.context.FillRectangle(&area, &brush);
@@ -415,12 +386,8 @@ impl Canvas for D2dCanvas<'_> {
                         average(total[3]),
                     );
                     let (origin_x, origin_y) = self.position(Point::new(Px(x), Px(y)));
-                    let area = d2d::rect(
-                        origin_x,
-                        origin_y,
-                        (end_x - x) as f32,
-                        (end_y - y) as f32,
-                    );
+                    let area =
+                        d2d::rect(origin_x, origin_y, (end_x - x) as f32, (end_y - y) as f32);
                     // SAFETY: the brush is live and the colour is a plain value.
                     unsafe {
                         brush.SetColor(&d2d::colour(rgba(colour)));
@@ -456,12 +423,7 @@ impl Canvas for D2dCanvas<'_> {
         d2d::draw_bitmap(
             self.context,
             &bitmap,
-            d2d::rect(
-                x,
-                y,
-                rect.width.get() as f32,
-                rect.height.get() as f32,
-            ),
+            d2d::rect(x, y, rect.width.get() as f32, rect.height.get() as f32),
             d2d::rect(0.0, 0.0, image.width() as f32, image.height() as f32),
             false,
         );
@@ -510,12 +472,10 @@ pub(crate) fn render_document(
             "The annotation image is empty.".to_string(),
         ));
     }
-    let width = u32::try_from(full.width.get()).map_err(|_| {
-        OverlayError::Device("The annotation image is too large.".to_string())
-    })?;
-    let height = u32::try_from(full.height.get()).map_err(|_| {
-        OverlayError::Device("The annotation image is too large.".to_string())
-    })?;
+    let width = u32::try_from(full.width.get())
+        .map_err(|_| OverlayError::Device("The annotation image is too large.".to_string()))?;
+    let height = u32::try_from(full.height.get())
+        .map_err(|_| OverlayError::Device("The annotation image is too large.".to_string()))?;
     let context = &gpu.context;
     let source = gpu.upload_image(document.image())?;
     let target_properties = D2D1_BITMAP_PROPERTIES1 {
@@ -529,15 +489,9 @@ pub(crate) fn render_document(
         ..Default::default()
     };
     // SAFETY: the size is positive and the properties are a plain value.
-    let target = unsafe {
-        context.CreateBitmap(
-            D2D_SIZE_U { width, height },
-            None,
-            0,
-            &target_properties,
-        )
-    }
-    .map_err(device)?;
+    let target =
+        unsafe { context.CreateBitmap(D2D_SIZE_U { width, height }, None, 0, &target_properties) }
+            .map_err(device)?;
     // SAFETY: the previous target is returned by value and may be absent.
     let previous = unsafe { context.GetTarget() }.ok();
     // SAFETY: the target bitmap was created for this context.
@@ -582,9 +536,8 @@ pub(crate) fn render_document(
     }
     drawn.map_err(device)?;
     let full_image = read_back(context, &target, width, height)?;
-    crop_image(&full_image, document.crop()).map_err(|error| {
-        OverlayError::Device(error.to_string())
-    })
+    crop_image(&full_image, document.crop())
+        .map_err(|error| OverlayError::Device(error.to_string()))
 }
 
 fn read_back(
@@ -593,25 +546,23 @@ fn read_back(
     width: u32,
     height: u32,
 ) -> Result<Image, OverlayError> {
-    let properties = bitmap_properties(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW);
+    let properties =
+        bitmap_properties(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW);
     // SAFETY: the size is positive and the properties are a plain value.
-    let readable = unsafe {
-        context.CreateBitmap(D2D_SIZE_U { width, height }, None, 0, &properties)
-    }
-    .map_err(device)?;
+    let readable =
+        unsafe { context.CreateBitmap(D2D_SIZE_U { width, height }, None, 0, &properties) }
+            .map_err(device)?;
     // SAFETY: the source target has the same size and format.
     unsafe { readable.CopyFromBitmap(None, target, None) }.map_err(device)?;
     // SAFETY: the bitmap was created with CPU read access.
     let mapped = unsafe { readable.Map(D2D1_MAP_OPTIONS_READ) }.map_err(device)?;
-    let mut image = Image::bgra(width, height).map_err(|error| {
-        OverlayError::Device(error.to_string())
-    })?;
+    let mut image =
+        Image::bgra(width, height).map_err(|error| OverlayError::Device(error.to_string()))?;
     for y in 0..height {
         let offset = y as usize * mapped.pitch as usize;
         // SAFETY: the mapped buffer holds a full row of BGRA pixels for this bitmap.
-        let row = unsafe {
-            std::slice::from_raw_parts(mapped.bits.add(offset), width as usize * 4)
-        };
+        let row =
+            unsafe { std::slice::from_raw_parts(mapped.bits.add(offset), width as usize * 4) };
         if let Some(output) = image.row_mut(y) {
             output.copy_from_slice(row);
             for pixel in output.chunks_exact_mut(4) {

@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use proptest::prelude::*;
 
 use snapline_core::annotate::{Annotation, Colour, Document, Shape, ShapeId, Style, Weight};

@@ -156,6 +156,7 @@ describe('GeneralPage', () => {
 
   it('inserts a token into the pattern', async () => {
     render(GeneralPage);
+    await screen.findByText('chrome_2026-11-08_14-31-07.png');
     await fireEvent.click(screen.getByRole('button', { name: '{n}' }));
     expect((screen.getByLabelText('Name pattern') as HTMLInputElement).value).toBe(
       '{app}_{yyyy}-{MM}-{dd}_{HH}-{mm}-{ss}{n}',
@@ -183,6 +184,7 @@ describe('GeneralPage default workflow', () => {
   it('shows the stored steps, fresh-install states and destination note', async () => {
     render(GeneralPage);
     const section = await screen.findByRole('region', { name: 'Default workflow · PrtSc' });
+    await waitFor(() => expect(within(section).getAllByRole('checkbox')).toHaveLength(6));
     const boxes = within(section).getAllByRole('checkbox') as HTMLInputElement[];
     expect(boxes.map((box) => box.closest('label')?.textContent?.trim())).toEqual(STEP_LABELS);
     expect(boxes.map((box) => box.checked)).toEqual([true, false, true, true, true, true]);
@@ -245,6 +247,7 @@ describe('GeneralPage default workflow', () => {
       return Promise.resolve(dto);
     });
     render(GeneralPage);
+    await screen.findByRole('checkbox', { name: 'Copy image to clipboard' });
     const select = (await screen.findByRole('combobox', {
       name: 'Copied link format',
     })) as HTMLSelectElement;

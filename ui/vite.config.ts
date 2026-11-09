@@ -5,6 +5,9 @@ export default defineConfig({
   plugins: [svelte()],
   base: './',
   clearScreen: false,
+  resolve: {
+    conditions: ['browser'],
+  },
   build: {
     target: 'es2022',
     outDir: 'dist',
@@ -17,5 +20,6 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     include: ['src/**/*.test.ts'],
+    setupFiles: ['src/test/setup.ts'],
   },
 });

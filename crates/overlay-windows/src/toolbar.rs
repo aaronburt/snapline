@@ -83,7 +83,6 @@ impl ToolbarAction {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ToolbarHit {
     Outside,
@@ -188,12 +187,7 @@ fn separator(rects: &mut Vec<f32>, x: &mut f32, scale: f32, gap: f32, placed: &m
     *placed = true;
 }
 
-pub(crate) fn layout(
-    monitor: usize,
-    bounds: Rect,
-    scale: f32,
-    upload_label: f32,
-) -> Toolbar {
+pub(crate) fn layout(monitor: usize, bounds: Rect, scale: f32, upload_label: f32) -> Toolbar {
     let scale = signed(scale);
     let pad = TOOLBAR_PADDING * scale;
     let gap = TOOLBAR_GAP * scale;
@@ -421,7 +415,12 @@ fn draw_focus(context: &ID2D1DeviceContext5, palette: &Palette, scale: f32, area
     let inset = scale.max(1.0);
     d2d::stroke_round(
         context,
-        rect_f(x + inset, y + inset, width - inset * 2.0, height - inset * 2.0),
+        rect_f(
+            x + inset,
+            y + inset,
+            width - inset * 2.0,
+            height - inset * 2.0,
+        ),
         5.0 * scale,
         2.0 * scale,
         palette.text,
@@ -637,7 +636,7 @@ mod tests {
     use super::*;
 
     fn monitor() -> Rect {
-        Rect::new(Px(1920), Px(0), Px(1920), Px(1080))
+        Rect::new(Px(1920), Px(0), Px(2560), Px(1440))
     }
 
     fn actions(toolbar: &Toolbar) -> Vec<ToolbarAction> {
@@ -734,10 +733,7 @@ mod tests {
             toolbar.hit(first.rect.center()),
             ToolbarHit::Action(first.action)
         );
-        assert_eq!(
-            toolbar.hit(Point::new(Px(0), Px(0))),
-            ToolbarHit::Outside
-        );
+        assert_eq!(toolbar.hit(Point::new(Px(0), Px(0))), ToolbarHit::Outside);
         let padding = Point::new(Px(toolbar.rect.x.get() + 1), Px(toolbar.rect.y.get() + 1));
         assert_eq!(toolbar.hit(padding), ToolbarHit::Padding);
     }
@@ -761,11 +757,11 @@ mod tests {
             assert!(!button.action.label().is_empty());
             assert!(!button.action.announcement(&state).is_empty());
         }
+        assert_eq!(ToolbarAction::Tool(Tool::Move).label(), "Select and move");
         assert_eq!(
-            ToolbarAction::Tool(Tool::Move).label(),
-            "Select and move"
+            ToolbarAction::Tool(Tool::Colour).label(),
+            "Pick colour from screen"
         );
-        assert_eq!(ToolbarAction::Tool(Tool::Colour).label(), "Pick colour from screen");
         assert_eq!(ToolbarAction::Colour(AnnotationColour::Red).label(), "Red");
         assert_eq!(ToolbarAction::Stroke(StrokeSize::Thin).label(), "Thin");
         assert_eq!(ToolbarAction::Upload.label(), "Upload");
@@ -785,7 +781,8 @@ mod tests {
     }
 
     #[test]
-    fn announcements_include_selection_and_unavailable_state() {        let state = state();
+    fn announcements_include_selection_and_unavailable_state() {
+        let state = state();
         assert_eq!(
             ToolbarAction::Tool(Tool::Highlighter).announcement(&state),
             "Highlighter, selected"

@@ -102,10 +102,16 @@
   );
 
   const stripVisible = $derived(
-    matches('Remove location and camera data', 'Strip EXIF metadata before anything leaves your PC'),
+    matches(
+      'Remove location and camera data',
+      'Strip EXIF metadata before anything leaves your PC',
+    ),
   );
   const clipboardVisible = $derived(
-    matches('Ask before uploading from the clipboard', 'Avoid sending something you copied by mistake'),
+    matches(
+      'Ask before uploading from the clipboard',
+      'Avoid sending something you copied by mistake',
+    ),
   );
   const retryVisible = $derived(matches('Retry failed uploads'));
   const timeoutVisible = $derived(matches('Upload timeout'));
@@ -142,12 +148,13 @@
   }
 
   function optionValue(raw: string): string {
-    if (raw === 'save_locally_only' || raw === 'none') {
-      return raw;
+    if (raw === 'save_locally_only' || raw === 'Save locally only') {
+      return 'save_locally_only';
     }
-    const destination = destinations.find(
-      (item) => item.id === raw || item.name === raw,
-    );
+    if (raw === 'none' || raw === 'None') {
+      return 'none';
+    }
+    const destination = destinations.find((item) => item.id === raw || item.name === raw);
     return destination?.id ?? raw;
   }
 
@@ -158,9 +165,7 @@
     if (raw === 'none') {
       return 'None';
     }
-    const destination = destinations.find(
-      (item) => item.id === raw || item.name === raw,
-    );
+    const destination = destinations.find((item) => item.id === raw || item.name === raw);
     return destination?.name ?? raw;
   }
 
@@ -168,9 +173,12 @@
     const base =
       target === 'shortener'
         ? [none]
-        : [saveLocally, ...destinations
-            .filter((destination) => destination.configured && accepts(destination.kind, target))
-            .map((destination) => ({ id: destination.id, label: destination.name }))];
+        : [
+            saveLocally,
+            ...destinations
+              .filter((destination) => destination.configured && accepts(destination.kind, target))
+              .map((destination) => ({ id: destination.id, label: destination.name })),
+          ];
     const value = optionValue(raw);
     if (base.some((option) => option.id === value)) {
       return base;
@@ -237,9 +245,7 @@
 
   function formTitle(view: DestinationView): string {
     if (view.kind === 'custom') {
-      return view.name === 'Custom uploader'
-        ? 'Custom uploader'
-        : `Custom uploader · ${view.name}`;
+      return view.name === 'Custom uploader' ? 'Custom uploader' : `Custom uploader · ${view.name}`;
     }
     return view.name;
   }
@@ -349,10 +355,7 @@
       {#if destinations.length === 0}
         <Card>
           <div class="accounts-empty">
-            <EmptyState
-              title="No destinations yet"
-              text="Add a destination to upload captures."
-            />
+            <EmptyState title="No destinations yet" text="Add a destination to upload captures." />
           </div>
         </Card>
       {:else}

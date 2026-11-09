@@ -6,7 +6,7 @@ use windows::Win32::Graphics::DirectWrite::{
 };
 
 use crate::d2d::{self, Gpu};
-use crate::render::keyboard_segments;
+use crate::hints::keyboard_segments;
 use crate::tokens::Palette;
 
 fn text_width(gpu: &mut Gpu, size: f32, weight: DWRITE_FONT_WEIGHT, mono: bool, text: &str) -> f32 {

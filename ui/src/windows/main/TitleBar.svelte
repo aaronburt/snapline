@@ -43,12 +43,7 @@
       <label class="search">
         <Icon name="search" size={14} strokeWidth={2} />
         <span class="sr-only">Search captures</span>
-        <input
-          type="search"
-          placeholder="Search by name, app, text in image…"
-          {value}
-          {oninput}
-        />
+        <input type="search" placeholder="Search by name, app, text in image…" {value} {oninput} />
       </label>
     </div>
   {:else}

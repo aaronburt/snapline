@@ -316,7 +316,7 @@ mod tests {
             panic!("could not find the test binary");
         };
         let child = match std::process::Command::new(executable)
-            .arg("panic_child_process")
+            .arg("crash::tests::panic_child_process")
             .arg("--exact")
             .arg("--nocapture")
             .env("SNAPLINE_CRASH_CHILD", "1")

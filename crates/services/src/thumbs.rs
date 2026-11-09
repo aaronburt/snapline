@@ -68,8 +68,7 @@ pub fn write_thumbnail(
         Err(_) => return Err(ThumbError::Unavailable),
     };
     let image = codec.decode(&bytes).map_err(|_| ThumbError::Unavailable)?;
-    let thumbnail =
-        scale_to_width(&image, THUMBNAIL_WIDTH).map_err(|_| ThumbError::Unavailable)?;
+    let thumbnail = scale_to_width(&image, THUMBNAIL_WIDTH).map_err(|_| ThumbError::Unavailable)?;
     let (thumbnail, format) = encode_thumbnail(&thumbnail, quality, codec)?;
     let path = thumbnail_path(thumbs_dir, id, format);
     write_atomic(&path, &thumbnail).map_err(|_| ThumbError::Unavailable)?;
@@ -161,10 +160,7 @@ impl ThumbService {
             .settings_snapshot()
             .map(|settings| settings.general.lossy_quality)
             .unwrap_or(THUMBNAIL_QUALITY);
-        let codec = self
-            .services
-            .codec()
-            .map_err(|_| ThumbError::Unavailable)?;
+        let codec = self.services.codec().map_err(|_| ThumbError::Unavailable)?;
         load(&paths, id, quality, codec.as_ref())
     }
 }
@@ -308,7 +304,10 @@ mod tests {
         let directory = tempdir().expect("temp");
         let paths = test_paths(directory.path());
         for id in [0, -1, -500, CaptureId::MIN] {
-            assert_eq!(load(&paths, id, 90, &UnusedCodec), Err(ThumbError::NotFound));
+            assert_eq!(
+                load(&paths, id, 90, &UnusedCodec),
+                Err(ThumbError::NotFound)
+            );
         }
         assert!(!paths.history_file.exists());
         assert!(!paths.thumbs_dir.exists());
@@ -343,7 +342,10 @@ mod tests {
         let directory = tempdir().expect("temp");
         let paths = test_paths(directory.path());
         let id = record_capture(&paths, &directory.path().join("missing.png"));
-        assert_eq!(load(&paths, id, 90, &UnusedCodec), Err(ThumbError::NotFound));
+        assert_eq!(
+            load(&paths, id, 90, &UnusedCodec),
+            Err(ThumbError::NotFound)
+        );
         assert!(existing_thumbnail(&paths.thumbs_dir, id).is_none());
     }
 

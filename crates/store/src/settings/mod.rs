@@ -306,21 +306,14 @@ mod tests {
         assert_eq!(settings.hotkeys.bindings.len(), DEFAULT_BINDINGS.len());
         for (action, chord) in DEFAULT_BINDINGS {
             assert_eq!(
-                settings
-                    .hotkeys
-                    .bindings
-                    .get(*action)
-                    .map(String::as_str),
+                settings.hotkeys.bindings.get(*action).map(String::as_str),
                 Some(*chord),
                 "{action}"
             );
         }
         assert!(settings.hotkeys.take_over_prtsc);
         assert!(settings.hotkeys.warn_about_clashes);
-        assert_eq!(
-            settings.hotkeys.restore,
-            super::hotkeys::Restore::default()
-        );
+        assert_eq!(settings.hotkeys.restore, super::hotkeys::Restore::default());
 
         assert_eq!(
             settings.uploads.images.as_str(),
@@ -461,10 +454,16 @@ mod tests {
         let loaded = load(&path).expect("load");
         assert!(loaded.notice.is_none());
         assert_eq!(loaded.settings.version, 2);
-        assert_eq!(loaded.settings.workflows.list.len(), 1);
+        assert_eq!(loaded.settings.workflows.list.len(), 5);
         let workflow = &loaded.settings.workflows.list[0];
-        assert_eq!(workflow.id.as_str(), snapline_core::workflow::DEFAULT_WORKFLOW_ID);
-        assert_eq!(workflow.name, snapline_core::workflow::DEFAULT_WORKFLOW_NAME);
+        assert_eq!(
+            workflow.id.as_str(),
+            snapline_core::workflow::DEFAULT_WORKFLOW_ID
+        );
+        assert_eq!(
+            workflow.name,
+            snapline_core::workflow::DEFAULT_WORKFLOW_NAME
+        );
         assert!(workflow.enabled);
         assert_eq!(workflow.hotkey, None);
         assert_eq!(
@@ -493,13 +492,13 @@ mod tests {
 
         let first = load(&path).expect("first load");
         let second = load(&path).expect("second load");
-        assert_eq!(first.settings.workflows.list.len(), 1);
-        assert_eq!(second.settings.workflows.list.len(), 1);
+        assert_eq!(first.settings.workflows.list.len(), 5);
+        assert_eq!(second.settings.workflows.list.len(), 5);
         assert_eq!(first.settings, second.settings);
 
         save(&path, &first.settings).expect("save");
         let reloaded = load(&path).expect("reload");
-        assert_eq!(reloaded.settings.workflows.list.len(), 1);
+        assert_eq!(reloaded.settings.workflows.list.len(), 5);
         assert_eq!(reloaded.settings, first.settings);
     }
 

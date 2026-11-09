@@ -214,10 +214,7 @@ impl ClipboardUpload {
         }
         let image = self.read_image()?;
         if request.ask {
-            let message = format!(
-                "Upload the image on the clipboard to {}?",
-                request.label
-            );
+            let message = format!("Upload the image on the clipboard to {}?", request.label);
             match self
                 .confirm
                 .confirm(&message)
@@ -227,11 +224,8 @@ impl ClipboardUpload {
                 Confirmation::Upload => {}
             }
         }
-        let capture = CaptureRequest::new(
-            image,
-            Some(SOURCE_APP.to_owned()),
-            WINDOW_TITLE.to_owned(),
-        );
+        let capture =
+            CaptureRequest::new(image, Some(SOURCE_APP.to_owned()), WINDOW_TITLE.to_owned());
         let saved = self.saver.save(capture).map_err(|error| {
             tracing::warn!(%error, "the clipboard capture could not be saved");
             ClipboardUploadError::Save
@@ -408,7 +402,10 @@ mod tests {
 
     impl ConfirmHost for FakeConfirm {
         fn confirm(&self, message: &str) -> Result<Confirmation, ConfirmError> {
-            self.messages.lock().expect("messages").push(message.to_owned());
+            self.messages
+                .lock()
+                .expect("messages")
+                .push(message.to_owned());
             if self.failed.load(Ordering::SeqCst) {
                 return Err(ConfirmError::Unavailable);
             }
@@ -586,7 +583,10 @@ mod tests {
         );
         let requests = fixture.saver_requests();
         assert_eq!(requests.len(), 1);
-        assert_eq!((requests[0].image.width(), requests[0].image.height()), (3, 1));
+        assert_eq!(
+            (requests[0].image.width(), requests[0].image.height()),
+            (3, 1)
+        );
         assert_eq!(requests[0].source_app.as_deref(), Some(SOURCE_APP));
         assert_eq!(fixture.queue_calls(), vec![(7, "imgur".to_owned())]);
     }
@@ -669,10 +669,7 @@ mod tests {
             fixture.confirm_messages(),
             vec!["Upload the image on the clipboard to s3-production?".to_owned()]
         );
-        assert_eq!(
-            fixture.queue_calls(),
-            vec![(7, "s3-production".to_owned())]
-        );
+        assert_eq!(fixture.queue_calls(), vec![(7, "s3-production".to_owned())]);
     }
 
     #[test]
@@ -695,7 +692,11 @@ mod tests {
                 .service()
                 .run(&ClipboardUploadRequest::new(true, destination))
                 .expect_err("destination");
-            assert_eq!(error, ClipboardUploadError::NoDestination, "{destination:?}");
+            assert_eq!(
+                error,
+                ClipboardUploadError::NoDestination,
+                "{destination:?}"
+            );
             assert_eq!(fixture.source.image_calls.load(Ordering::SeqCst), 0);
             assert!(fixture.confirm_messages().is_empty());
         }
@@ -724,7 +725,10 @@ mod tests {
         fixture.codec.failed.store(true, Ordering::SeqCst);
         let error = fixture.service().run(&request(true)).expect_err("decode");
         let message = error.to_string();
-        assert_eq!(message, "The file on the clipboard is not a supported image.");
+        assert_eq!(
+            message,
+            "The file on the clipboard is not a supported image."
+        );
         assert!(!message.contains("TOP-SECRET-BYTES"));
         assert!(!message.contains("secret-file-name"));
     }
@@ -771,7 +775,10 @@ mod tests {
     fn a_failed_clipboard_read_is_a_typed_error() {
         let fixture = Fixture::new(None, Vec::new(), Confirmation::Upload);
         fixture.source.failed.store(true, Ordering::SeqCst);
-        let error = fixture.service().run(&request(true)).expect_err("clipboard");
+        let error = fixture
+            .service()
+            .run(&request(true))
+            .expect_err("clipboard");
         assert_eq!(error, ClipboardUploadError::Clipboard);
         assert_eq!(error.to_string(), "The clipboard could not be read.");
     }

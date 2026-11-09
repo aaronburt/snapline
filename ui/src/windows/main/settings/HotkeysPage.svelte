@@ -277,10 +277,7 @@
     return key;
   }
 
-  type CaptureResult =
-    | { kind: 'cancel' }
-    | { kind: 'clear' }
-    | { kind: 'chord'; chord: string };
+  type CaptureResult = { kind: 'cancel' } | { kind: 'clear' } | { kind: 'chord'; chord: string };
 
   function captureResult(event: KeyboardEvent): CaptureResult | null {
     if (event.key === 'Escape') {
@@ -364,10 +361,7 @@
   }
 
   function groupVisible(group: Group): boolean {
-    return (
-      matches(group.title) ||
-      group.rows.some((row) => matches(row.label, row.description))
-    );
+    return matches(group.title) || group.rows.some((row) => matches(row.label, row.description));
   }
 
   const takeOverVisible = $derived(

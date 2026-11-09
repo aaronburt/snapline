@@ -256,6 +256,9 @@ impl CombineService {
         if id <= 0 {
             return Err(ServiceError::NotFound);
         }
+        if !paths.history_file.is_file() {
+            return Err(ServiceError::NotFound);
+        }
         let repo = HistoryRepo::open_read(&paths.history_file).map_err(|error| {
             tracing::warn!(%error, "combine history could not be opened");
             ServiceError::Io("The History could not be read.".to_owned())

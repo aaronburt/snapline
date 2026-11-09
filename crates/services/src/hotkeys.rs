@@ -184,7 +184,12 @@ impl HotkeysService {
             runtime.applied = true;
         }
         if notify && settings.hotkeys.warn_about_clashes && !full.blocked.is_empty() {
-            self.notify_clash(full.blocked.len());
+            let off = full
+                .blocked
+                .iter()
+                .map(|blocked| blocked.owners.len())
+                .sum();
+            self.notify_clash(off);
         }
         Ok(())
     }

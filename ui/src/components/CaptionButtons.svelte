@@ -61,12 +61,7 @@
       <path d={captionIcons.minimise} stroke="currentColor" stroke-width="1"></path>
     </svg>
   </button>
-  <button
-    type="button"
-    class="hv"
-    aria-label={maximised ? 'Restore' : 'Maximise'}
-    onclick={toggle}
-  >
+  <button type="button" class="hv" aria-label={maximised ? 'Restore' : 'Maximise'} onclick={toggle}>
     <svg
       width="10"
       height="10"

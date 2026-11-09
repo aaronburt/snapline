@@ -370,7 +370,12 @@ impl Uploader for S3Uploader {
             Some(etag) => link.with_token(etag),
             None => link,
         };
-        Ok(Uploaded::new(self.config.public_url(&key)).with_deletion_link(link))
+        let public_link = if self.config.public_url_pattern == DEFAULT_PUBLIC_URL_PATTERN {
+            target.url()
+        } else {
+            self.config.public_url(&key)
+        };
+        Ok(Uploaded::new(public_link).with_deletion_link(link))
     }
 
     fn delete(&self, link: &DeletionLink, secrets: &dyn SecretStore) -> Result<(), UploadError> {

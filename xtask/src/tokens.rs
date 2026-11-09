@@ -324,7 +324,7 @@ fn palette_literal(tokens: &TokenFile, dark: bool) -> Result<Vec<(String, String
 }
 
 fn rust(tokens: &TokenFile) -> Result<String> {
-    let mut out = String::from("pub struct Palette {\n");
+    let mut out = String::from("#[rustfmt::skip]\npub struct Palette {\n");
     for name in THEME_RUST {
         out.push_str(&format!("    pub {name}: [f32; 4],\n"));
     }
@@ -333,13 +333,15 @@ fn rust(tokens: &TokenFile) -> Result<String> {
     }
     out.push_str("}\n\n");
     for (name, dark) in [("DARK", true), ("LIGHT", false)] {
-        out.push_str(&format!("pub const {name}: Palette = Palette {{\n"));
+        out.push_str(&format!(
+            "#[rustfmt::skip]\npub const {name}: Palette = Palette {{\n"
+        ));
         for (field, value) in palette_literal(tokens, dark)? {
             out.push_str(&format!("    {field}: {value},\n"));
         }
         out.push_str("};\n\n");
     }
-    Ok(out)
+    Ok(out.trim_end().to_owned() + "\n")
 }
 
 fn css_path(root: &Path) -> std::path::PathBuf {

@@ -106,7 +106,9 @@ describe('UploadsPage', () => {
 
   it('shows the account buttons and the empty destination list', () => {
     render(UploadsPage);
-    expect(screen.getByRole('button', { name: /Import ShareX uploader \(\.sxcu\)/ })).not.toBeNull();
+    expect(
+      screen.getByRole('button', { name: /Import ShareX uploader \(\.sxcu\)/ }),
+    ).not.toBeNull();
     expect(screen.getByRole('button', { name: /Add destination/ })).not.toBeNull();
     expect(screen.getByText('No destinations yet')).not.toBeNull();
   });
@@ -149,7 +151,7 @@ describe('UploadsPage', () => {
       }),
     ]);
     render(UploadsPage);
-    expect(await screen.findByText('Imgur')).not.toBeNull();
+    expect((await screen.findAllByText('Imgur')).length).toBeGreaterThan(0);
     expect(screen.getByText('Image host · anonymous uploads')).not.toBeNull();
     expect(screen.getByText('Configured')).not.toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Configure' }));
@@ -231,9 +233,7 @@ describe('UploadsPage', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Add destination/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Amazon S3' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Test upload' }));
-    expect(
-      await screen.findByText('Test failed: The server returned HTTP 401.'),
-    ).not.toBeNull();
+    expect(await screen.findByText('Test failed: The server returned HTTP 401.')).not.toBeNull();
   });
 
   it('imports a ShareX uploader into the card list', async () => {
@@ -258,7 +258,7 @@ describe('UploadsPage', () => {
     render(UploadsPage);
     await fireEvent.click(screen.getByRole('button', { name: /Import ShareX uploader/ }));
     await waitFor(() => expect(uploadIpc.importSxcu).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText('My server')).not.toBeNull();
+    expect((await screen.findAllByText('My server')).length).toBeGreaterThan(0);
     expect(screen.getByText('Custom uploader · imported from .sxcu')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Edit' })).not.toBeNull();
   });
@@ -355,9 +355,7 @@ describe('UploadsPage', () => {
     const text = screen.getByRole('combobox', { name: 'Text and code' }) as HTMLSelectElement;
     const other = screen.getByRole('combobox', { name: 'Other files' }) as HTMLSelectElement;
     const images = screen.getByRole('combobox', { name: 'Images' }) as HTMLSelectElement;
-    await waitFor(() =>
-      expect([...text.options].map((option) => option.value)).toContain('gist'),
-    );
+    await waitFor(() => expect([...text.options].map((option) => option.value)).toContain('gist'));
     expect([...text.options].map((option) => option.value)).not.toContain('sftp');
     expect([...other.options].map((option) => option.value)).toContain('sftp');
     expect([...images.options].map((option) => option.value)).not.toContain('gist');

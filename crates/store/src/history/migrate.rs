@@ -101,7 +101,10 @@ mod tests {
     fn an_empty_database_is_migrated_to_the_current_version() {
         let (_directory, path) = database();
         let connection = open_write(&path).expect("open");
-        assert_eq!(schema_version(&connection).expect("version"), CURRENT_VERSION);
+        assert_eq!(
+            schema_version(&connection).expect("version"),
+            CURRENT_VERSION
+        );
         let count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('capture', 'upload')",
@@ -223,6 +226,9 @@ mod tests {
         let (_directory, path) = database();
         let mut connection = open_write(&path).expect("open");
         migrate(&mut connection).expect("second migration");
-        assert_eq!(schema_version(&connection).expect("version"), CURRENT_VERSION);
+        assert_eq!(
+            schema_version(&connection).expect("version"),
+            CURRENT_VERSION
+        );
     }
 }

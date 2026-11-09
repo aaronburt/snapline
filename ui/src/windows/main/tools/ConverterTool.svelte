@@ -249,7 +249,7 @@
               >
                 <Thumb
                   id={capture.id}
-                  alt={capture.name}
+                  alt=""
                   duration={capture.durationMs === null
                     ? undefined
                     : formatDuration(capture.durationMs)}
@@ -282,7 +282,11 @@
         icon="film"
         onclick={start}
         disabled={!ready || running}
-        title={!ready ? (mode === 'History' ? 'Choose a recording first.' : 'Choose a video file first.') : undefined}
+        title={!ready
+          ? mode === 'History'
+            ? 'Choose a recording first.'
+            : 'Choose a video file first.'
+          : undefined}
       >
         Convert
       </Button>

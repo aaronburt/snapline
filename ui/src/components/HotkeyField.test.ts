@@ -11,9 +11,7 @@ describe('HotkeyField', () => {
       props: { label: 'Capture region', value: 'PrtSc', onchange },
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Change Capture region' }));
-    expect((screen.getByLabelText('Capture region') as HTMLInputElement).value).toBe(
-      'Press keys…',
-    );
+    expect((screen.getByLabelText('Capture region') as HTMLInputElement).value).toBe('Press keys…');
     await fireEvent.keyDown(window, { key: 'g', ctrlKey: true, shiftKey: true });
     expect(onchange).toHaveBeenCalledWith('Ctrl+Shift+G');
     expect((screen.getByLabelText('Capture region') as HTMLInputElement).value).toBe(
@@ -25,9 +23,7 @@ describe('HotkeyField', () => {
     render(HotkeyField, { props: { label: 'Record GIF', value: 'Ctrl+Shift+G' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Change Record GIF' }));
     await fireEvent.keyDown(window, { key: 'Escape' });
-    expect((screen.getByLabelText('Record GIF') as HTMLInputElement).value).toBe(
-      'Ctrl+Shift+G',
-    );
+    expect((screen.getByLabelText('Record GIF') as HTMLInputElement).value).toBe('Ctrl+Shift+G');
     await fireEvent.click(screen.getByRole('button', { name: 'Change Record GIF' }));
     await fireEvent.keyDown(window, { key: 'Backspace' });
     expect((screen.getByLabelText('Record GIF') as HTMLInputElement).value).toBe('');

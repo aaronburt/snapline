@@ -12,18 +12,16 @@ use snapline_upload::http::{HttpClient, HttpTimeout, Method, ProxySetting};
 use snapline_upload::imgur::{ImgurUploader, CLIENT_ID_FIELD};
 use snapline_upload::queue::{UploadFile, Uploader};
 use snapline_upload::s3::{
-    S3Config, S3Uploader, ACCESS_KEY_ID_FIELD, DEFAULT_PUBLIC_URL_PATTERN,
-    SECRET_ACCESS_KEY_FIELD,
+    S3Config, S3Uploader, ACCESS_KEY_ID_FIELD, DEFAULT_PUBLIC_URL_PATTERN, SECRET_ACCESS_KEY_FIELD,
 };
 use snapline_upload::sftp::{
     HostKeyConfirmer, HostKeyPrompt, HostKeyState, HostKeyStore, SftpAuthMethod, SftpConfig,
-    SftpUploader, PASSWORD_FIELD as SFTP_PASSWORD_FIELD,
-    PASSPHRASE_FIELD as SFTP_PASSPHRASE_FIELD,
+    SftpUploader, PASSPHRASE_FIELD as SFTP_PASSPHRASE_FIELD, PASSWORD_FIELD as SFTP_PASSWORD_FIELD,
 };
 
 use crate::dto::upload::{
-    DestinationActionDto, DestinationHeaderDto, DestinationInput,
-    DestinationKindDto, DestinationStatusDto, DestinationViewDto,
+    DestinationActionDto, DestinationHeaderDto, DestinationInput, DestinationKindDto,
+    DestinationStatusDto, DestinationViewDto,
 };
 use crate::uploads::DestinationSource;
 use crate::{ServiceError, Services};
@@ -40,15 +38,14 @@ pub const TEST_CONTENT_TYPE: &str = "image/png";
 pub const TEST_GIST_FILE_NAME: &str = "snapline-test.txt";
 pub const TEST_GIST_CONTENT_TYPE: &str = "text/plain";
 pub const TEST_GIST_CONTENT: &str = "Snapline test upload.";
-pub const HOST_KEYS_UNAVAILABLE: &str =
-    "Host key checking is not available in this build.";
+pub const HOST_KEYS_UNAVAILABLE: &str = "Host key checking is not available in this build.";
 
 const TEST_PNG: [u8; 67] = [
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
-    0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
-    0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
-    0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
-    0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+    0x42, 0x60, 0x82,
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -249,18 +246,12 @@ impl UploaderFactory for LiveFactory {
             }
             DestinationConfig::S3 { .. } => {
                 let s3 = s3_config(config)?;
-                let uploader =
-                    S3Uploader::with_http(s3, timeout, proxy).map_err(upload_error)?;
+                let uploader = S3Uploader::with_http(s3, timeout, proxy).map_err(upload_error)?;
                 Ok(Arc::new(uploader))
             }
             DestinationConfig::Gist { id, public } => {
-                let uploader = GistUploader::from_settings(
-                    id.clone(),
-                    *public,
-                    timeout,
-                    proxy,
-                )
-                .map_err(upload_error)?;
+                let uploader = GistUploader::from_settings(id.clone(), *public, timeout, proxy)
+                    .map_err(upload_error)?;
                 Ok(Arc::new(uploader))
             }
             DestinationConfig::Sftp { .. } => {
@@ -275,7 +266,11 @@ impl UploaderFactory for LiveFactory {
             DestinationConfig::Custom { id, .. } => {
                 let (custom, _) = custom_config(config)?;
                 let http = HttpClient::new(timeout, proxy).map_err(upload_error)?;
-                Ok(Arc::new(CustomUploader::new(id.clone(), custom, Arc::new(http))))
+                Ok(Arc::new(CustomUploader::new(
+                    id.clone(),
+                    custom,
+                    Arc::new(http),
+                )))
             }
         }
     }
@@ -287,11 +282,12 @@ pub trait DestinationOperations: Send + Sync {
     fn save(&self, input: DestinationInput) -> Result<DestinationViewDto, ServiceError>;
     fn remove(&self, id: &str) -> Result<(), ServiceError>;
     fn test_uploader(&self, id: &str) -> Result<(Arc<dyn Uploader>, UploadFile), ServiceError>;
-    fn import_sxcu(
+    fn import_sxcu(&self) -> Result<(Option<DestinationViewDto>, Vec<String>), ServiceError>;
+    fn export_sxcu(
         &self,
-    ) -> Result<(Option<DestinationViewDto>, Vec<String>), ServiceError>;
-    fn export_sxcu(&self, id: &str, include_header_values: bool)
-        -> Result<Option<String>, ServiceError>;
+        id: &str,
+        include_header_values: bool,
+    ) -> Result<Option<String>, ServiceError>;
 }
 
 #[derive(Clone)]
@@ -312,20 +308,14 @@ impl fmt::Debug for Registry {
 }
 
 impl Registry {
-    pub fn new(
-        services: &Services,
-        secrets: Arc<dyn CoreSecretStore + Send + Sync>,
-    ) -> Self {
+    pub fn new(services: &Services, secrets: Arc<dyn CoreSecretStore + Send + Sync>) -> Self {
         let host_keys: Arc<dyn HostKeyStore> = Arc::new(UnavailableHostKeyStore);
         let confirmer: Arc<dyn HostKeyConfirmer> = Arc::new(UnavailableHostKeyConfirmer);
         Self {
             services: services.clone(),
             secrets,
             dialog: Arc::new(UnavailableDialog),
-            factory: Arc::new(LiveFactory::new(
-                host_keys.clone(),
-                confirmer.clone(),
-            )),
+            factory: Arc::new(LiveFactory::new(host_keys.clone(), confirmer.clone())),
             host_keys,
             confirmer,
             custom_factory: false,
@@ -408,7 +398,9 @@ impl Registry {
         self.configs()?
             .into_iter()
             .find(|config| config.id() == id)
-            .ok_or_else(|| ServiceError::Invalid("The upload destination was not found.".to_owned()))
+            .ok_or_else(|| {
+                ServiceError::Invalid("The upload destination was not found.".to_owned())
+            })
     }
 
     fn resolve(&self, dest: &str) -> Option<DestinationConfig> {
@@ -416,10 +408,7 @@ impl Registry {
         if let Some(config) = configs.iter().find(|config| config.id() == dest) {
             return Some(config.clone());
         }
-        configs
-            .iter()
-            .find(|config| config.name() == dest)
-            .cloned()
+        configs.iter().find(|config| config.name() == dest).cloned()
     }
 
     fn http_settings(&self) -> Result<(HttpTimeout, ProxySetting), ServiceError> {
@@ -446,9 +435,9 @@ impl Registry {
     fn put_secret(&self, id: &str, field: &str, value: &str) -> Result<(), ServiceError> {
         let key = Self::secret_key(id, field)?;
         let secret = Secret::from(value);
-        self.secrets.put(&key, &secret).map_err(|_| {
-            ServiceError::Internal("The secret could not be saved.".to_owned())
-        })
+        self.secrets
+            .put(&key, &secret)
+            .map_err(|_| ServiceError::Internal("The secret could not be saved.".to_owned()))
     }
 
     fn delete_secret(&self, id: &str, field: &str) {
@@ -811,10 +800,7 @@ impl DestinationOperations for Registry {
                 public_url_pattern: DEFAULT_PUBLIC_URL_PATTERN.to_owned(),
                 acl_public_read: false,
             },
-            DestinationKindDto::Gist => DestinationConfig::Gist {
-                id,
-                public: false,
-            },
+            DestinationKindDto::Gist => DestinationConfig::Gist { id, public: false },
             DestinationKindDto::Sftp => DestinationConfig::Sftp {
                 id,
                 host: String::new(),
@@ -852,11 +838,15 @@ impl DestinationOperations for Registry {
             .id
             .clone()
             .filter(|id| !id.trim().is_empty())
-            .ok_or_else(|| ServiceError::Invalid("The upload destination was not found.".to_owned()))?;
+            .ok_or_else(|| {
+                ServiceError::Invalid("The upload destination was not found.".to_owned())
+            })?;
         let position = configs
             .iter()
             .position(|config| config.id() == id)
-            .ok_or_else(|| ServiceError::Invalid("The upload destination was not found.".to_owned()))?;
+            .ok_or_else(|| {
+                ServiceError::Invalid("The upload destination was not found.".to_owned())
+            })?;
         let existing = configs[position].clone();
         if existing.kind() != input.kind {
             return Err(ServiceError::Invalid(
@@ -866,7 +856,11 @@ impl DestinationOperations for Registry {
         let config = match existing {
             DestinationConfig::Imgur { id } => {
                 let saved = self.secret_saved(&id, CLIENT_ID_FIELD);
-                let client_id = input.client_id.as_deref().map(str::trim).filter(|value| !value.is_empty());
+                let client_id = input
+                    .client_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
                 if let Some(client_id) = client_id {
                     if !client_id.bytes().all(|byte| byte.is_ascii_graphic()) {
                         return Err(ServiceError::Invalid(
@@ -926,7 +920,9 @@ impl DestinationOperations for Registry {
                 let access_saved = self.secret_saved(&id, ACCESS_KEY_ID_FIELD);
                 let secret_saved = self.secret_saved(&id, SECRET_ACCESS_KEY_FIELD);
                 if access.is_none() && !access_saved {
-                    return Err(ServiceError::Invalid("Enter the S3 access key ID.".to_owned()));
+                    return Err(ServiceError::Invalid(
+                        "Enter the S3 access key ID.".to_owned(),
+                    ));
                 }
                 if secret.is_none() && !secret_saved {
                     return Err(ServiceError::Invalid(
@@ -964,16 +960,16 @@ impl DestinationOperations for Registry {
                     }
                     self.put_secret(&id, GIST_TOKEN_FIELD, token)?;
                 } else if !saved {
-                    return Err(ServiceError::Invalid(
-                        "Enter the GitHub token.".to_owned(),
-                    ));
+                    return Err(ServiceError::Invalid("Enter the GitHub token.".to_owned()));
                 }
                 DestinationConfig::Gist {
                     id,
                     public: input.acl_public_read.unwrap_or(false),
                 }
             }
-            DestinationConfig::Sftp { id, auth_method, .. } => {
+            DestinationConfig::Sftp {
+                id, auth_method, ..
+            } => {
                 let host = input.host.as_deref().unwrap_or("").trim().to_owned();
                 if host.is_empty() {
                     return Err(ServiceError::Invalid("Enter the SFTP host.".to_owned()));
@@ -986,9 +982,7 @@ impl DestinationOperations for Registry {
                 }
                 let username = input.username.as_deref().unwrap_or("").trim().to_owned();
                 if username.is_empty() {
-                    return Err(ServiceError::Invalid(
-                        "Enter the SFTP username.".to_owned(),
-                    ));
+                    return Err(ServiceError::Invalid("Enter the SFTP username.".to_owned()));
                 }
                 let previous =
                     SftpAuthMethod::parse(&auth_method).unwrap_or(SftpAuthMethod::Password);
@@ -1030,9 +1024,7 @@ impl DestinationOperations for Registry {
                         .map(str::trim)
                         .filter(|value| !value.is_empty());
                     if password.is_none() && !saved {
-                        return Err(ServiceError::Invalid(
-                            "Enter the SFTP password.".to_owned(),
-                        ));
+                        return Err(ServiceError::Invalid("Enter the SFTP password.".to_owned()));
                     }
                     if let Some(password) = password {
                         self.put_secret(&id, SFTP_PASSWORD_FIELD, password)?;
@@ -1126,7 +1118,9 @@ impl DestinationOperations for Registry {
                         .iter()
                         .any(|header| header.name.trim().is_empty() && header.value.is_some())
                 {
-                    return Err(ServiceError::Invalid("A header name is required.".to_owned()));
+                    return Err(ServiceError::Invalid(
+                        "A header name is required.".to_owned(),
+                    ));
                 }
                 let config = DestinationConfig::Custom {
                     id: id.clone(),
@@ -1182,10 +1176,12 @@ impl DestinationOperations for Registry {
         let position = configs
             .iter()
             .position(|config| config.id() == id)
-            .ok_or_else(|| ServiceError::Invalid("The upload destination was not found.".to_owned()))?;
+            .ok_or_else(|| {
+                ServiceError::Invalid("The upload destination was not found.".to_owned())
+            })?;
         let removed = configs.remove(position);
         for field in removed.secret_fields() {
-            self.delete_secret(&removed.id(), &field);
+            self.delete_secret(removed.id(), &field);
         }
         self.store_configs(&configs)
     }
@@ -1202,9 +1198,7 @@ impl DestinationOperations for Registry {
         Ok((uploader, test_file_for(&config)))
     }
 
-    fn import_sxcu(
-        &self,
-    ) -> Result<(Option<DestinationViewDto>, Vec<String>), ServiceError> {
+    fn import_sxcu(&self) -> Result<(Option<DestinationViewDto>, Vec<String>), ServiceError> {
         let Some(bytes) = self.dialog.open()? else {
             return Ok((None, Vec::new()));
         };
@@ -1268,9 +1262,7 @@ impl DestinationOperations for Registry {
         let mut values = sxcu::HeaderValues::new();
         if include_header_values {
             for header in &custom.headers {
-                if let Ok(key) =
-                    Self::secret_key(id, &header_secret_field(&header.name))
-                {
+                if let Ok(key) = Self::secret_key(id, &header_secret_field(&header.name)) {
                     if let Ok(Some(secret)) = self.secrets.get(&key) {
                         if let Ok(value) = std::str::from_utf8(secret.expose()) {
                             values.insert(header.name.clone(), value);
@@ -1279,8 +1271,7 @@ impl DestinationOperations for Registry {
                 }
             }
         }
-        let text = sxcu::export(&custom, include_header_values, &values)
-            .map_err(sxcu_error)?;
+        let text = sxcu::export(&custom, include_header_values, &values).map_err(sxcu_error)?;
         if text.len() > sxcu::MAX_FILE_BYTES {
             return Err(ServiceError::Invalid(
                 "The .sxcu file is larger than 64 KiB.".to_owned(),
@@ -1375,9 +1366,9 @@ fn endpoint_valid(endpoint: Option<&str>) -> bool {
     if !(lower.starts_with("http://") || lower.starts_with("https://")) {
         return false;
     }
-    endpoint
-        .split_once("://")
-        .map_or(false, |(_, rest)| !rest.is_empty() && !rest.starts_with('/'))
+    endpoint.split_once("://").map_or(false, |(_, rest)| {
+        !rest.is_empty() && !rest.starts_with('/')
+    })
 }
 
 fn method_value(value: &str) -> Result<Method, ServiceError> {
@@ -1526,9 +1517,7 @@ fn safe_file_name(name: &str) -> String {
     let cleaned: String = name
         .chars()
         .map(|character| {
-            if character.is_ascii_alphanumeric()
-                || matches!(character, ' ' | '-' | '_' | '.')
-            {
+            if character.is_ascii_alphanumeric() || matches!(character, ' ' | '-' | '_' | '.') {
                 character
             } else {
                 '_'
@@ -1855,9 +1844,7 @@ mod tests {
     }
 
     fn list(registry: &Registry) -> Vec<DestinationViewDto> {
-        match crate::dto::upload::DestinationResp::Destinations(
-            registry.list().expect("list"),
-        ) {
+        match crate::dto::upload::DestinationResp::Destinations(registry.list().expect("list")) {
             crate::dto::upload::DestinationResp::Destinations(items) => items,
             _ => Vec::new(),
         }
@@ -1870,7 +1857,10 @@ mod tests {
         assert!(list(&registry).is_empty());
         let settings = fixture.services.settings_snapshot().expect("settings");
         assert_eq!(settings.uploads.images.as_str(), "save_locally_only");
-        assert_eq!(settings.uploads.videos_and_gifs.as_str(), "save_locally_only");
+        assert_eq!(
+            settings.uploads.videos_and_gifs.as_str(),
+            "save_locally_only"
+        );
         assert_eq!(settings.uploads.text_and_code.as_str(), "save_locally_only");
         assert_eq!(settings.uploads.other_files.as_str(), "save_locally_only");
         assert_eq!(settings.uploads.link_shortener.as_str(), "none");
@@ -1906,7 +1896,9 @@ mod tests {
         let fixture = fixture();
         let registry = fixture.registry();
         registry.add(DestinationKindDto::Imgur).expect("add");
-        let error = registry.save(imgur_input("imgur", None)).expect_err("empty");
+        let error = registry
+            .save(imgur_input("imgur", None))
+            .expect_err("empty");
         assert_eq!(error.to_string(), "Enter the Imgur Client ID.");
         registry
             .save(imgur_input("imgur", Some("a1b2c3d4")))
@@ -2020,17 +2012,26 @@ mod tests {
             passphrase: None,
         };
         assert_eq!(
-            registry.save(input.clone()).expect_err("region").to_string(),
+            registry
+                .save(input.clone())
+                .expect_err("region")
+                .to_string(),
             "Enter the S3 region."
         );
         input.region = Some("eu-west-2".to_owned());
         assert_eq!(
-            registry.save(input.clone()).expect_err("bucket").to_string(),
+            registry
+                .save(input.clone())
+                .expect_err("bucket")
+                .to_string(),
             "Enter the S3 bucket."
         );
         input.bucket = Some("my-bucket".to_owned());
         assert_eq!(
-            registry.save(input.clone()).expect_err("access").to_string(),
+            registry
+                .save(input.clone())
+                .expect_err("access")
+                .to_string(),
             "Enter the S3 access key ID."
         );
         input.access_key_id = Some("AKIDEXAMPLE".to_owned());
@@ -2045,9 +2046,7 @@ mod tests {
         let fixture = fixture();
         let registry = fixture.registry();
         registry.add(DestinationKindDto::Custom).expect("add");
-        let saved = registry
-            .save(custom_input("custom"))
-            .expect("save custom");
+        let saved = registry.save(custom_input("custom")).expect("save custom");
         assert_eq!(saved.name, "My server");
         assert_eq!(saved.action, DestinationActionDto::Edit);
         assert_eq!(saved.status, DestinationStatusDto::Configured);
@@ -2195,9 +2194,9 @@ mod tests {
             }))
             .expect("test");
         let outcome = match response {
-            UploadResp::Destination(crate::dto::upload::DestinationResp::Test {
-                outcome,
-            }) => outcome,
+            UploadResp::Destination(crate::dto::upload::DestinationResp::Test { outcome }) => {
+                outcome
+            }
             other => panic!("unexpected response: {other:?}"),
         };
         assert_eq!(outcome.status, DestinationTestStatusDto::Succeeded);
@@ -2267,7 +2266,10 @@ mod tests {
             body_value("MultipartFormData").expect("multipart"),
             sxcu::BodyType::MultipartFormData
         );
-        assert_eq!(body_value("Binary").expect("binary"), sxcu::BodyType::Binary);
+        assert_eq!(
+            body_value("Binary").expect("binary"),
+            sxcu::BodyType::Binary
+        );
         assert_eq!(
             body_value("FormURLEncoded").expect("form"),
             sxcu::BodyType::FormUrlEncoded
@@ -2390,8 +2392,7 @@ mod tests {
             DestinationKindDto::Custom,
         ] {
             let json = serde_json::to_string(&kind).expect("kind json");
-            let back: DestinationKindDto =
-                serde_json::from_str(&json).expect("kind round trip");
+            let back: DestinationKindDto = serde_json::from_str(&json).expect("kind round trip");
             assert_eq!(back, kind);
         }
         assert_eq!(
@@ -2587,13 +2588,19 @@ mod tests {
         input.port = Some(22);
         input.username = Some("".to_owned());
         assert_eq!(
-            registry.save(input.clone()).expect_err("username").to_string(),
+            registry
+                .save(input.clone())
+                .expect_err("username")
+                .to_string(),
             "Enter the SFTP username."
         );
         input.username = Some("aaron".to_owned());
         input.public_url_pattern = Some("https://example.test/no-token".to_owned());
         assert_eq!(
-            registry.save(input.clone()).expect_err("pattern").to_string(),
+            registry
+                .save(input.clone())
+                .expect_err("pattern")
+                .to_string(),
             "The public URL pattern must contain <key>."
         );
         input.public_url_pattern = Some("https://example.test/<key>".to_owned());
@@ -2660,19 +2667,16 @@ mod tests {
         )
         .expect("thread");
         let service = thread.service();
-        for (id, file_name) in [
-            ("gist", TEST_GIST_FILE_NAME),
-            ("sftp", TEST_FILE_NAME),
-        ] {
+        for (id, file_name) in [("gist", TEST_GIST_FILE_NAME), ("sftp", TEST_FILE_NAME)] {
             let response = service
                 .handle(UploadReq::Destination(DestinationReq::Test {
                     id: id.to_owned(),
                 }))
                 .expect("test upload");
             let outcome = match response {
-                UploadResp::Destination(crate::dto::upload::DestinationResp::Test {
-                    outcome,
-                }) => outcome,
+                UploadResp::Destination(crate::dto::upload::DestinationResp::Test { outcome }) => {
+                    outcome
+                }
                 other => panic!("unexpected response: {other:?}"),
             };
             assert_eq!(outcome.status, DestinationTestStatusDto::Succeeded, "{id}");
@@ -2692,10 +2696,7 @@ mod tests {
             .registry()
             .with_sftp(host_keys.clone(), confirmer.clone());
         assert!(Arc::ptr_eq(&registry.host_keys(), &host_keys));
-        assert!(Arc::ptr_eq(
-            &registry.host_key_confirmer(),
-            &confirmer
-        ));
+        assert!(Arc::ptr_eq(&registry.host_key_confirmer(), &confirmer));
 
         assert!(matches!(
             UnavailableHostKeyStore.state("example.com", 22, b"key"),

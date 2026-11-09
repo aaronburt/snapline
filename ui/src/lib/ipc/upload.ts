@@ -191,10 +191,7 @@ export async function importSxcu(): Promise<ImportedDestination> {
   return response.data;
 }
 
-export async function exportSxcu(
-  id: string,
-  includeHeaderValues = false,
-): Promise<string | null> {
+export async function exportSxcu(id: string, includeHeaderValues = false): Promise<string | null> {
   const response = await destination({
     kind: 'exportSxcu',
     data: { id, includeHeaderValues },

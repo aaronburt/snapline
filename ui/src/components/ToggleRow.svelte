@@ -10,13 +10,7 @@
     onchange?: (checked: boolean) => void;
   }
 
-  let {
-    checked = $bindable(false),
-    icon,
-    title,
-    description = '',
-    onchange,
-  }: Props = $props();
+  let { checked = $bindable(false), icon, title, description = '', onchange }: Props = $props();
 
   const id = $props.id();
 </script>
@@ -29,7 +23,7 @@
   </span>
   <span class="state">{checked ? 'On' : 'Off'}</span>
   <input
-    id={id}
+    {id}
     type="checkbox"
     class="tg"
     bind:checked

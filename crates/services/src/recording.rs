@@ -9,8 +9,9 @@ use crossbeam_channel::{bounded, unbounded, Receiver, RecvTimeoutError, Sender};
 use serde::{Deserialize, Serialize};
 use snapline_core::actions::ActionId;
 use snapline_core::ffmpeg_args::{
-    self, AudioPipe, FfmpegCommand, GifCaptureRequest, GifConvertRequest, GifFrameRate, GifMaxWidth,
-    GifSettings, VideoEncoder, VideoFormat, VideoFrameRate, VideoQuality, VideoRequest,
+    self, AudioPipe, FfmpegCommand, GifCaptureRequest, GifConvertRequest, GifFrameRate,
+    GifMaxWidth, GifSettings, VideoEncoder, VideoFormat, VideoFrameRate, VideoQuality,
+    VideoRequest,
 };
 use snapline_core::geometry::Rect;
 use snapline_core::ids::WindowId;
@@ -480,7 +481,8 @@ impl Session {
         let thread = thread::Builder::new()
             .name("snapline-recorder".to_owned())
             .spawn(move || {
-                let outcome = run_session(&plan, &thread_ports, &mut machine, &thread_status, &inbox);
+                let outcome =
+                    run_session(&plan, &thread_ports, &mut machine, &thread_status, &inbox);
                 if outcome.is_err() {
                     remove_file(&plan.output);
                     if let Some(converted) = &plan.converted {
@@ -633,7 +635,13 @@ fn run_session(
         RecordingEvent::Started,
     )?;
 
-    let duration_ms = record_until_stop(machine, status, ports.events.as_ref(), &mut resources, inbox)?;
+    let duration_ms = record_until_stop(
+        machine,
+        status,
+        ports.events.as_ref(),
+        &mut resources,
+        inbox,
+    )?;
 
     transition(machine, status, ports.events.as_ref(), RecordingEvent::Stop)?;
     resources.close_border();
@@ -764,11 +772,7 @@ fn transition(
     Ok(())
 }
 
-fn publish(
-    status: &Arc<Mutex<RecordStatus>>,
-    machine: &RecordingMachine,
-    events: &dyn EventSink,
-) {
+fn publish(status: &Arc<Mutex<RecordStatus>>, machine: &RecordingMachine, events: &dyn EventSink) {
     let dto = {
         let mut guard = status_lock(status);
         guard.state = machine.state();
@@ -805,7 +809,10 @@ pub fn status_dto(status: &RecordStatus) -> RecordStatusDto {
         duration_ms: (status.duration_ms > 0)
             .then(|| i64::try_from(status.duration_ms).unwrap_or(i64::MAX)),
         capture_id: status.capture_id,
-        path: status.path.as_ref().map(|path| path.to_string_lossy().into_owned()),
+        path: status
+            .path
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned()),
         error: status.error.clone(),
     }
 }
@@ -902,10 +909,7 @@ pub fn start_recording(
     Ok(status)
 }
 
-pub fn record_blocking(
-    services: &Services,
-    kind: RecordKind,
-) -> Result<PathBuf, RecordError> {
+pub fn record_blocking(services: &Services, kind: RecordKind) -> Result<PathBuf, RecordError> {
     if current_control().is_some_and(|control| control.is_active()) {
         return Err(RecordError::Busy);
     }
@@ -976,7 +980,8 @@ fn begin_with(
         RecordedKind::Gif => "mp4",
     };
     let output = folder.join(format!("record-{id}.{extension}"));
-    let converted = (recorded == RecordedKind::Gif).then(|| folder.join(format!("record-{id}.gif")));
+    let converted =
+        (recorded == RecordedKind::Gif).then(|| folder.join(format!("record-{id}.gif")));
     Session::start(
         SessionPlan {
             kind: recorded,
@@ -1176,7 +1181,8 @@ pub fn store_recording(
     let bytes = std::fs::metadata(&path)
         .map_err(|error| RecordError::Save(error.to_string()))?
         .len();
-    let bytes = i64::try_from(bytes).map_err(|_| RecordError::Save("The file is too large.".to_owned()))?;
+    let bytes =
+        i64::try_from(bytes).map_err(|_| RecordError::Save("The file is too large.".to_owned()))?;
     let created_at = now.unix_timestamp().saturating_mul(1000) + i64::from(now.millisecond());
     let kind = match file.kind {
         RecordedKind::Video => CaptureKind::Video,
@@ -1198,9 +1204,13 @@ pub fn store_recording(
         })
         .map_err(|error| RecordError::Save(error.to_string()))?;
     if let Some(frame) = &file.first_frame {
-        if let Err(error) =
-            write_thumbnail(services, &paths.thumbs_dir, id, frame, general.lossy_quality)
-        {
+        if let Err(error) = write_thumbnail(
+            services,
+            &paths.thumbs_dir,
+            id,
+            frame,
+            general.lossy_quality,
+        ) {
             tracing::warn!(%error, "the recording thumbnail could not be written");
         }
     }
@@ -1279,8 +1289,7 @@ fn write_thumbnail(
             "jpg",
         ),
     };
-    std::fs::create_dir_all(directory)
-        .map_err(|error| RecordError::Save(error.to_string()))?;
+    std::fs::create_dir_all(directory).map_err(|error| RecordError::Save(error.to_string()))?;
     io::write_atomic(&directory.join(format!("{id}.{extension}")), &bytes)
         .map_err(|error| RecordError::Save(error.to_string()))
 }
@@ -1749,10 +1758,17 @@ mod tests {
         assert_eq!(sent.len(), 1);
         let args = &sent[0];
         assert!(args.iter().any(|argument| argument == "h264_nvenc"));
-        assert!(args.iter().any(|argument| argument == "ddagrab=framerate=30:output_idx=0:video_size=640x360:offset_x=10:offset_y=20"));
-        assert!(args.iter().any(|argument| argument == r"\\.\pipe\snapline-audio-0"));
-        assert!(args.iter().any(|argument| argument == r"\\.\pipe\snapline-audio-1"));
-        assert!(args.iter().any(|argument| argument == "[1:a][2:a]amix=inputs=2[aout]"));
+        assert!(args.iter().any(|argument| argument
+            == "ddagrab=framerate=30:output_idx=0:video_size=640x360:offset_x=10:offset_y=20"));
+        assert!(args
+            .iter()
+            .any(|argument| argument == r"\\.\pipe\snapline-audio-0"));
+        assert!(args
+            .iter()
+            .any(|argument| argument == r"\\.\pipe\snapline-audio-1"));
+        assert!(args
+            .iter()
+            .any(|argument| argument == "[1:a][2:a]amix=inputs=2[aout]"));
         let starts = fixture.audio.starts.lock().expect("audio starts");
         assert_eq!(starts.len(), 1);
         assert!(starts[0].system);
@@ -2130,7 +2146,10 @@ mod tests {
         assert!(saved.file_name.ends_with(".gif"));
         let repo =
             HistoryRepo::open_read(&services.paths().expect("paths").history_file).expect("read");
-        let capture = repo.get(saved.capture_id.expect("id")).expect("get").expect("row");
+        let capture = repo
+            .get(saved.capture_id.expect("id"))
+            .expect("get")
+            .expect("row");
         assert_eq!(capture.kind, CaptureKind::Gif);
     }
 
@@ -2192,5 +2211,3 @@ mod tests {
         assert_eq!(ServiceError::from(RecordError::Busy).code(), "busy");
     }
 }
-
-

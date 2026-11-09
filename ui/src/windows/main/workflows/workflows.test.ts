@@ -289,6 +289,7 @@ describe('workflow validation', () => {
         false,
       ),
     ).toEqual([
+      { step: 0, message: 'The first step must be a Capture or Record step.' },
       { step: 0, message: 'Copy link requires an earlier Upload step.' },
       { step: 1, message: 'Convert to GIF requires an earlier Record step.' },
     ]);

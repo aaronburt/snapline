@@ -28,9 +28,7 @@
   }
 
   function flip(index: number, checked: boolean) {
-    const next = items.map((item, position) =>
-      position === index ? { ...item, checked } : item,
-    );
+    const next = items.map((item, position) => (position === index ? { ...item, checked } : item));
     items = next;
     onchange?.(next);
   }

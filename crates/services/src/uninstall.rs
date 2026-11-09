@@ -86,10 +86,7 @@ impl UninstallReport {
         if self.failures.is_empty() {
             text.push_str(" No errors.");
         } else {
-            text.push_str(&format!(
-                " Some steps failed: {}",
-                self.failures.join(" ")
-            ));
+            text.push_str(&format!(" Some steps failed: {}", self.failures.join(" ")));
         }
         text
     }
@@ -106,9 +103,13 @@ fn credential_word(count: usize) -> &'static str {
 pub fn cleanup(host: &dyn UninstallHost, paths: &Paths) -> UninstallReport {
     let mut report = UninstallReport::default();
     let previous_prtsc = match store_settings::load(&paths.settings_file) {
-        Ok(outcome) if outcome.notice.is_none() => {
-            Some(outcome.settings.hotkeys.restore.print_screen_key_for_snipping_enabled)
-        }
+        Ok(outcome) if outcome.notice.is_none() => Some(
+            outcome
+                .settings
+                .hotkeys
+                .restore
+                .print_screen_key_for_snipping_enabled,
+        ),
         Ok(_) => {
             report.failures.push(
                 "Snapline could not read its settings, so the PrtSc setting was left alone."
@@ -346,9 +347,7 @@ mod tests {
 
         fn confirm(&self, message: &str, default_yes: bool) -> Result<bool, UninstallError> {
             let mut state = self.state_mut();
-            state
-                .confirmations
-                .push((message.to_owned(), default_yes));
+            state.confirmations.push((message.to_owned(), default_yes));
             if message == DATA_QUESTION {
                 Ok(state.data_answer)
             } else if message == CREDENTIALS_QUESTION {
@@ -467,8 +466,7 @@ mod tests {
     #[test]
     fn keeps_credentials_after_no() {
         let mut fixture = fixture(Some(None));
-        fixture.host =
-            FakeHost::with_credentials(&["SnapLine:imgur:token", "SnapLine:s3:secret"]);
+        fixture.host = FakeHost::with_credentials(&["SnapLine:imgur:token", "SnapLine:s3:secret"]);
         fixture.host.set_credential_answer(false);
         let report = cleanup(&fixture.host, &fixture.paths);
         assert!(report.succeeded());

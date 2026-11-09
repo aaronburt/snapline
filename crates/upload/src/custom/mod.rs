@@ -469,9 +469,8 @@ mod tests {
 
     impl Transport for FakeTransport {
         fn execute(&self, request: Request) -> Result<HttpReply, UploadError> {
-            match self.requests.lock() {
-                Ok(mut requests) => requests.push(request),
-                Err(_) => {}
+            if let Ok(mut requests) = self.requests.lock() {
+                requests.push(request);
             }
             match self.replies.lock() {
                 Ok(mut replies) => replies.pop_front().ok_or_else(|| {

@@ -15,18 +15,18 @@
     onchange?: (value: string) => void;
   }
 
-  let { value, options, icon, title, onchange }: Props = $props();
+  let { value = $bindable(''), options, icon, title, onchange }: Props = $props();
   const id = $props.id();
 </script>
 
 <div class="row">
   <Icon name={icon} size={20} />
   <div class="text">
-    <span id={id} class="title">{title}</span>
+    <span {id} class="title">{title}</span>
   </div>
   <select
     aria-labelledby={id}
-    {value}
+    bind:value
     onchange={(event) => onchange?.(event.currentTarget.value)}
   >
     {#each options as option}

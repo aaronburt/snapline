@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use snapline_core::annotate::{
     fingerprint, Colour, Document, Raster, Rgba, Shape, Style, Tolerance, Weight,
 };

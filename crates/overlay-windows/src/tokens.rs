@@ -1,3 +1,4 @@
+#[rustfmt::skip]
 pub struct Palette {
     pub bg: [f32; 4],
     pub mica: [f32; 4],
@@ -36,6 +37,7 @@ pub struct Palette {
     pub hint_text: [f32; 4],
 }
 
+#[rustfmt::skip]
 pub const DARK: Palette = Palette {
     bg: [0.125490, 0.125490, 0.125490, 1.000000],
     mica: [0.109804, 0.109804, 0.109804, 1.000000],
@@ -74,6 +76,7 @@ pub const DARK: Palette = Palette {
     hint_text: [0.901961, 0.901961, 0.901961, 1.000000],
 };
 
+#[rustfmt::skip]
 pub const LIGHT: Palette = Palette {
     bg: [0.952941, 0.952941, 0.952941, 1.000000],
     mica: [0.933333, 0.933333, 0.933333, 1.000000],
@@ -111,4 +114,3 @@ pub const LIGHT: Palette = Palette {
     hint_pill: [0.078431, 0.078431, 0.078431, 0.820000],
     hint_text: [0.901961, 0.901961, 0.901961, 1.000000],
 };
-

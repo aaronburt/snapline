@@ -22,7 +22,8 @@
     | { kind: 'black' }
     | { kind: 'custom'; value: string };
 
-  type CombineSource = { kind: 'history'; data: { id: number } } | { kind: 'picked'; data: { id: number } };
+  type CombineSource =
+    { kind: 'history'; data: { id: number } } | { kind: 'picked'; data: { id: number } };
 
   interface CombineOptions {
     layout: LayoutValue;
@@ -209,7 +210,11 @@
     }
   }
 
-  async function loadPreview(optionsValue: CombineOptions, sourcesValue: CombineSource[], generation: number): Promise<void> {
+  async function loadPreview(
+    optionsValue: CombineOptions,
+    sourcesValue: CombineSource[],
+    generation: number,
+  ): Promise<void> {
     previewLoading = true;
     try {
       const reply = await call<CombineRequest, CombineReply>('ipc_tool', {
@@ -315,7 +320,7 @@
               aria-pressed={order >= 0}
               onclick={() => addHistory(capture)}
             >
-              <Thumb id={capture.id} alt={capture.name} small />
+              <Thumb id={capture.id} alt="" small />
               <span class="pick-name">{capture.name}</span>
               {#if order >= 0}
                 <span class="pick-order">{order + 1}</span>
@@ -347,7 +352,7 @@
             >
               <span class="grip" aria-hidden="true"><Icon name="drag" size={14} /></span>
               {#if item.historyId !== null}
-                <span class="mini"><Thumb id={item.historyId} alt={item.label} small /></span>
+                <span class="mini"><Thumb id={item.historyId} alt="" small /></span>
               {:else}
                 <span class="mini file" aria-hidden="true"><Icon name="file" size={16} /></span>
               {/if}
@@ -388,7 +393,11 @@
       <h2>Layout</h2>
       <div class="control">
         <span class="label">Direction</span>
-        <Segmented options={['Side by side', 'Stacked']} bind:value={layoutName} label="Direction" />
+        <Segmented
+          options={['Side by side', 'Stacked']}
+          bind:value={layoutName}
+          label="Direction"
+        />
       </div>
       <div class="control">
         <span class="label">Align</span>

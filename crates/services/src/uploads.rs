@@ -215,15 +215,14 @@ impl UploadService {
 
     fn handle_destination(&self, req: DestinationReq) -> Result<UploadResp, ServiceError> {
         let runtime = self.runtime()?;
-        let operations = runtime.destinations.operations().ok_or(ServiceError::NotYet)?;
+        let operations = runtime
+            .destinations
+            .operations()
+            .ok_or(ServiceError::NotYet)?;
         let response = match req {
-            DestinationReq::List => {
-                DestinationResp::Destinations(operations.list()?)
-            }
+            DestinationReq::List => DestinationResp::Destinations(operations.list()?),
             DestinationReq::Add { kind } => DestinationResp::Destination(operations.add(kind)?),
-            DestinationReq::Save { input } => {
-                DestinationResp::Destination(operations.save(input)?)
-            }
+            DestinationReq::Save { input } => DestinationResp::Destination(operations.save(input)?),
             DestinationReq::Remove { id } => {
                 operations.remove(&id)?;
                 DestinationResp::Removed { id }
@@ -254,10 +253,7 @@ impl UploadService {
                     .map_err(queue_error)?;
                 let deadline = Instant::now() + Duration::from_secs(120);
                 loop {
-                    let snapshot = runtime
-                        .queue
-                        .state(upload_id)
-                        .map_err(queue_error)?;
+                    let snapshot = runtime.queue.state(upload_id).map_err(queue_error)?;
                     if let Some(snapshot) = snapshot {
                         if snapshot.status.terminal() {
                             let outcome = match snapshot.status {
@@ -289,9 +285,7 @@ impl UploadService {
                                     message: None,
                                 },
                             };
-                            return Ok(UploadResp::Destination(DestinationResp::Test {
-                                outcome,
-                            }));
+                            return Ok(UploadResp::Destination(DestinationResp::Test { outcome }));
                         }
                     }
                     if Instant::now() >= deadline {
@@ -816,7 +810,9 @@ mod tests {
                 _file: &queue::UploadFile,
                 _secrets: &dyn queue::SecretStore,
             ) -> Result<queue::Uploaded, UploadError> {
-                Err(UploadError::Permanent("the host refused the file".to_owned()))
+                Err(UploadError::Permanent(
+                    "the host refused the file".to_owned(),
+                ))
             }
 
             fn delete(
@@ -829,7 +825,8 @@ mod tests {
         }
 
         let fixture = settings_fixture();
-        record_last_link(&fixture.services, "https://example.test/previous.png").expect("last link");
+        record_last_link(&fixture.services, "https://example.test/previous.png")
+            .expect("last link");
         let thread = UploaderThread::start(
             &fixture.services,
             Arc::new(TestSecrets),

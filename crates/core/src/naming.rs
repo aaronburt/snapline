@@ -133,7 +133,7 @@ pub fn expand(pattern: &str, context: &NameContext, source: &dyn TokenSource) ->
                 }
                 index += open + close + 2;
             } else {
-                output.push_str(rest);
+                output.push_str(&rest[open..]);
                 index = pattern.len();
             }
         } else {

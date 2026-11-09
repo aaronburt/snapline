@@ -95,6 +95,7 @@ impl ControlSnapWorker {
         self.replies.try_recv().ok()
     }
 
+    #[cfg(test)]
     pub fn recv_timeout(&self, timeout: Duration) -> Option<ControlReply> {
         self.replies.recv_timeout(timeout).ok()
     }

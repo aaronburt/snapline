@@ -52,9 +52,7 @@
   const delayVisible = $derived(
     matches('Capture delay', 'Wait before capturing, so you can open a menu first'),
   );
-  const shutterVisible = $derived(
-    matches('Shutter sound', 'Play a sound when a capture is taken'),
-  );
+  const shutterVisible = $derived(matches('Shutter sound', 'Play a sound when a capture is taken'));
   const shadowVisible = $derived(
     matches(
       'Keep window shadow and rounded corners',
@@ -66,12 +64,13 @@
   );
 
   const freezeVisible = $derived(matches('Freeze the screen while selecting'));
-  const magnifierVisible = $derived(
-    matches('Magnifier', 'Pixel-accurate zoom next to the cursor'),
-  );
+  const magnifierVisible = $derived(matches('Magnifier', 'Pixel-accurate zoom next to the cursor'));
   const zoomVisible = $derived(matches('Magnifier zoom'));
   const snapVisible = $derived(
-    matches('Snap to windows and controls', 'Hover to pick a whole window, panel or button, then click'),
+    matches(
+      'Snap to windows and controls',
+      'Hover to pick a whole window, panel or button, then click',
+    ),
   );
   const sizeVisible = $derived(
     matches('Show size and position', 'Width, height and coordinates while dragging'),

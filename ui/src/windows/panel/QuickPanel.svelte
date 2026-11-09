@@ -172,12 +172,7 @@
             aria-label={recent.name}
             onclick={() => showCapture(recent.id)}
           >
-            <Thumb
-              id={recent.id}
-              alt={recent.name}
-              duration={recent.duration}
-              small
-            />
+            <Thumb id={recent.id} alt={recent.name} duration={recent.duration} small />
             <span class="recent-meta">
               {#if recent.uploaded}
                 <span class="uploaded" role="img" aria-label="Uploaded">

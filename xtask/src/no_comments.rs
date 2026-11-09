@@ -69,7 +69,7 @@ fn visit(root: &Path, dir: &Path, problems: &mut Vec<String>) -> Result<()> {
 
 fn scan_file(name: &str, extension: &str, source: &str, problems: &mut Vec<String>) {
     let comments = match extension {
-        "rs" | "ts" => scan_code(source, false),
+        "rs" | "ts" => scan_code(source, false, extension == "rs"),
         "svelte" | "html" => scan_markup(source),
         "css" => scan_css(source),
         "toml" => scan_toml(source),
@@ -105,12 +105,19 @@ fn allowed_comment(source: &str, comment: &Comment) -> bool {
     if comment.start_line == 0 {
         return false;
     }
+    let mut examined = 0;
     for line in lines.iter().skip(comment.start_line) {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        return trimmed.contains("unsafe");
+        if trimmed.contains("unsafe") {
+            return true;
+        }
+        examined += 1;
+        if examined >= 3 {
+            return false;
+        }
     }
     false
 }
@@ -134,12 +141,24 @@ fn comment(source: &str, start: usize, end: usize) -> Comment {
     }
 }
 
-fn scan_code(source: &str, markup: bool) -> Vec<Comment> {
+fn scan_code(source: &str, markup: bool, rust: bool) -> Vec<Comment> {
     let bytes = source.as_bytes();
     let mut comments = Vec::new();
     let mut index = 0;
     while index < bytes.len() {
+        if let Some(end) = raw_string_end(bytes, index) {
+            index = end;
+            continue;
+        }
         let current = bytes[index];
+        if current == b'\'' && rust {
+            if let Some(end) = char_literal_end(bytes, index) {
+                index = end;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
         if current == b'"' || current == b'\'' || current == b'`' {
             index = skip_string(bytes, index, current);
             continue;
@@ -180,6 +199,66 @@ fn skip_string(bytes: &[u8], mut index: usize, quote: u8) -> usize {
     index
 }
 
+fn char_literal_end(bytes: &[u8], index: usize) -> Option<usize> {
+    let next = index + 1;
+    if bytes.get(next) == Some(&b'\\') {
+        let mut cursor = next + 1;
+        while cursor < bytes.len() {
+            if bytes[cursor] == b'\'' {
+                return Some(cursor + 1);
+            }
+            cursor += 1;
+        }
+        return None;
+    }
+    if bytes.get(next + 1) == Some(&b'\'') {
+        return Some(next + 2);
+    }
+    None
+}
+
+fn raw_string_end(bytes: &[u8], index: usize) -> Option<usize> {
+    let mut cursor = index;
+    if bytes.get(cursor) == Some(&b'b') {
+        if bytes.get(cursor + 1) == Some(&b'r') {
+            cursor += 2;
+        } else {
+            return None;
+        }
+    } else if bytes.get(cursor) == Some(&b'r') {
+        cursor += 1;
+    } else {
+        return None;
+    }
+    let mut hashes = 0;
+    while bytes.get(cursor) == Some(&b'#') {
+        hashes += 1;
+        cursor += 1;
+    }
+    if bytes.get(cursor) != Some(&b'"') {
+        return None;
+    }
+    cursor += 1;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'"' {
+            let mut end = cursor + 1;
+            let mut matched = true;
+            for _ in 0..hashes {
+                if bytes.get(end) != Some(&b'#') {
+                    matched = false;
+                    break;
+                }
+                end += 1;
+            }
+            if matched {
+                return Some(end);
+            }
+        }
+        cursor += 1;
+    }
+    Some(bytes.len())
+}
+
 fn scan_markup(source: &str) -> Vec<Comment> {
     let bytes = source.as_bytes();
     let mut comments = Vec::new();
@@ -200,7 +279,7 @@ fn scan_markup(source: &str) -> Vec<Comment> {
                     .map_or(index, |offset| index + offset + 1);
                 if body_start < end {
                     let inner = &source[body_start..end];
-                    for mut found in scan_code(inner, false) {
+                    for mut found in scan_code(inner, false, false) {
                         found.line += position(source, body_start).0 - 1;
                         found.start_line = found.line;
                         comments.push(found);

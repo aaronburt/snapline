@@ -1,4 +1,5 @@
 #![doc = "Native overlay windows for Snapline, drawn with Win32, Direct2D, DirectComposition and DirectWrite. This crate owns the capture overlay, annotation toolbar, pin, ruler, colour picker and recording border. It may use unsafe code and must never host a webview. The public surface is `OverlayHostImpl`, which runs one dedicated overlay thread per request and returns an `OverlayResult`; the matching core port that a later task must add is `OverlayHost::select_region(&self, OverlayRequest) -> Result<OverlayResult, OverlayError>` plus an edit entry point."]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
@@ -23,8 +24,6 @@ pub mod pin;
 pub mod port_impl;
 pub mod readout;
 pub mod record_border;
-#[allow(dead_code)]
-pub mod render;
 pub mod ruler;
 pub mod text_input;
 pub mod thread;

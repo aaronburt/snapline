@@ -51,13 +51,7 @@
     <span class="chord">PrtSc</span>
   </button>
 
-  <NavItem
-    label="History"
-    icon="history"
-    count={count}
-    active={section === 'history'}
-    href="#/history"
-  />
+  <NavItem label="History" icon="history" {count} active={section === 'history'} href="#/history" />
   <NavItem label="Workflows" icon="workflows" active={section === 'workflows'} href="#/workflows" />
   <NavItem label="Tools" icon="tools" active={section === 'tools'} href="#/tools" />
 

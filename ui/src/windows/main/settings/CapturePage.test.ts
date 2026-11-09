@@ -53,7 +53,8 @@ describe('CapturePage', () => {
     ).toBe(true);
     expect(screen.getByRole('radio', { name: '4×' }).getAttribute('aria-checked')).toBe('true');
     expect(
-      (screen.getByRole('combobox', { name: 'Full-screen capture uses' }) as HTMLSelectElement).value,
+      (screen.getByRole('combobox', { name: 'Full-screen capture uses' }) as HTMLSelectElement)
+        .value,
     ).toBe('Monitor under cursor');
     expect(
       (screen.getByRole('combobox', { name: 'Video format' }) as HTMLSelectElement).value,
@@ -64,9 +65,9 @@ describe('CapturePage', () => {
         .filter((radio) => radio.getAttribute('aria-checked') === 'true'),
     ).toHaveLength(1);
     expect(screen.getByRole('radio', { name: '15' }).getAttribute('aria-checked')).toBe('true');
-    expect(
-      (screen.getByLabelText('Microphone device') as HTMLSelectElement).value,
-    ).toBe('Default microphone');
+    expect((screen.getByLabelText('Microphone device') as HTMLSelectElement).value).toBe(
+      'Default microphone',
+    );
     expect(screen.getByText('Default microphone')).not.toBeNull();
     expect((screen.getByLabelText('FFmpeg location') as HTMLInputElement).value).toBe(
       BUNDLED_FFMPEG_PATH,

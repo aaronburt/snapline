@@ -205,7 +205,7 @@
     if (current === null || !current.steps.some((step) => step.step === 'copy_link')) {
       return;
     }
-    const steps = current.steps.map((step) =>
+    const steps: StepDto[] = current.steps.map((step) =>
       step.step === 'copy_link' ? { step: 'copy_link', format: linkFormatValue(label) } : step,
     );
     void persist(current, steps);

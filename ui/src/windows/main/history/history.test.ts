@@ -412,6 +412,10 @@ describe('History sharing', () => {
   });
 
   it('operates the Upload elsewhere menu with the keyboard and returns focus', async () => {
+    uploads.destinations.mockResolvedValue([
+      { id: 's3-prod', name: 'Amazon S3', configured: true },
+      { id: 'imgur', name: 'Imgur', configured: true },
+    ]);
     mocks.page.mockResolvedValue(
       page([
         capture(1, {

@@ -17,14 +17,17 @@
   <span class="label">{label}</span>
   <span class="row">
     <input
-      id={id}
+      {id}
       type={visible ? 'text' : 'password'}
       aria-label={label}
       placeholder={saved ? 'Saved' : ''}
       spellcheck="false"
       autocomplete="off"
       {value}
-      oninput={(event) => oninput?.(event.currentTarget.value)}
+      oninput={(event) => {
+        value = event.currentTarget.value;
+        oninput?.(value);
+      }}
     />
     <button
       type="button"

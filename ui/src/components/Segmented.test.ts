@@ -18,9 +18,7 @@ describe('Segmented', () => {
     expect(screen.getAllByRole('radio')).toHaveLength(3);
     await fireEvent.click(screen.getByRole('radio', { name: 'Videos' }));
     expect(onchange).toHaveBeenCalledWith('Videos');
-    expect(screen.getByRole('radio', { name: 'Videos' }).getAttribute('aria-checked')).toBe(
-      'true',
-    );
+    expect(screen.getByRole('radio', { name: 'Videos' }).getAttribute('aria-checked')).toBe('true');
   });
 
   it('moves through the options with the arrow keys', async () => {

@@ -17,13 +17,9 @@ describe('SegmentedRow', () => {
       },
     });
     expect(screen.getByRole('radiogroup', { name: 'Image format' })).not.toBeNull();
-    expect(screen.getByRole('radio', { name: 'PNG' }).getAttribute('aria-checked')).toBe(
-      'true',
-    );
+    expect(screen.getByRole('radio', { name: 'PNG' }).getAttribute('aria-checked')).toBe('true');
     await fireEvent.click(screen.getByRole('radio', { name: 'WebP' }));
     expect(onchange).toHaveBeenCalledWith('WebP');
-    expect(screen.getByRole('radio', { name: 'WebP' }).getAttribute('aria-checked')).toBe(
-      'true',
-    );
+    expect(screen.getByRole('radio', { name: 'WebP' }).getAttribute('aria-checked')).toBe('true');
   });
 });

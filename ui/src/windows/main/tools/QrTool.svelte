@@ -183,7 +183,11 @@
           placeholder="https://example.com"
         />
         <div class="makerow">
-          <div class="preview" role={svg ? 'img' : undefined} aria-label={svg ? 'QR code' : undefined}>
+          <div
+            class="preview"
+            role={svg ? 'img' : undefined}
+            aria-label={svg ? 'QR code' : undefined}
+          >
             {#if svg}
               {@html svg}
             {:else}
@@ -194,8 +198,18 @@
             {/if}
           </div>
           <div class="side">
-            <Button icon="copy" onclick={copyImage} disabled={!svg} title={svg ? undefined : 'Type text to make a QR code first.'}>Copy image</Button>
-            <Button icon="save" onclick={savePng} disabled={!svg} title={svg ? undefined : 'Type text to make a QR code first.'}>Save as PNG</Button>
+            <Button
+              icon="copy"
+              onclick={copyImage}
+              disabled={!svg}
+              title={svg ? undefined : 'Type text to make a QR code first.'}>Copy image</Button
+            >
+            <Button
+              icon="save"
+              onclick={savePng}
+              disabled={!svg}
+              title={svg ? undefined : 'Type text to make a QR code first.'}>Save as PNG</Button
+            >
           </div>
         </div>
         {#if makeError}

@@ -134,7 +134,9 @@
               }}
             />
             {#if workflow.isDefault}
-              <span id={`default-note-${workflow.id}`} class="sr-only">{defaultWorkflowTooltip}</span>
+              <span id={`default-note-${workflow.id}`} class="sr-only"
+                >{defaultWorkflowTooltip}</span
+              >
             {/if}
           </label>
         </div>

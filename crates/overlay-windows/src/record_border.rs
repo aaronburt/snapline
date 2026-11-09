@@ -8,12 +8,10 @@ use snapline_core::overlay::SnapSet;
 use snapline_core::ports::{FrozenDesktop, Monitor};
 use thiserror::Error;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{
-    COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM,
-};
+use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC, SelectObject,
-    ValidateRect, AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
+    ValidateRect, AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION,
     DIB_RGB_COLORS, HGDIOBJ,
 };
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
@@ -21,13 +19,13 @@ use windows::Win32::UI::HiDpi::{
     SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-    IsWindowVisible, PostMessageW, PostQuitMessage, RegisterClassExW, SetWindowDisplayAffinity,
-    ShowWindow, TranslateMessage, UnregisterClassW, UpdateLayeredWindow,
-    HTTRANSPARENT, MA_NOACTIVATE, MSG, SW_SHOWNOACTIVATE, ULW_ALPHA, WDA_EXCLUDEFROMCAPTURE,
-    WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_MOUSEACTIVATE, WM_NCHITTEST, WM_PAINT,
-    WINDOW_DISPLAY_AFFINITY, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSEXW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, IsWindowVisible,
+    PostMessageW, PostQuitMessage, RegisterClassExW, SetWindowDisplayAffinity, ShowWindow,
+    TranslateMessage, UnregisterClassW, UpdateLayeredWindow, HTTRANSPARENT, MA_NOACTIVATE, MSG,
+    SW_SHOWNOACTIVATE, ULW_ALPHA, WDA_EXCLUDEFROMCAPTURE, WINDOW_DISPLAY_AFFINITY, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_MOUSEACTIVATE, WM_NCHITTEST, WM_PAINT,
+    WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 use crate::window::Context;
@@ -387,7 +385,13 @@ fn create_border(
         // SAFETY: the window handle is live and owned by this thread.
         unsafe { SetWindowDisplayAffinity(hwnd, WINDOW_AFFINITY) }
             .map_err(|error| RecordBorderError::Affinity(error.to_string()))?;
-        paint_border(hwnd, width, height, geometry.thickness, border_colour(theme))?;
+        paint_border(
+            hwnd,
+            width,
+            height,
+            geometry.thickness,
+            border_colour(theme),
+        )?;
         // SAFETY: the window handle is live and owned by this thread.
         unsafe {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
@@ -448,16 +452,8 @@ fn paint_border(
         ));
     }
     // SAFETY: the info structure is live and the bits pointer is a valid out-parameter.
-    let bitmap = unsafe {
-        CreateDIBSection(
-            Some(screen),
-            &info,
-            DIB_RGB_COLORS,
-            &mut bits,
-            None,
-            0,
-        )
-    };
+    let bitmap =
+        unsafe { CreateDIBSection(Some(screen), &info, DIB_RGB_COLORS, &mut bits, None, 0) };
     let bitmap = match bitmap {
         Ok(bitmap) => bitmap,
         Err(error) => {
@@ -491,10 +487,7 @@ fn paint_border(
     // SAFETY: the DIB section allocated exactly four bytes per pixel for this size.
     let buffer = unsafe { std::slice::from_raw_parts_mut(bits.cast::<u8>(), length) };
     write_frame(buffer, width, height, thickness, pixel);
-    let target = POINT {
-        x: 0,
-        y: 0,
-    };
+    let target = POINT { x: 0, y: 0 };
     let size = SIZE {
         cx: width,
         cy: height,
@@ -543,7 +536,8 @@ fn pixel(colour: [f32; 4]) -> [u8; 4] {
 fn write_frame(buffer: &mut [u8], width: i32, height: i32, thickness: i32, pixel: [u8; 4]) {
     let columns = usize::try_from(width.max(0)).unwrap_or(0);
     let rows = usize::try_from(height.max(0)).unwrap_or(0);
-    let edge = usize::try_from(thickness.max(0)).unwrap_or(0)
+    let edge = usize::try_from(thickness.max(0))
+        .unwrap_or(0)
         .min(columns)
         .min(rows);
     if columns == 0 || rows == 0 || edge == 0 {
@@ -713,7 +707,10 @@ mod tests {
         let mut buffer = vec![0_u8; (width * height * 4) as usize];
         write_frame(&mut buffer, width, height, 2, [1, 2, 3, 4]);
         assert_eq!(&buffer[0..4], &[1, 2, 3, 4]);
-        assert_eq!(&buffer[(width as usize * 4 - 4)..], &[1, 2, 3, 4]);
+        assert_eq!(
+            &buffer[(width as usize * 4 - 4)..(width as usize * 4)],
+            &[1, 2, 3, 4]
+        );
         let middle = (4 * width as usize + 5) * 4;
         assert_eq!(&buffer[middle..middle + 4], &[0, 0, 0, 0]);
     }
@@ -779,7 +776,10 @@ mod tests {
         assert_eq!(target.monitor, 2);
         assert!(target.is_window());
         assert_eq!(target.window, Some(window));
-        assert_eq!(target.window.as_ref().map(|window| window.handle), Some(0x1234));
+        assert_eq!(
+            target.window.as_ref().map(|window| window.handle),
+            Some(0x1234)
+        );
         assert_eq!(
             target.window.as_ref().map(|window| window.title.clone()),
             Some(String::from("Editor"))
@@ -803,7 +803,10 @@ mod tests {
         let request = RecordPickRequest::new(FrozenDesktop {
             monitors: Vec::new(),
         });
-        assert_eq!(pick_target(request).err(), Some(RecordPickError::NoMonitors));
+        assert_eq!(
+            pick_target(request).err(),
+            Some(RecordPickError::NoMonitors)
+        );
     }
 
     #[test]

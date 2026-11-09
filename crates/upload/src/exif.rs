@@ -101,7 +101,6 @@ pub struct StripReport {
     pub orientation: Option<Orientation>,
 }
 
-#[must_use]
 pub fn strip(bytes: &[u8]) -> Result<Vec<u8>, ExifError> {
     strip_with_report(bytes).map(|report| report.bytes)
 }
@@ -121,7 +120,8 @@ fn strip_jpeg(bytes: &[u8]) -> Result<StripReport, ExifError> {
         .map_err(|_| ExifError::Malformed(ImageKind::Jpeg))?;
     let orientation = jpeg.exif().and_then(|exif| tiff_orientation(&exif));
     jpeg.set_exif(None);
-    jpeg.segments_mut().retain(|segment| !is_private_app1(segment));
+    jpeg.segments_mut()
+        .retain(|segment| !is_private_app1(segment));
     Ok(StripReport {
         bytes: jpeg.encoder().bytes().to_vec(),
         format: ImageKind::Jpeg,

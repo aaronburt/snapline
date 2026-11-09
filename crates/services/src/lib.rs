@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -71,8 +73,7 @@ pub trait FolderPicker: Send + Sync {
     fn pick_folder(&self, current: Option<&Path>) -> Result<Option<PathBuf>, ServiceError>;
 }
 
-pub type CodecFactory =
-    dyn Fn() -> Result<Arc<dyn ImageCodec>, ServiceError> + Send + Sync;
+pub type CodecFactory = dyn Fn() -> Result<Arc<dyn ImageCodec>, ServiceError> + Send + Sync;
 
 struct SettingsState {
     paths: Option<Paths>,

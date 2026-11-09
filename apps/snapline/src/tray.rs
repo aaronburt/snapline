@@ -172,7 +172,6 @@ pub fn set_paused(app: &AppHandle, paused: bool) {
     }
 }
 
-#[allow(dead_code)]
 pub fn set_recording(app: &AppHandle, elapsed_seconds: Option<u64>) {
     let handle = app.state::<TrayHandle>();
     let menu_changed = {

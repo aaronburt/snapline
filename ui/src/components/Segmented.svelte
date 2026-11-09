@@ -7,13 +7,7 @@
     onchange?: (value: string) => void;
   }
 
-  let {
-    options,
-    value = $bindable(''),
-    label,
-    labelledby,
-    onchange,
-  }: Props = $props();
+  let { options, value = $bindable(''), label, labelledby, onchange }: Props = $props();
 
   const active = $derived(options.includes(value) ? value : options[0]);
 
@@ -21,9 +15,7 @@
     if (options.length === 0) {
       return;
     }
-    if (
-      !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)
-    ) {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
       return;
     }
     const current = Math.max(0, options.indexOf(active));

@@ -130,7 +130,8 @@ describe('HotkeysPage', () => {
     expect(screen.getByText('Take over the PrtSc key')).not.toBeNull();
     expect(screen.getByText('Warn about clashes')).not.toBeNull();
     expect(
-      (screen.getByRole('checkbox', { name: /Take over the PrtSc key/ }) as HTMLInputElement).checked,
+      (screen.getByRole('checkbox', { name: /Take over the PrtSc key/ }) as HTMLInputElement)
+        .checked,
     ).toBe(true);
     expect(
       (screen.getByRole('checkbox', { name: /Warn about clashes/ }) as HTMLInputElement).checked,
@@ -164,13 +165,9 @@ describe('HotkeysPage', () => {
     render(HotkeysPage);
     await begin('capture_region');
     await fireEvent.keyDown(window, { key: 'F5' });
-    await waitFor(() =>
-      expect(hotkeysIpc.preview).toHaveBeenCalledWith('capture_region', 'F5'),
-    );
+    await waitFor(() => expect(hotkeysIpc.preview).toHaveBeenCalledWith('capture_region', 'F5'));
     expect(
-      await within(row('capture_region')).findByText(
-        'Off: another app is using this shortcut.',
-      ),
+      await within(row('capture_region')).findByText('Off: another app is using this shortcut.'),
     ).not.toBeNull();
   });
 
@@ -179,17 +176,14 @@ describe('HotkeysPage', () => {
     render(HotkeysPage);
     await begin('capture_region');
     await fireEvent.keyDown(window, { key: 'F5' });
-    await waitFor(() =>
-      expect(hotkeysIpc.preview).toHaveBeenCalledWith('capture_region', 'F5'),
-    );
+    await waitFor(() => expect(hotkeysIpc.preview).toHaveBeenCalledWith('capture_region', 'F5'));
     expect(within(row('capture_region')).queryByText(/Off:/)).toBeNull();
   });
 
   it('marks rows that the service reports as blocked', async () => {
     hotkeysIpc.get.mockResolvedValue({
       bindings: bindings().filter(
-        (binding) =>
-          binding.owner !== 'capture_region' && binding.owner !== 'capture_window',
+        (binding) => binding.owner !== 'capture_region' && binding.owner !== 'capture_window',
       ),
       blocked: [
         {
@@ -218,9 +212,7 @@ describe('HotkeysPage', () => {
       await within(row('capture_region')).findByText('Off: also used by Record GIF.'),
     ).not.toBeNull();
     expect(
-      await within(row('capture_window')).findByText(
-        'Off: another app is using this shortcut.',
-      ),
+      await within(row('capture_window')).findByText('Off: another app is using this shortcut.'),
     ).not.toBeNull();
   });
 

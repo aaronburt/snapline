@@ -488,16 +488,44 @@ fn read_icons(root: &Path) -> Result<Vec<(String, String)>> {
     let end = rest
         .find("\n} as const;")
         .context("icons record is not closed")?;
+    let record = &rest[..end];
+    let bytes = record.as_bytes();
     let mut icons = Vec::new();
-    for line in rest[..end].lines().skip(1) {
-        let line = line.trim().trim_end_matches(',');
-        let Some((name, value)) = line.split_once(": '") else {
+    let mut index = 0;
+    while index < bytes.len() {
+        let start = index;
+        while index < bytes.len() && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+        {
+            index += 1;
+        }
+        if index == start {
+            index += 1;
             continue;
-        };
-        let Some(path) = value.strip_suffix('\'') else {
+        }
+        let name = &record[start..index];
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if bytes.get(index) != Some(&b':') {
             continue;
-        };
-        icons.push((name.trim().to_string(), path.to_string()));
+        }
+        index += 1;
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if bytes.get(index) != Some(&b'\'') {
+            continue;
+        }
+        index += 1;
+        let path_start = index;
+        while index < bytes.len() && bytes[index] != b'\'' {
+            index += 1;
+        }
+        if index >= bytes.len() {
+            break;
+        }
+        icons.push((name.to_owned(), record[path_start..index].to_owned()));
+        index += 1;
     }
     Ok(icons)
 }

@@ -15,9 +15,7 @@ describe('StepList', () => {
   it('renders numbered steps and reorder handles', () => {
     render(StepList, { props: { items } });
     expect(screen.getByText('Copy image to clipboard')).not.toBeNull();
-    expect(
-      screen.getByRole('button', { name: 'Reorder: Copy image to clipboard' }),
-    ).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Reorder: Copy image to clipboard' })).not.toBeNull();
     expect(screen.getAllByRole('checkbox')).toHaveLength(3);
   });
 

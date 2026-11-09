@@ -11,16 +11,7 @@
   import TestStatus from './TestStatus.svelte';
   import { errorText } from './model';
 
-  interface SftpView extends DestinationView {
-    host?: string | null;
-    port?: number | null;
-    username?: string | null;
-    authMethod?: string | null;
-    privateKeyPath?: string | null;
-    remoteFolder?: string | null;
-    passwordSaved?: boolean;
-    passphraseSaved?: boolean;
-  }
+  type SftpView = DestinationView;
 
   interface SftpInput extends DestinationInput {
     host?: string | null;
@@ -91,16 +82,16 @@
       error = 'Enter the SFTP username.';
       return;
     }
-    if (auth === PASSWORD && password === '' && !passwordSaved) {
-      error = 'Enter the SFTP password.';
-      return;
-    }
     if (auth === PRIVATE_KEY && privateKeyPath.trim() === '') {
       error = 'Choose the SFTP private key file.';
       return;
     }
     if (!publicUrlPattern.includes('<key>')) {
       error = 'The public URL pattern must contain <key>.';
+      return;
+    }
+    if (auth === PASSWORD && password === '' && !passwordSaved) {
+      error = 'Enter the SFTP password.';
       return;
     }
     error = '';
@@ -115,8 +106,7 @@
         authMethod: auth === PRIVATE_KEY ? 'private_key' : 'password',
         privateKeyPath: auth === PRIVATE_KEY ? privateKeyPath.trim() : null,
         password: auth === PASSWORD && password !== '' ? password : null,
-        passphrase:
-          auth === PRIVATE_KEY && passphrase !== '' ? passphrase : null,
+        passphrase: auth === PRIVATE_KEY && passphrase !== '' ? passphrase : null,
         remoteFolder: remoteFolder.trim(),
         publicUrlPattern: publicUrlPattern.trim(),
         headers: [],

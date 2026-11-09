@@ -21,12 +21,7 @@
   import CaptureGrid from './CaptureGrid.svelte';
   import CaptureList from './CaptureList.svelte';
   import DetailPane from './DetailPane.svelte';
-  import {
-    filterValue,
-    formatBytes,
-    groupCaptures,
-    historyFilters,
-  } from './data';
+  import { filterValue, formatBytes, groupCaptures, historyFilters } from './data';
   import { searchQuery } from './search';
 
   let filterLabel = $state('All');
@@ -282,7 +277,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onkeydown} />
+<svelte:window {onkeydown} />
 
 <main class="page">
   <div class="pagehead">

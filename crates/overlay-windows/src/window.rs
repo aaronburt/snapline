@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 use std::time::Instant;
 
-use snapline_core::annotate::{crop_image, Document, Shape};
+use snapline_core::annotate::{crop_image, Document};
 use snapline_core::geometry::{Point, Px, Rect, Size};
 use snapline_core::image::Image;
 use snapline_core::overlay::{
@@ -24,25 +24,22 @@ use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
     VIRTUAL_KEY, VK_A, VK_B, VK_C, VK_CONTROL, VK_DELETE, VK_DOWN, VK_E, VK_ESCAPE, VK_H, VK_I,
-    VK_LEFT, VK_MENU, VK_N, VK_P, VK_R, VK_RETURN, VK_RIGHT, VK_S, VK_SHIFT, VK_SPACE, VK_T, VK_TAB,
-    VK_UP, VK_V, VK_Y, VK_Z,
+    VK_LEFT, VK_MENU, VK_N, VK_P, VK_R, VK_RETURN, VK_RIGHT, VK_S, VK_SHIFT, VK_SPACE, VK_T,
+    VK_TAB, VK_UP, VK_V, VK_Y, VK_Z,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos,
     GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId, KillTimer,
-    LoadCursorW,
-    PostQuitMessage, RegisterClassExW, SetCursor, SetForegroundWindow, SetTimer, SetWindowLongPtrW,
-    ShowWindow, TranslateMessage, UnregisterClassW, GWLP_USERDATA, HTCLIENT, IDC_ARROW, IDC_CROSS,
-    MA_ACTIVATE, MSG, SW_SHOW, WM_CLOSE, WM_CTLCOLOREDIT, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCCREATE, WM_PAINT,
-    WM_RBUTTONDOWN, WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    LoadCursorW, PostQuitMessage, RegisterClassExW, SetCursor, SetForegroundWindow, SetTimer,
+    SetWindowLongPtrW, ShowWindow, TranslateMessage, UnregisterClassW, GWLP_USERDATA, HTCLIENT,
+    IDC_ARROW, IDC_CROSS, MA_ACTIVATE, MSG, SW_SHOW, WM_CLOSE, WM_CTLCOLOREDIT, WM_DESTROY,
+    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
+    WM_NCCREATE, WM_PAINT, WM_RBUTTONDOWN, WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW,
+    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
-#[allow(dead_code)]
 #[path = "../../platform-windows/src/uia.rs"]
 mod uia;
-#[allow(dead_code)]
 #[path = "../../platform-windows/src/windows_enum.rs"]
 mod windows_enum;
 
@@ -742,38 +739,6 @@ impl Context {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn document(&self) -> Option<&Document> {
-        self.scene.document.as_ref()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn document_origin(&self) -> Point {
-        self.scene.document_rect.origin()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn add_shape(&mut self, shape: Shape) -> bool {
-        self.scene
-            .document
-            .as_mut()
-            .is_some_and(|document| document.add(shape).is_ok())
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn place_text(&mut self, origin: Point, text: impl Into<String>) -> bool {
-        let colour = core_colour(self.scene.colour);
-        self.add_shape(Shape::text(origin, text, colour))
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn crop_to(&mut self, rect: Rect) -> bool {
-        self.scene
-            .document
-            .as_mut()
-            .is_some_and(|document| document.crop_to(rect).is_ok())
-    }
-
     pub(crate) fn undo(&mut self) -> bool {
         let changed = self
             .scene
@@ -817,7 +782,9 @@ impl Context {
         let icons = &mut self.icons;
         let stroke = self.stroke.as_ref();
         let focus = self.toolbar_focus;
-        draw_window(gpu, icons, window, index, scene, layout, tools, stroke, focus);
+        draw_window(
+            gpu, icons, window, index, scene, layout, tools, stroke, focus,
+        );
     }
 
     fn redraw_active(&mut self) {
@@ -1113,7 +1080,12 @@ impl Context {
     }
 
     fn focus_toolbar(&mut self, hwnd: HWND, delta: i32) -> bool {
-        let Some(count) = self.layout.toolbar.as_ref().map(|toolbar| toolbar.buttons.len()) else {
+        let Some(count) = self
+            .layout
+            .toolbar
+            .as_ref()
+            .map(|toolbar| toolbar.buttons.len())
+        else {
             self.toolbar_focus = None;
             return false;
         };
@@ -2241,6 +2213,8 @@ mod tests {
         let mut feed = SnapFeed::new(SnapSet::new(vec![rect(0, 0, 500, 500)], vec![]));
         feed.set_control(Some(rect(100, 100, 50, 50)));
         let (mut overlay, _) = Overlay::new().on(Input::SnapCandidates(feed.set()));
+        let (next, _) = overlay.on(Input::Tab);
+        overlay = next;
         let (next, _) = overlay.on(Input::Move(point(120, 120)));
         overlay = next;
         assert_eq!(overlay.snap.hovered, Some(rect(100, 100, 50, 50)));

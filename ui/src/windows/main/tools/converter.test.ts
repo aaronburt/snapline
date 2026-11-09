@@ -88,6 +88,7 @@ describe('ConverterTool', () => {
   it('starts a GIF conversion from the selected capture and shows progress', async () => {
     render(ConverterTool);
     await waitFor(() => expect(history.historyPage).toHaveBeenCalled());
+    await screen.findByText('recording-1.mp4');
     await fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
     await waitFor(() =>
       expect(ipc.convertStart).toHaveBeenCalledWith(
@@ -147,6 +148,7 @@ describe('ConverterTool', () => {
       });
     render(ConverterTool);
     await waitFor(() => expect(history.historyPage).toHaveBeenCalled());
+    await screen.findByText('recording-1.mp4');
     await fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
     await waitFor(() => expect(ipc.convertProgress).toHaveBeenCalledWith(7));
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -162,6 +164,7 @@ describe('ConverterTool', () => {
     });
     render(ConverterTool);
     await waitFor(() => expect(history.historyPage).toHaveBeenCalled());
+    await screen.findByText('recording-1.mp4');
     await fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('FFmpeg is not available.');

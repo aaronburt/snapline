@@ -54,7 +54,7 @@ describe('QrTool', () => {
     const { container } = render(QrTool);
     await openMake();
     expect(screen.getByText('Text or link')).not.toBeNull();
-    expect(container.querySelector('.preview svg')).toBeNull();
+    expect(container.querySelector('.preview [role="img"]')).toBeNull();
     expect(screen.getByRole('button', { name: 'Copy image' }).hasAttribute('disabled')).toBe(true);
     expect(screen.getByRole('button', { name: 'Save as PNG' }).hasAttribute('disabled')).toBe(true);
   });
@@ -74,7 +74,9 @@ describe('QrTool', () => {
     await fireEvent.input(input, { target: { value: 'hello' } });
     await waitFor(() => expect(ipc.qrMake).toHaveBeenCalled());
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Copy image' }).hasAttribute('disabled')).toBe(false),
+      expect(screen.getByRole('button', { name: 'Copy image' }).hasAttribute('disabled')).toBe(
+        false,
+      ),
     );
     await fireEvent.click(screen.getByRole('button', { name: 'Copy image' }));
     await waitFor(() => expect(ipc.qrCopyImage).toHaveBeenCalledWith('hello'));
@@ -128,9 +130,7 @@ describe('QrTool', () => {
     });
     render(QrTool);
     await fireEvent.click(screen.getByRole('button', { name: 'Select area' }));
-    expect(
-      await screen.findByText('This part of Snapline is not built yet.'),
-    ).not.toBeNull();
+    expect(await screen.findByText('This part of Snapline is not built yet.')).not.toBeNull();
     expect(screen.queryByLabelText('QR code text')).toBeNull();
   });
 

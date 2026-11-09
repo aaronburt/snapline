@@ -49,7 +49,9 @@ fn map_error(error: OverlayError) -> core_ports::OverlayError {
     match error {
         OverlayError::Cancelled => core_ports::OverlayError::Cancelled,
         OverlayError::NoMonitors => core_ports::OverlayError::NoMonitors,
-        OverlayError::Thread => core_ports::OverlayError::Failed("The overlay thread could not be started.".to_string()),
+        OverlayError::Thread => {
+            core_ports::OverlayError::Failed("The overlay thread could not be started.".to_string())
+        }
         OverlayError::Device(message) => core_ports::OverlayError::Failed(message),
     }
 }

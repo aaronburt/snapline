@@ -23,9 +23,7 @@ export type PinSource = 'file' | 'clipboard';
 
 type PinRequest = { kind: 'pinFile' } | { kind: 'pinClipboard' } | { kind: 'pinMenu' };
 
-type PinResponse =
-  | { kind: 'pinned'; data: { source: PinSource } }
-  | { kind: 'pinCancelled' };
+type PinResponse = { kind: 'pinned'; data: { source: PinSource } } | { kind: 'pinCancelled' };
 
 function unexpected(): IpcError {
   return {

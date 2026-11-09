@@ -21,9 +21,7 @@ describe('TitleBar', () => {
     render(TitleBar);
     expect(screen.getByText('Snapline')).not.toBeNull();
     expect(screen.getByLabelText('Search captures')).not.toBeNull();
-    expect(
-      screen.getByPlaceholderText('Search by name, app, text in image…'),
-    ).not.toBeNull();
+    expect(screen.getByPlaceholderText('Search by name, app, text in image…')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Minimise' })).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Maximise' })).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Close' })).not.toBeNull();

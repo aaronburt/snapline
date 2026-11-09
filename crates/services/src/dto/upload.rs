@@ -210,10 +210,7 @@ impl std::fmt::Debug for DestinationInput {
             .field("endpoint", &self.endpoint)
             .field("region", &self.region)
             .field("bucket", &self.bucket)
-            .field(
-                "access_key_id",
-                &self.access_key_id.as_ref().map(|_| "***"),
-            )
+            .field("access_key_id", &self.access_key_id.as_ref().map(|_| "***"))
             .field(
                 "secret_access_key",
                 &self.secret_access_key.as_ref().map(|_| "***"),
@@ -297,7 +294,9 @@ pub enum DestinationReq {
 pub enum DestinationResp {
     Destinations(Vec<DestinationViewDto>),
     Destination(DestinationViewDto),
-    Removed { id: String },
+    Removed {
+        id: String,
+    },
     Test {
         outcome: DestinationTestOutcomeDto,
     },

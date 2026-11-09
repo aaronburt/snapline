@@ -2,13 +2,7 @@
   import Badge from '../../../components/Badge.svelte';
   import Thumb from '../../../components/Thumb.svelte';
   import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
-  import {
-    badgeStatus,
-    formatBytes,
-    formatCaptured,
-    formatDuration,
-    typeLabel,
-  } from './data';
+  import { badgeStatus, formatBytes, formatCaptured, formatDuration, typeLabel } from './data';
 
   interface Props {
     items: HistoryCaptureDto[];
@@ -98,7 +92,7 @@
         >
           <td>
             <span class="file">
-              <span class="thumb"><Thumb id={capture.id} alt={capture.name} /></span>
+              <span class="thumb"><Thumb id={capture.id} alt="" /></span>
               <span class="filename">{capture.name}</span>
             </span>
           </td>

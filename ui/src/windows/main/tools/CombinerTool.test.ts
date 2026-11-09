@@ -79,7 +79,9 @@ describe('CombinerTool', () => {
     expect(screen.getByText('Image combiner')).not.toBeNull();
     expect(await screen.findByText('capture-1.png')).not.toBeNull();
     expect(screen.getByText('capture-2.png')).not.toBeNull();
-    expect(screen.getByRole('radio', { name: 'Side by side' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('radio', { name: 'Side by side' }).getAttribute('aria-checked')).toBe(
+      'true',
+    );
     expect(screen.getByRole('radio', { name: 'Start' }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByRole('radio', { name: 'Transparent' }).getAttribute('aria-checked')).toBe(
       'true',
@@ -145,7 +147,9 @@ describe('CombinerTool', () => {
     );
     expect(await screen.findByText('picked.png')).not.toBeNull();
     await waitFor(() =>
-      expect(previewRequests().at(-1)?.data?.sources).toEqual([{ kind: 'picked', data: { id: 3 } }]),
+      expect(previewRequests().at(-1)?.data?.sources).toEqual([
+        { kind: 'picked', data: { id: 3 } },
+      ]),
     );
   });
 
@@ -172,18 +176,20 @@ describe('CombinerTool', () => {
       expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(false),
     );
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(mocks.call).toHaveBeenCalledWith('ipc_tool', {
-      kind: 'combineSave',
-      data: {
-        sources: [{ kind: 'history', data: { id: 1 } }],
-        options: {
-          layout: 'sideBySide',
-          spacing: 8,
-          align: 'start',
-          background: { kind: 'transparent' },
+    await waitFor(() =>
+      expect(mocks.call).toHaveBeenCalledWith('ipc_tool', {
+        kind: 'combineSave',
+        data: {
+          sources: [{ kind: 'history', data: { id: 1 } }],
+          options: {
+            layout: 'sideBySide',
+            spacing: 8,
+            align: 'start',
+            background: { kind: 'transparent' },
+          },
         },
-      },
-    }));
+      }),
+    );
     expect(await screen.findByText('Saved to History')).not.toBeNull();
   });
 

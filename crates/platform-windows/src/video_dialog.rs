@@ -7,11 +7,11 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED,
 };
+use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::Shell::{
     FileOpenDialog, IFileOpenDialog, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST,
     SIGDN_FILESYSPATH,
 };
-use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 
 #[derive(Debug, Error)]
 pub enum VideoDialogError {

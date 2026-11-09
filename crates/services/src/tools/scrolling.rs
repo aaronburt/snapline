@@ -402,7 +402,7 @@ mod tests {
         let source = page(8, 140);
         let frames: Vec<Image> = [0_u32, 20, 40]
             .iter()
-            .map(|top| framed(&source, *top, 40, 4, 3))
+            .map(|top| framed(&source, *top, 47, 4, 3))
             .collect();
         let mut captures = frames.clone();
         captures.push(frames[2].clone());
@@ -414,13 +414,13 @@ mod tests {
         assert_eq!(outcome.stop, ScrollStop::Duplicate);
         assert_eq!(outcome.sticky_top, 4);
         assert_eq!(outcome.sticky_bottom, 3);
-        assert_eq!(outcome.image.height(), 80);
+        assert_eq!(outcome.image.height(), 87);
         for x in 0..8 {
             assert_eq!(outcome.image.pixel(x, 0), Ok(band_pixel(0, x)));
             let last = outcome.image.height() - 1;
             assert_eq!(outcome.image.pixel(x, last), Ok(band_pixel(1, x)));
         }
-        for y in 0..73 {
+        for y in 0..80 {
             assert_eq!(outcome.image.row(4 + y), source.row(4 + y));
         }
     }

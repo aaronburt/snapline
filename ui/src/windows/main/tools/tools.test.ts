@@ -51,7 +51,8 @@ describe('Tools page', () => {
 
   it('enables only the image editor and pin cards', async () => {
     const { container } = render(ToolsPage);
-    await waitFor(() => expect(mocks.available).toHaveBeenCalledWith('tool_pin'));
+    const pin = screen.getByText('Pin to screen').closest('button') as HTMLButtonElement;
+    await waitFor(() => expect(pin.disabled).toBe(false));
     const cards = Array.from(container.querySelectorAll<HTMLButtonElement>('.grid button'));
     expect(cards.length).toBe(8);
     expect(cards[4].disabled).toBe(false);
@@ -62,14 +63,11 @@ describe('Tools page', () => {
 
   it('shows the pin card description from the design', async () => {
     render(ToolsPage);
-    await waitFor(() => expect(mocks.available).toHaveBeenCalledWith('tool_pin'));
-    expect(screen.getByText('Keep an image floating above other windows.')).not.toBeNull();
+    expect(await screen.findByText('Keep an image floating above other windows.')).not.toBeNull();
   });
 
   it('keeps the pin card parked when the ports are missing', async () => {
-    mocks.available.mockImplementation(
-      async (tool: string) => tool === 'tool_editor',
-    );
+    mocks.available.mockImplementation(async (tool: string) => tool === 'tool_editor');
     render(ToolsPage);
     await waitFor(() => expect(mocks.available).toHaveBeenCalledWith('tool_pin'));
     const pin = screen.getByText('Pin to screen').closest('button') as HTMLButtonElement;
@@ -80,15 +78,16 @@ describe('Tools page', () => {
 
   it('opens the image editor from the card', async () => {
     render(ToolsPage);
-    await waitFor(() => expect(mocks.available).toHaveBeenCalled());
-    await fireEvent.click(screen.getByText('Image editor').closest('button') as Element);
+    const card = screen.getByText('Image editor').closest('button') as HTMLButtonElement;
+    await waitFor(() => expect(card.disabled).toBe(false));
+    await fireEvent.click(card);
     await waitFor(() => expect(mocks.openFile).toHaveBeenCalledTimes(1));
   });
 
   it('opens the native pin menu from the card', async () => {
     render(ToolsPage);
-    await waitFor(() => expect(mocks.available).toHaveBeenCalledWith('tool_pin'));
     const pin = screen.getByText('Pin to screen').closest('button') as HTMLButtonElement;
+    await waitFor(() => expect(pin.disabled).toBe(false));
     await fireEvent.click(pin);
     await waitFor(() => expect(mocks.pinMenu).toHaveBeenCalledTimes(1));
   });
@@ -99,8 +98,9 @@ describe('Tools page', () => {
       message: 'The clipboard does not contain an image.',
     });
     render(ToolsPage);
-    await waitFor(() => expect(mocks.available).toHaveBeenCalledWith('tool_pin'));
-    await fireEvent.click(screen.getByText('Pin to screen').closest('button') as Element);
+    const pin = screen.getByText('Pin to screen').closest('button') as HTMLButtonElement;
+    await waitFor(() => expect(pin.disabled).toBe(false));
+    await fireEvent.click(pin);
     await waitFor(() =>
       expect(screen.getByRole('status').textContent).toContain(
         'The clipboard does not contain an image.',

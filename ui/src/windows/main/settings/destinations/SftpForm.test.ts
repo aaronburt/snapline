@@ -91,11 +91,17 @@ describe('SftpForm', () => {
         onremove: vi.fn(),
       },
     });
-    await fireEvent.input(screen.getByLabelText('Host'), { target: { value: 'sftp.example.test' } });
+    await fireEvent.input(screen.getByLabelText('Host'), {
+      target: { value: 'sftp.example.test' },
+    });
     await fireEvent.input(screen.getByLabelText('Port (22)'), { target: { value: '2222' } });
     await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'snapline' } });
-    await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'correct horse' } });
-    await fireEvent.input(screen.getByLabelText('Remote folder'), { target: { value: '/srv/uploads' } });
+    await fireEvent.input(screen.getByLabelText('Password'), {
+      target: { value: 'correct horse' },
+    });
+    await fireEvent.input(screen.getByLabelText('Remote folder'), {
+      target: { value: '/srv/uploads' },
+    });
     await fireEvent.input(screen.getByLabelText('Public URL pattern'), {
       target: { value: 'https://cdn.example.test/<key>' },
     });

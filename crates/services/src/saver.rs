@@ -220,7 +220,7 @@ impl Saver {
             return Ok(SaveOutcome::unsaved(copied, image.width(), image.height()));
         }
 
-        let counter = counter_from(general);
+        let counter = naming::next_counter(counter_from(general));
         let format = image_format(general.image_format);
         let quality = quality_for(format, general.lossy_quality);
         let folder = self.folder(general, request.source_app.as_deref(), now);
@@ -252,7 +252,7 @@ impl Saver {
             .map_err(|_| SaveError::Io("The encoded image is too large.".to_owned()))?;
         io::write_atomic(&path, &encoded).map_err(|error| SaveError::Io(error.to_string()))?;
 
-        let next_counter = naming::next_counter(counter);
+        let next_counter = counter;
         if let Err(error) = self.settings.set_counter(next_counter) {
             tracing::warn!(%error, "the capture counter could not be saved");
         }

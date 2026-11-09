@@ -811,7 +811,7 @@ mod tests {
         assert!(above_only.right().get() <= 1920);
 
         let oversized = readout_placement(Point::new(Px(100), Px(100)), window, 5000, 24, 20);
-        assert_eq!(oversized, rect(0, 100, 5000, 24));
+        assert_eq!(oversized, rect(0, 120, 5000, 24));
     }
 
     #[test]

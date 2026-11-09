@@ -90,9 +90,9 @@ describe('GistForm', () => {
     expect(toggle.getAttribute('aria-pressed')).toBe('false');
     await fireEvent.click(toggle);
     expect(token.type).toBe('text');
-    expect(
-      screen.getByRole('button', { name: 'Hide Token' }).getAttribute('aria-pressed'),
-    ).toBe('true');
+    expect(screen.getByRole('button', { name: 'Hide Token' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
     await fireEvent.click(screen.getByRole('button', { name: 'Hide Token' }));
     expect(token.type).toBe('password');
   });

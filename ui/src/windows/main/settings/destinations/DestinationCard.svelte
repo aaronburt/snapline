@@ -1,11 +1,7 @@
 <script lang="ts">
   import Icon from '../../../../components/Icon.svelte';
   import type { DestinationView } from '../../../../lib/ipc/upload';
-  import {
-    destinationActionText,
-    destinationIcon,
-    destinationStatusText,
-  } from './model';
+  import { destinationActionText, destinationIcon, destinationStatusText } from './model';
 
   interface Props {
     view: DestinationView;

@@ -52,10 +52,7 @@ mod tests {
             snapline_core::geometry::Px(660),
             snapline_core::geometry::Px(500),
         );
-        assert_eq!(
-            selection_text(selection),
-            "660 by 500 pixels, X 280, Y 160"
-        );
+        assert_eq!(selection_text(selection), "660 by 500 pixels, X 280, Y 160");
     }
 
     #[test]

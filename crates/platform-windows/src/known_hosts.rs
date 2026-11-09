@@ -133,12 +133,7 @@ pub fn parse(text: &str) -> Vec<KnownHostEntry> {
     text.lines().flat_map(parse_line).collect()
 }
 
-pub fn check(
-    entries: &[KnownHostEntry],
-    host: &str,
-    port: u16,
-    key: &[u8],
-) -> HostKeyStatus {
+pub fn check(entries: &[KnownHostEntry], host: &str, port: u16, key: &[u8]) -> HostKeyStatus {
     let mut found = false;
     for entry in entries {
         if entry.port == port && host_matches(&entry.host, host) {
@@ -216,9 +211,7 @@ fn parse_host_token(token: &str) -> Option<(String, u16)> {
         return Some((host.to_owned(), port));
     }
     if let Some((host, value)) = token.rsplit_once(':') {
-        if !host.is_empty()
-            && !value.is_empty()
-            && value.bytes().all(|byte| byte.is_ascii_digit())
+        if !host.is_empty() && !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
         {
             if let Ok(port) = value.parse::<u16>() {
                 if port != 0 {
@@ -247,7 +240,9 @@ fn wildcard(pattern: &[u8], text: &[u8]) -> bool {
         return text.is_empty();
     }
     match pattern[0] {
-        b'*' => wildcard(&pattern[1..], text) || (!text.is_empty() && wildcard(pattern, &text[1..])),
+        b'*' => {
+            wildcard(&pattern[1..], text) || (!text.is_empty() && wildcard(pattern, &text[1..]))
+        }
         b'?' => !text.is_empty() && wildcard(&pattern[1..], &text[1..]),
         byte => !text.is_empty() && byte == text[0] && wildcard(&pattern[1..], &text[1..]),
     }
@@ -271,8 +266,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut encoded = String::with_capacity((bytes.len() + 2) / 3 * 4);
     for chunk in bytes.chunks(3) {
         let first = chunk[0];
@@ -545,10 +539,7 @@ mod tests {
             .expect("remember");
         let text = fs::read_to_string(&path).expect("host keys");
         assert!(text.starts_with("# keep me\nother.example.com ssh-rsa b3RoZXI=\n"));
-        assert!(text.contains(&format!(
-            "[example.com]:2222 ssh-ed25519 {}",
-            encoded_key()
-        )));
+        assert!(text.contains(&format!("[example.com]:2222 ssh-ed25519 {}", encoded_key())));
     }
 
     #[test]

@@ -8,7 +8,8 @@ pub const EMPTY_PAYLOAD_SHA256: &str =
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 pub const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
 
-const HEX: &[u8; 16] = b"0123456789ABCDEF";
+const HEX: &[u8; 16] = b"0123456789abcdef";
+const PERCENT_HEX: &[u8; 16] = b"0123456789ABCDEF";
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Credentials {
@@ -196,8 +197,8 @@ fn encode(value: &str, keep_slash: bool) -> String {
             continue;
         }
         encoded.push('%');
-        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        encoded.push(char::from(PERCENT_HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(PERCENT_HEX[usize::from(byte & 0x0f)]));
     }
     encoded
 }

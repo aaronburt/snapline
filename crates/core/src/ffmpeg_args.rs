@@ -899,7 +899,7 @@ mod tests {
     fn software_encoders_use_crf_or_lossless_mode() {
         for (encoder, format, value, lossless_flag) in [
             (VideoEncoder::LibX264, VideoFormat::Mp4H264, "20", "-crf"),
-            (VideoEncoder::LibX265, VideoFormat::Mp4H265, "26", "-crf"),
+            (VideoEncoder::LibX265, VideoFormat::Mp4H265, "20", "-crf"),
         ] {
             let request = VideoRequest {
                 format,

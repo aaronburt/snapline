@@ -659,7 +659,7 @@ mod tests {
     #[test]
     fn settings_dto_mirrors_the_store_defaults() {
         let dto = SettingsDto::from(&store::Settings::default());
-        assert_eq!(dto.version, 1);
+        assert_eq!(dto.version, 2);
         assert!(dto.general.launch_at_signin);
         assert_eq!(dto.general.image_format, ImageFormatDto::Png);
         assert_eq!(dto.capture.magnifier_zoom, MagnifierZoomDto::X4);

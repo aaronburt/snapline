@@ -1,11 +1,6 @@
 export const METHOD_OPTIONS = ['POST', 'PUT', 'PATCH'];
 
-export const BODY_OPTIONS = [
-  'Multipart form data',
-  'Binary',
-  'Form URL-encoded',
-  'JSON',
-];
+export const BODY_OPTIONS = ['Multipart form data', 'Binary', 'Form URL-encoded', 'JSON'];
 
 const BODY_LABELS: Record<string, string> = {
   MultipartFormData: 'Multipart form data',
@@ -64,9 +59,7 @@ export function destinationActionText(action: string): string {
   return 'Set up';
 }
 
-export function destinationIcon(
-  kind: string,
-): 'image' | 'bucket' | 'code' | 'server' | 'cloud' {
+export function destinationIcon(kind: string): 'image' | 'bucket' | 'code' | 'server' | 'cloud' {
   if (kind === 's3') {
     return 'bucket';
   }

@@ -45,15 +45,12 @@ pub async fn ipc_app(
                 let response = services
                     .upload()
                     .handle(snapline_services::dto::upload::UploadReq::LastLink)?;
-                if let snapline_services::dto::upload::UploadResp::LastLink {
-                    link: Some(link),
-                } = response
+                if let snapline_services::dto::upload::UploadResp::LastLink { link: Some(link) } =
+                    response
                 {
                     snapline_win::clipboard::Clipboard::new()
                         .set_text(&link)
-                        .map_err(|error| {
-                            snapline_services::ServiceError::Io(error.to_string())
-                        })?;
+                        .map_err(|error| snapline_services::ServiceError::Io(error.to_string()))?;
                 }
                 Ok::<(), snapline_services::ServiceError>(())
             })

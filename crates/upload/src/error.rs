@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn messages_never_carry_the_original_error() {
         let error = UploadError::from_json(
-            &serde_json::from_slice::<serde_json::Value>(b"{\"token\":\"secret\"}")
+            &serde_json::from_slice::<serde_json::Value>(b"{\"token\":\"secret\"")
                 .expect_err("invalid json"),
         );
         let message = error.to_string();

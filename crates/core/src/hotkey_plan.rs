@@ -225,7 +225,7 @@ mod tests {
                 .iter()
                 .map(|(_, value)| value.to_string())
                 .collect::<Vec<_>>(),
-            vec!["Alt+PrtSc", "Ctrl+Shift+R", "PrtSc"]
+            vec!["PrtSc", "Alt+PrtSc", "Ctrl+Shift+R"]
         );
     }
 
@@ -258,8 +258,8 @@ mod tests {
         assert_eq!(
             result.blocked,
             vec![
-                Blocked::internal(chord("Ctrl+Shift+A"), vec![owner("a"), owner("b")]),
                 Blocked::external(chord("Alt+PrtSc"), owner("c")),
+                Blocked::internal(chord("Ctrl+Shift+A"), vec![owner("a"), owner("b")]),
             ]
         );
     }

@@ -427,8 +427,8 @@ fn fts_query(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use time::{Date, Month};
     use tempfile::tempdir;
+    use time::{Date, Month};
 
     const BASE: i64 = 1_760_000_000_000;
 
@@ -474,7 +474,11 @@ mod tests {
             .expect("record");
         assert_eq!(id, 1);
         let second = repo
-            .record(capture(CaptureKind::Image, "C:\\Pictures\\two.png", BASE + 1))
+            .record(capture(
+                CaptureKind::Image,
+                "C:\\Pictures\\two.png",
+                BASE + 1,
+            ))
             .expect("record");
         assert_eq!(second, 2);
     }
@@ -566,7 +570,10 @@ mod tests {
         repo.set_upload(upload(queued, UploadState::Queued, BASE + 6))
             .expect("queued upload");
         assert_eq!(
-            repo.page(HistoryFilter::All, None).expect("all").items.len(),
+            repo.page(HistoryFilter::All, None)
+                .expect("all")
+                .items
+                .len(),
             4
         );
         assert_eq!(
@@ -584,12 +591,13 @@ mod tests {
             1
         );
         assert_eq!(
-            repo.page(HistoryFilter::Gifs, None).expect("gifs").items.len(),
+            repo.page(HistoryFilter::Gifs, None)
+                .expect("gifs")
+                .items
+                .len(),
             1
         );
-        let uploaded = repo
-            .page(HistoryFilter::Uploaded, None)
-            .expect("uploaded");
+        let uploaded = repo.page(HistoryFilter::Uploaded, None).expect("uploaded");
         assert_eq!(uploaded.items.len(), 1);
         assert_eq!(uploaded.items[0].id, video);
         let local = repo.page(HistoryFilter::LocalOnly, None).expect("local");
@@ -696,9 +704,11 @@ mod tests {
         );
         let count: i64 = repo
             .conn
-            .query_row("SELECT COUNT(*) FROM upload WHERE capture_id = ?1", [id], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM upload WHERE capture_id = ?1",
+                [id],
+                |row| row.get(0),
+            )
             .expect("count uploads");
         assert_eq!(count, 1);
     }
@@ -803,9 +813,11 @@ mod tests {
         assert_eq!(repo.get(id).expect("get"), None);
         let uploads: i64 = repo
             .conn
-            .query_row("SELECT COUNT(*) FROM upload WHERE capture_id = ?1", [id], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM upload WHERE capture_id = ?1",
+                [id],
+                |row| row.get(0),
+            )
             .expect("count uploads");
         assert_eq!(uploads, 0);
         assert_eq!(
@@ -825,8 +837,12 @@ mod tests {
             .record(capture(CaptureKind::Image, "C:\\Pictures\\one.png", BASE))
             .expect("record");
         repo.delete(first).expect("delete");
-        repo.record(capture(CaptureKind::Image, "C:\\Pictures\\two.png", BASE + 1))
-            .expect("record");
+        repo.record(capture(
+            CaptureKind::Image,
+            "C:\\Pictures\\two.png",
+            BASE + 1,
+        ))
+        .expect("record");
         assert_eq!(
             repo.search("two", HistoryFilter::All, None)
                 .expect("search")
@@ -849,12 +865,8 @@ mod tests {
         let path = directory.path().join("history.db");
         {
             let mut repo = HistoryRepo::open_write(&path).expect("open");
-            repo.record(capture(
-                CaptureKind::Image,
-                "C:\\Pictures\\kept.png",
-                BASE,
-            ))
-            .expect("record");
+            repo.record(capture(CaptureKind::Image, "C:\\Pictures\\kept.png", BASE))
+                .expect("record");
             assert_eq!(repo.stats().expect("stats").count, 1);
         }
         {

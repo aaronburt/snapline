@@ -58,14 +58,18 @@ pub enum AppReq {
 pub enum AppResp {
     Pong,
     Ready,
-    Info { has_mica: bool },
+    Info {
+        has_mica: bool,
+    },
     PanelResize,
     PanelClose,
     PanelAction,
     PanelCopyLink,
     OpenMain,
     OpenCapture,
-    Recent { captures: Vec<RecentCaptureDto> },
+    Recent {
+        captures: Vec<RecentCaptureDto>,
+    },
     Stats {
         #[ts(as = "i32")]
         count: i64,

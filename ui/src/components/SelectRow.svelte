@@ -11,14 +11,7 @@
     onchange?: (value: string) => void;
   }
 
-  let {
-    value = $bindable(''),
-    options,
-    icon,
-    title,
-    description = '',
-    onchange,
-  }: Props = $props();
+  let { value = $bindable(''), options, icon, title, description = '', onchange }: Props = $props();
 
   const id = $props.id();
 </script>
@@ -26,7 +19,7 @@
 <div class="row">
   <Icon name={icon} size={20} />
   <div class="text">
-    <span id={id} class="title">{title}</span>
+    <span {id} class="title">{title}</span>
     <span class="description">{description}</span>
   </div>
   <select

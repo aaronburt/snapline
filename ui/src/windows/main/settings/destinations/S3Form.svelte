@@ -92,8 +92,7 @@
         region: region.trim(),
         bucket: bucket.trim(),
         accessKeyId: accessKeyId.trim() === '' ? null : accessKeyId.trim(),
-        secretAccessKey:
-          secretAccessKey.trim() === '' ? null : secretAccessKey.trim(),
+        secretAccessKey: secretAccessKey.trim() === '' ? null : secretAccessKey.trim(),
         pathPrefix: pathPrefix.trim(),
         publicUrlPattern: publicUrlPattern.trim(),
         aclPublicRead,
@@ -153,21 +152,11 @@
     </label>
     <label class="field">
       <span class="label">Region</span>
-      <input
-        type="text"
-        spellcheck="false"
-        bind:value={region}
-        oninput={() => (error = '')}
-      />
+      <input type="text" spellcheck="false" bind:value={region} oninput={() => (error = '')} />
     </label>
     <label class="field">
       <span class="label">Bucket</span>
-      <input
-        type="text"
-        spellcheck="false"
-        bind:value={bucket}
-        oninput={() => (error = '')}
-      />
+      <input type="text" spellcheck="false" bind:value={bucket} oninput={() => (error = '')} />
     </label>
     <label class="field">
       <span class="label">Path prefix</span>

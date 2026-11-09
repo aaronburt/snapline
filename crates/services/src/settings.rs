@@ -124,7 +124,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("temp dir");
         let services = services(directory.path());
         let settings = dto_of(services.settings().handle(SettingsReq::Get).expect("get"));
-        assert_eq!(settings.version, 1);
+        assert_eq!(settings.version, 2);
         assert!(settings.general.launch_at_signin);
         assert!(settings.general.start_minimised);
         assert_eq!(

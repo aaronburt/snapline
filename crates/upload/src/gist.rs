@@ -51,11 +51,7 @@ pub struct GistUploader {
 }
 
 impl GistUploader {
-    pub fn new(
-        dest_id: impl Into<String>,
-        public: bool,
-        http: Arc<dyn HttpTransport>,
-    ) -> Self {
+    pub fn new(dest_id: impl Into<String>, public: bool, http: Arc<dyn HttpTransport>) -> Self {
         Self {
             dest_id: dest_id.into(),
             public,
@@ -137,10 +133,7 @@ impl GistUploader {
             files,
         };
         let request = Request::post(format!("{}/gists", self.api_base))
-            .header(
-                "Authorization",
-                format!("{AUTHORIZATION_PREFIX} {token}"),
-            )
+            .header("Authorization", format!("{AUTHORIZATION_PREFIX} {token}"))
             .header("Accept", ACCEPT)
             .header("User-Agent", USER_AGENT)
             .json(&body)?;
@@ -151,18 +144,12 @@ impl GistUploader {
             .files
             .get(file_name)
             .and_then(|file| file.raw_url.clone())
-            .or_else(|| {
-                gist.files
-                    .values()
-                    .find_map(|file| file.raw_url.clone())
-            })
+            .or_else(|| gist.files.values().find_map(|file| file.raw_url.clone()))
             .filter(|value| !value.is_empty());
         match (direct_link, page_link) {
             (Some(direct), Some(page)) => Ok(Uploaded::new(direct).with_page_link(page)),
             (Some(direct), None) => Ok(Uploaded::new(direct)),
-            (None, Some(page)) => {
-                Ok(Uploaded::new(page.clone()).with_page_link(page))
-            }
+            (None, Some(page)) => Ok(Uploaded::new(page.clone()).with_page_link(page)),
             (None, None) => Err(UploadError::Permanent(
                 "GitHub did not return a link.".to_owned(),
             )),
@@ -171,7 +158,11 @@ impl GistUploader {
 }
 
 impl Uploader for GistUploader {
-    fn upload(&self, file: &UploadFile, secrets: &dyn SecretStore) -> Result<Uploaded, UploadError> {
+    fn upload(
+        &self,
+        file: &UploadFile,
+        secrets: &dyn SecretStore,
+    ) -> Result<Uploaded, UploadError> {
         let content = std::str::from_utf8(&file.bytes).map_err(|_| {
             UploadError::Permanent(
                 "The file is not text and cannot be uploaded to a gist.".to_owned(),
@@ -199,7 +190,6 @@ impl fmt::Debug for GistUploader {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
     use std::path::PathBuf;
     use std::sync::{Mutex, MutexGuard};
     use std::thread::JoinHandle;
@@ -289,25 +279,19 @@ mod tests {
         accept: String,
         user_agent: String,
         content_type: String,
-        body: Vec<u8>,
     }
 
     fn serve(status: u16, body: &'static str) -> (String, JoinHandle<Captured>) {
         let server = Server::http("127.0.0.1:0").expect("stub server");
         let base = format!("http://{}", server.server_addr());
         let handle = std::thread::spawn(move || {
-            let mut request = server.recv().expect("stub request");
+            let request = server.recv().expect("stub request");
             let captured = Captured {
                 method: request.method().to_string(),
                 authorization: header(&request, "Authorization"),
                 accept: header(&request, "Accept"),
                 user_agent: header(&request, "User-Agent"),
                 content_type: header(&request, "Content-Type"),
-                body: {
-                    let mut body = Vec::new();
-                    let _ = request.as_reader().read_to_end(&mut body);
-                    body
-                },
             };
             let _ = request.respond(StubResponse::from_string(body).with_status_code(status));
             captured
@@ -347,8 +331,7 @@ mod tests {
 
     fn upload_status(status: u16, body: &'static str) -> UploadError {
         let (base, handle) = serve(status, body);
-        let uploader = GistUploader::new(DEFAULT_DEST_ID, false, test_client())
-            .with_api_base(base);
+        let uploader = GistUploader::new(DEFAULT_DEST_ID, false, test_client()).with_api_base(base);
         let error = uploader
             .upload(&file("note.txt", "hello"), &StubSecrets::with_token(TOKEN))
             .expect_err("upload error");
@@ -428,8 +411,7 @@ mod tests {
             201,
             r#"{"html_url":"https://gist.github.com/abc123","files":{"note.txt":{"raw_url":"https://gist.githubusercontent.com/u/abc123/raw/note.txt"}}}"#,
         );
-        let uploader = GistUploader::new(DEFAULT_DEST_ID, false, test_client())
-            .with_api_base(base);
+        let uploader = GistUploader::new(DEFAULT_DEST_ID, false, test_client()).with_api_base(base);
         let uploaded = uploader
             .upload(&file("note.txt", "hello"), &StubSecrets::with_token(TOKEN))
             .expect("upload");
@@ -456,8 +438,7 @@ mod tests {
             201,
             r#"{"html_url":"https://gist.github.com/abc123","files":{"note.txt":{}}}"#,
         );
-        let uploader = GistUploader::new(DEFAULT_DEST_ID, false, test_client())
-            .with_api_base(base);
+        let uploader = GistUploader::new(DEFAULT_DEST_ID, false, test_client()).with_api_base(base);
         let uploaded = uploader
             .upload(&file("note.txt", "hello"), &StubSecrets::with_token(TOKEN))
             .expect("upload");
@@ -472,8 +453,7 @@ mod tests {
     #[test]
     fn a_response_without_links_is_permanent() {
         let (base, handle) = serve(201, r#"{"files":{"note.txt":{}}}"#);
-        let uploader = GistUploader::new(DEFAULT_DEST_ID, false, test_client())
-            .with_api_base(base);
+        let uploader = GistUploader::new(DEFAULT_DEST_ID, false, test_client()).with_api_base(base);
         let error = uploader
             .upload(&file("note.txt", "hello"), &StubSecrets::with_token(TOKEN))
             .expect_err("no link");

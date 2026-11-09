@@ -24,8 +24,11 @@ pub struct DeleteResponse {
 }
 
 pub trait DeleteTransport: Send + Sync {
-    fn delete(&self, url: &str, headers: &[(String, String)])
-        -> Result<DeleteResponse, UploadError>;
+    fn delete(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+    ) -> Result<DeleteResponse, UploadError>;
 }
 
 pub struct UreqDeleter {
@@ -131,10 +134,7 @@ impl ImgurUploader {
     }
 
     pub fn client_id_key(&self) -> String {
-        format!(
-            "{SECRET_TARGET_PREFIX}{}:{CLIENT_ID_FIELD}",
-            self.dest_id
-        )
+        format!("{SECRET_TARGET_PREFIX}{}:{CLIENT_ID_FIELD}", self.dest_id)
     }
 
     pub fn with_api_base(mut self, api_base: impl Into<String>) -> Self {
@@ -181,15 +181,10 @@ impl ImgurUploader {
         let link = link
             .filter(|value| !value.is_empty())
             .ok_or_else(|| UploadError::Permanent("Imgur did not return a link.".to_owned()))?;
-        let deletion_link = deletehash
-            .filter(|value| !value.is_empty())
-            .map(|hash| {
-                DeletionLink::new(
-                    self.dest_id.clone(),
-                    format!("{DELETION_BASE}/{hash}"),
-                )
+        let deletion_link = deletehash.filter(|value| !value.is_empty()).map(|hash| {
+            DeletionLink::new(self.dest_id.clone(), format!("{DELETION_BASE}/{hash}"))
                 .with_token(hash)
-            });
+        });
         Ok(Uploaded {
             link,
             page_link: None,
@@ -222,14 +217,21 @@ impl ImgurUploader {
 }
 
 impl Uploader for ImgurUploader {
-    fn upload(&self, file: &UploadFile, secrets: &dyn SecretStore) -> Result<Uploaded, UploadError> {
+    fn upload(
+        &self,
+        file: &UploadFile,
+        secrets: &dyn SecretStore,
+    ) -> Result<Uploaded, UploadError> {
         self.upload_with_metadata(file, None, None, secrets)
     }
 
     fn delete(&self, link: &DeletionLink, secrets: &dyn SecretStore) -> Result<(), UploadError> {
         let client_id = self.client_id(secrets)?;
         let hash = deletion_hash(link)?;
-        let headers = [(String::from("Authorization"), format!("Client-ID {client_id}"))];
+        let headers = [(
+            String::from("Authorization"),
+            format!("Client-ID {client_id}"),
+        )];
         let url = format!("{}/image/{hash}", self.api_base);
         let response = self.deleter.delete(&url, &headers)?;
         if response.status == 404 || (200..=299).contains(&response.status) {
@@ -265,7 +267,12 @@ fn declared_status_error(status: u16) -> UploadError {
 }
 
 fn deletion_hash(link: &DeletionLink) -> Result<String, UploadError> {
-    if let Some(token) = link.token.as_deref().map(str::trim).filter(|token| !token.is_empty()) {
+    if let Some(token) = link
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+    {
         return valid_hash(token);
     }
     let trimmed = link.url.trim();
@@ -275,8 +282,15 @@ fn deletion_hash(link: &DeletionLink) -> Result<String, UploadError> {
         ));
     }
     let without_fragment = trimmed.split('#').next().unwrap_or(trimmed);
-    let without_query = without_fragment.split('?').next().unwrap_or(without_fragment);
-    let hash = without_query.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+    let without_query = without_fragment
+        .split('?')
+        .next()
+        .unwrap_or(without_fragment);
+    let hash = without_query
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("");
     valid_hash(hash)
 }
 
@@ -480,7 +494,9 @@ mod tests {
         let (base, handle) = serve(status, body);
         let uploader = uploader(&base, RecordingDeleter::returning(200, None));
         let secrets = StubSecrets::with_client_id(CLIENT_ID);
-        let error = uploader.upload(&file(), &secrets).expect_err("upload error");
+        let error = uploader
+            .upload(&file(), &secrets)
+            .expect_err("upload error");
         handle.join().expect("stub server");
         error
     }
@@ -516,7 +532,10 @@ mod tests {
                     .with_token("dh123")
             )
         );
-        assert_eq!(secrets.requested().as_slice(), ["imgur:client_id".to_owned()]);
+        assert_eq!(
+            secrets.requested().as_slice(),
+            ["imgur:client_id".to_owned()]
+        );
     }
 
     #[test]
@@ -536,7 +555,10 @@ mod tests {
             Some("A description"),
             &secrets,
         );
-        assert_eq!(secrets.requested().as_slice(), ["imgur:client_id".to_owned()]);
+        assert_eq!(
+            secrets.requested().as_slice(),
+            ["imgur:client_id".to_owned()]
+        );
         assert_eq!(uploader.client_id_key(), "SnapLine:imgur:client_id");
         let requests = http.take();
         assert_eq!(requests.len(), 1);
@@ -544,10 +566,13 @@ mod tests {
         assert_eq!(requests[0].url(), "https://api.imgur.com/3/image");
         assert_eq!(
             requests[0].headers(),
-            &[(
-                "Authorization".to_owned(),
-                format!("Client-ID {CLIENT_ID}")
-            )]
+            &[
+                ("Authorization".to_owned(), format!("Client-ID {CLIENT_ID}")),
+                (
+                    "Content-Type".to_owned(),
+                    "multipart/form-data; boundary=----SnaplineFormBoundaryJ7x2Vq9mR4tL".to_owned()
+                ),
+            ]
         );
         let body = String::from_utf8_lossy(requests[0].body_bytes());
         assert!(body.contains("name=\"image\"; filename=\"shot.png\""));
@@ -664,7 +689,10 @@ mod tests {
     #[test]
     fn a_failed_envelope_uses_its_status() {
         assert_eq!(
-            upload_status(200, r#"{"success":false,"status":401,"data":{"error":"x"}}"#),
+            upload_status(
+                200,
+                r#"{"success":false,"status":401,"data":{"error":"x"}}"#
+            ),
             UploadError::Auth
         );
         assert_eq!(
@@ -708,12 +736,12 @@ mod tests {
         assert_eq!(calls[0].0, "https://api.imgur.com/3/image/dh123");
         assert_eq!(
             calls[0].1,
-            vec![(
-                "Authorization".to_owned(),
-                format!("Client-ID {CLIENT_ID}")
-            )]
+            vec![("Authorization".to_owned(), format!("Client-ID {CLIENT_ID}"))]
         );
-        assert_eq!(secrets.requested().as_slice(), ["imgur:client_id".to_owned()]);
+        assert_eq!(
+            secrets.requested().as_slice(),
+            ["imgur:client_id".to_owned()]
+        );
     }
 
     #[test]
@@ -833,10 +861,7 @@ mod tests {
         let response = deleter
             .delete(
                 &format!("{base}/3/image/dh123"),
-                &[(
-                    "Authorization".to_owned(),
-                    format!("Client-ID {CLIENT_ID}"),
-                )],
+                &[("Authorization".to_owned(), format!("Client-ID {CLIENT_ID}"))],
             )
             .expect("delete response");
         let captured = handle.join().expect("stub server");
@@ -847,12 +872,9 @@ mod tests {
 
     #[test]
     fn errors_do_not_print_the_client_id() {
-        assert!(!format!(
-            "{:?} {:?}",
-            UploadError::Auth,
-            SecretError::Unavailable
-        )
-        .contains(CLIENT_ID));
+        assert!(
+            !format!("{:?} {:?}", UploadError::Auth, SecretError::Unavailable).contains(CLIENT_ID)
+        );
         let error = upload_status(401, CLIENT_ID);
         assert!(!format!("{error} {error:?}").contains(CLIENT_ID));
     }

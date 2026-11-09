@@ -15,12 +15,7 @@ import {
 describe('destination form mappings', () => {
   it('maps the body labels to ShareX values and back', () => {
     expect(METHOD_OPTIONS).toEqual(['POST', 'PUT', 'PATCH']);
-    expect(BODY_OPTIONS).toEqual([
-      'Multipart form data',
-      'Binary',
-      'Form URL-encoded',
-      'JSON',
-    ]);
+    expect(BODY_OPTIONS).toEqual(['Multipart form data', 'Binary', 'Form URL-encoded', 'JSON']);
     expect(bodyValue('Multipart form data')).toBe('MultipartFormData');
     expect(bodyValue('Binary')).toBe('Binary');
     expect(bodyValue('Form URL-encoded')).toBe('FormURLEncoded');

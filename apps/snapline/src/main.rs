@@ -1,4 +1,5 @@
 #![windows_subsystem = "windows"]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod cli;
 mod crash;
@@ -29,9 +30,7 @@ use ::windows::Win32::System::Threading::CREATE_NO_WINDOW;
 use ::windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 use cli::{Args, BudgetWindow};
 use snapline_core::chord::Chord;
-use snapline_core::ffmpeg_args::{
-    fallback_encoder, FfmpegCommand, VideoEncoder, VideoFormat,
-};
+use snapline_core::ffmpeg_args::{fallback_encoder, FfmpegCommand, VideoEncoder, VideoFormat};
 use snapline_core::geometry::{Point, Px, Rect};
 use snapline_core::hotkey_plan::{Blocked, Owner};
 use snapline_core::image::Image;
@@ -44,26 +43,27 @@ use snapline_services::editor::{
 };
 use snapline_services::hotkeys::{HotkeyInput, PrtscRegistry};
 use snapline_services::recording::{
-    self, AudioOptions, AudioPort, AudioSession, BorderHandle, BorderHost, BorderRequest, EventSink,
-    FfmpegExit, FfmpegProcess, FfmpegProgress, FfmpegRunner, MediaPort, PickOptions, PickedTarget,
-    PickedWindow, RecordingPorts, TargetPicker, WorkerRecordingStore,
+    self, AudioOptions, AudioPort, AudioSession, BorderHandle, BorderHost, BorderRequest,
+    EventSink, FfmpegExit, FfmpegProcess, FfmpegProgress, FfmpegRunner, MediaPort, PickOptions,
+    PickedTarget, PickedWindow, RecordingPorts, TargetPicker, WorkerRecordingStore,
 };
 use snapline_services::saver::{CaptureRequest, ServicePorts, SystemClock};
 use snapline_services::tools::convert::{
-    BackendExit, BackendProgress, ConvertError, ConvertFilePicker, FfmpegBackend, FfmpegProcess as ConvertProcess,
+    BackendExit, BackendProgress, ConvertError, ConvertFilePicker, FfmpegBackend,
+    FfmpegProcess as ConvertProcess,
 };
 use snapline_services::worker;
 use snapline_services::{AppEvent, CodecFactory, ServiceError, Services};
 use snapline_store::io::Paths;
 use snapline_store::settings::Settings;
-use snapline_win::audio::{AudioCapture, AudioRequest, PcmFormat};
-use snapline_win::capture::{CaptureBackend, CaptureOptions};
-use snapline_win::known_hosts::{HostKeyStatus, Store};
 use snapline_upload::error::UploadError;
 use snapline_upload::sftp::{HostKeyConfirmer, HostKeyPrompt, HostKeyState, HostKeyStore};
+use snapline_win::audio::{AudioCapture, AudioRequest, PcmFormat};
+use snapline_win::capture::{CaptureBackend, CaptureOptions};
 use snapline_win::clipboard::Clipboard;
 use snapline_win::ffmpeg::{detect, RunningFfmpeg, StopOutcome};
 use snapline_win::input::{InputEvent, InputHandle};
+use snapline_win::known_hosts::{HostKeyStatus, Store};
 use snapline_win::ports_impls::{SoundPlayer, ToastNotifier};
 use snapline_win::wic::WicCodec;
 use tauri::{Manager, RunEvent};
@@ -138,10 +138,7 @@ impl snapline_services::tools::combine::CombineHost for CombineHostImpl {
 struct EditorHostImpl;
 
 impl EditorHost for EditorHostImpl {
-    fn open(
-        &self,
-        image: snapline_core::image::Image,
-    ) -> Result<EditorResult, ServiceError> {
+    fn open(&self, image: snapline_core::image::Image) -> Result<EditorResult, ServiceError> {
         let mut request = snapline_overlay::EditRequest::new(image);
         request.theme = if snapline_win::theme::is_light() {
             snapline_overlay::Theme::Light
@@ -353,15 +350,19 @@ struct FfmpegProcessImpl(RunningFfmpeg);
 
 impl ConvertProcess for FfmpegProcessImpl {
     fn progress(&mut self) -> Option<BackendProgress> {
-        self.0.progress().try_recv().ok().map(|progress| BackendProgress {
-            out_time_us: progress
-                .out_time_us
-                .or_else(|| progress.out_time_ms.map(|millis| millis * 1_000)),
-            frame: progress.frame,
-            fps: progress.fps,
-            speed: progress.speed,
-            done: progress.done,
-        })
+        self.0
+            .progress()
+            .try_recv()
+            .ok()
+            .map(|progress| BackendProgress {
+                out_time_us: progress
+                    .out_time_us
+                    .or_else(|| progress.out_time_ms.map(|millis| millis * 1_000)),
+                frame: progress.frame,
+                fps: progress.fps,
+                speed: progress.speed,
+                done: progress.done,
+            })
     }
 
     fn finished(&mut self) -> Result<bool, ConvertError> {
@@ -542,7 +543,9 @@ impl FfmpegRunner for RecordingFfmpegImpl {
         command: FfmpegCommand,
     ) -> Result<Box<dyn FfmpegProcess>, recording::RecordError> {
         RunningFfmpeg::start(command)
-            .map(|running| Box::new(RecordingFfmpegProcess(Some(running))) as Box<dyn FfmpegProcess>)
+            .map(|running| {
+                Box::new(RecordingFfmpegProcess(Some(running))) as Box<dyn FfmpegProcess>
+            })
             .map_err(|error| recording::RecordError::FfmpegStart(error.to_string()))
     }
 
@@ -563,9 +566,9 @@ struct RecordingFfmpegProcess(Option<RunningFfmpeg>);
 
 impl RecordingFfmpegProcess {
     fn running(&mut self) -> Result<&mut RunningFfmpeg, recording::RecordError> {
-        self.0.as_mut().ok_or_else(|| {
-            recording::RecordError::Stop("FFmpeg is not running.".to_owned())
-        })
+        self.0
+            .as_mut()
+            .ok_or_else(|| recording::RecordError::Stop("FFmpeg is not running.".to_owned()))
     }
 }
 
@@ -580,21 +583,23 @@ fn ffmpeg_exit(outcome: StopOutcome) -> FfmpegExit {
 impl FfmpegProcess for RecordingFfmpegProcess {
     fn progress(&mut self) -> Option<FfmpegProgress> {
         let running = self.0.as_mut()?;
-        running.progress().try_recv().ok().map(|progress| FfmpegProgress {
-            out_time_us: progress
-                .out_time_us
-                .or_else(|| progress.out_time_ms.map(|millis| millis * 1_000)),
-            frame: progress.frame,
-            fps: progress.fps,
-            speed: progress.speed,
-            done: progress.done,
-        })
+        running
+            .progress()
+            .try_recv()
+            .ok()
+            .map(|progress| FfmpegProgress {
+                out_time_us: progress
+                    .out_time_us
+                    .or_else(|| progress.out_time_ms.map(|millis| millis * 1_000)),
+                frame: progress.frame,
+                fps: progress.fps,
+                speed: progress.speed,
+                done: progress.done,
+            })
     }
 
     fn is_running(&mut self) -> bool {
-        self.0
-            .as_mut()
-            .is_some_and(|running| running.is_running())
+        self.0.as_mut().is_some_and(|running| running.is_running())
     }
 
     fn stop(&mut self) -> Result<FfmpegExit, recording::RecordError> {
@@ -676,9 +681,7 @@ fn microphone_id(device: &str) -> Option<String> {
     }
     AudioCapture::microphones()
         .into_iter()
-        .find(|candidate| {
-            candidate.id == name || candidate.name.eq_ignore_ascii_case(name)
-        })
+        .find(|candidate| candidate.id == name || candidate.name.eq_ignore_ascii_case(name))
         .map(|candidate| candidate.id)
 }
 
@@ -717,9 +720,10 @@ impl MediaPort for RecordingMediaImpl {
                 "The first frame of the recording could not be read.".to_owned(),
             ));
         }
-        let bytes =
-            std::fs::read(&output).map_err(|error| recording::RecordError::Save(error.to_string()))?;
-        let codec = WicCodec::new().map_err(|error| recording::RecordError::Save(error.to_string()))?;
+        let bytes = std::fs::read(&output)
+            .map_err(|error| recording::RecordError::Save(error.to_string()))?;
+        let codec =
+            WicCodec::new().map_err(|error| recording::RecordError::Save(error.to_string()))?;
         let image = codec
             .decode(&bytes)
             .map_err(|error| recording::RecordError::Save(error.to_string()))?;
@@ -735,8 +739,8 @@ struct RecordingEventsImpl {
 impl EventSink for RecordingEventsImpl {
     fn emit(&self, event: AppEvent) {
         if let AppEvent::Record(recording::Event::State(status)) = &event {
-            let elapsed = (status.state == RecordStateDto::Recording)
-                .then_some(status.elapsed_ms / 1_000);
+            let elapsed =
+                (status.state == RecordStateDto::Recording).then_some(status.elapsed_ms / 1_000);
             crate::tray::set_recording(&self.app, elapsed);
         }
         crate::events::emit(&self.app, &event);
@@ -864,11 +868,10 @@ fn main() -> anyhow::Result<()> {
         Ok(store) => Arc::new(KnownHosts(store)),
         Err(_) => Arc::new(snapline_services::destinations::UnavailableHostKeyStore),
     };
-    let registry: Arc<dyn snapline_services::uploads::DestinationSource> =
-        Arc::new(
-            snapline_services::destinations::Registry::new(&services, secrets.clone())
-                .with_sftp(host_keys, Arc::new(HostKeyDialog)),
-        );
+    let registry: Arc<dyn snapline_services::uploads::DestinationSource> = Arc::new(
+        snapline_services::destinations::Registry::new(&services, secrets.clone())
+            .with_sftp(host_keys, Arc::new(HostKeyDialog)),
+    );
     let upload_destinations = registry.clone();
     let files = Arc::new(upload_files::HistoryFileSource::new(
         services.paths()?.history_file,
@@ -902,8 +905,7 @@ fn main() -> anyhow::Result<()> {
         }),
     ))?;
     let worker = worker::Worker::start(services.clone(), || {
-        let codec = WicCodec::new()
-            .map_err(|error| ServiceError::Internal(error.to_string()))?;
+        let codec = WicCodec::new().map_err(|error| ServiceError::Internal(error.to_string()))?;
         Ok(ServicePorts::new(
             Arc::new(codec),
             Arc::new(Clipboard::new()),
@@ -931,9 +933,11 @@ fn main() -> anyhow::Result<()> {
     snapline_services::tools::convert::install_file_picker(Arc::new(VideoPickerImpl));
     snapline_services::clipboard_upload::install(
         snapline_services::clipboard_upload::ClipboardUpload::new(
-            Arc::new(snapline_services::clipboard_upload::CoreClipboardSource::new(
-                Arc::new(Clipboard::new()),
-            )),
+            Arc::new(
+                snapline_services::clipboard_upload::CoreClipboardSource::new(Arc::new(
+                    Clipboard::new(),
+                )),
+            ),
             codec_factory(),
             Arc::new(worker_handle.clone()),
             Arc::new(services.upload()),
@@ -989,16 +993,15 @@ fn main() -> anyhow::Result<()> {
         }))
         .setup(move |app| {
             let app_handle = app.handle().clone();
-            let input = snapline_win::input::spawn_with(move |event| forward_input(&app_handle, event))?;
+            let input =
+                snapline_win::input::spawn_with(move |event| forward_input(&app_handle, event))?;
             let services = startup_services
                 .clone()
                 .with_hotkey_input(Arc::new(InputPort(input.clone())))
                 .with_prtsc_registry(Arc::new(PrtscPort))
                 .with_notifier(Arc::new(ToastNotifier));
             app.manage(services.clone());
-            snapline_services::recording::install_ports(recording_ports(
-                app.handle().clone(),
-            ))?;
+            snapline_services::recording::install_ports(recording_ports(app.handle().clone()))?;
             services.hotkeys().on_settings_changed()?;
             app.manage(InputState(input));
             let event_app = app.handle().clone();
@@ -1009,7 +1012,10 @@ fn main() -> anyhow::Result<()> {
             });
             if let Some(upload_events) = upload_events {
                 let upload_app = app.handle().clone();
-                let persist_worker = app.state::<snapline_services::worker::Handle>().inner().clone();
+                let persist_worker = app
+                    .state::<snapline_services::worker::Handle>()
+                    .inner()
+                    .clone();
                 std::thread::spawn(move || {
                     while let Ok(event) = upload_events.recv() {
                         if let snapline_services::AppEvent::Upload(

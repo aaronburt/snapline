@@ -1,7 +1,6 @@
 use thiserror::Error;
 
 use snapline_core::presets::initial_workflows;
-use snapline_core::workflow::Workflow;
 
 pub const CURRENT_VERSION: u32 = 2;
 
@@ -53,19 +52,19 @@ fn step_for(version: u32) -> Option<Step> {
 
 fn add_default_workflow(mut table: toml::Table) -> Result<toml::Table, MigrationError> {
     if !table.contains_key("workflows") {
-        table.insert("workflows".to_owned(), toml::Value::Table(toml::Table::new()));
+        table.insert(
+            "workflows".to_owned(),
+            toml::Value::Table(toml::Table::new()),
+        );
     }
     if let Some(toml::Value::Table(workflows)) = table.get_mut("workflows") {
-        let existing: Vec<Workflow> = match workflows.get("list") {
-            Some(toml::Value::Array(items)) if !items.is_empty() => {
-                toml::Value::Array(items.clone())
-                    .try_into()
-                    .unwrap_or_default()
-            }
-            _ => Vec::new(),
+        let empty = match workflows.get("list") {
+            None => true,
+            Some(toml::Value::Array(items)) => items.is_empty(),
+            Some(_) => false,
         };
-        if existing.is_empty() {
-            let presets = initial_workflows(&existing);
+        if empty {
+            let presets = initial_workflows(&[]);
             let values = presets
                 .iter()
                 .map(toml::Value::try_from)

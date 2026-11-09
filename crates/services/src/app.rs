@@ -59,9 +59,7 @@ impl AppService {
             return Ok(Vec::new());
         }
         let repo = HistoryRepo::open_read(&paths.history_file).map_err(history_error)?;
-        let page = repo
-            .page(StoreFilter::All, None)
-            .map_err(history_error)?;
+        let page = repo.page(StoreFilter::All, None).map_err(history_error)?;
         Ok(page.items.iter().take(3).map(recent_dto).collect())
     }
 
@@ -116,8 +114,6 @@ pub fn run(_action: &ActionId, _services: &Services) -> Result<(), ServiceError>
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use snapline_store::history::{
         CaptureId, NewCapture, UploadState as StoreUploadState, UploadUpdate,
     };
@@ -221,7 +217,10 @@ mod tests {
         let response = fixture.service().handle(AppReq::Recent).expect("recent");
         let recent = captures(response);
         assert_eq!(
-            recent.iter().map(|capture| capture.name.as_str()).collect::<Vec<_>>(),
+            recent
+                .iter()
+                .map(|capture| capture.name.as_str())
+                .collect::<Vec<_>>(),
             vec!["first.png", "third.mp4", "second.png"]
         );
         let oldest = &recent[2];

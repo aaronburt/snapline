@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { createRawSnippet } from 'svelte';
 import Popover from './Popover.svelte';
 
@@ -26,7 +26,8 @@ describe('Popover', () => {
 
   it('traps Tab inside the dialog and returns focus on close', async () => {
     const children = createRawSnippet(() => ({
-      render: () => '<button type="button">First</button><button type="button">Last</button>',
+      render: () =>
+        '<div><button type="button">First</button><button type="button">Last</button></div>',
     }));
     const trigger = document.createElement('button');
     trigger.textContent = 'Open';
@@ -38,7 +39,7 @@ describe('Popover', () => {
     await Promise.resolve();
     const first = screen.getByRole('button', { name: 'First' });
     const last = screen.getByRole('button', { name: 'Last' });
-    expect(document.activeElement).toBe(first);
+    await waitFor(() => expect(document.activeElement).toBe(first));
     last.focus();
     await fireEvent.keyDown(window, { key: 'Tab' });
     expect(document.activeElement).toBe(first);

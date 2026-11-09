@@ -1527,13 +1527,15 @@ impl std::error::Error for RecordingFailure {}
 enum BudgetMode {
     Default,
     Recording,
+    Full,
 }
 
 fn parse_budget_mode(args: &[String]) -> Result<BudgetMode> {
     match args {
         [] => Ok(BudgetMode::Default),
         [flag] if flag.as_str() == "--record" => Ok(BudgetMode::Recording),
-        [other, ..] => bail!("unknown budget option: {other} (use --record for the recording run)"),
+        [flag] if flag.as_str() == "--full" => Ok(BudgetMode::Full),
+        [other, ..] => bail!("unknown budget option: {other} (use --record or --full)"),
     }
 }
 
@@ -1833,6 +1835,7 @@ pub fn run(root: &Path, args: &[String]) -> Result<()> {
     match parse_budget_mode(args)? {
         BudgetMode::Default => run_idle(root),
         BudgetMode::Recording => run_recording(root),
+        BudgetMode::Full => run_full(root),
     }
 }
 
@@ -2019,7 +2022,7 @@ fn recording_session(root: &Path) -> Result<RowOutcome> {
         Ok(command) => command,
         Err(error) => {
             started.app.stop(&exe);
-            return Ok(failure_row(row, error)?);
+            return failure_row(row, error);
         }
     };
     println!(

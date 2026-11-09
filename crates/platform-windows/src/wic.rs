@@ -70,11 +70,12 @@ impl Drop for ComApartment {
 pub struct WicCodec {
     factory: IWICImagingFactory,
     webp: bool,
+    _com: ComApartment,
 }
 
 impl WicCodec {
     pub fn new() -> Result<Self, WicError> {
-        let _com = ComApartment::start()?;
+        let com = ComApartment::start()?;
         let factory: IWICImagingFactory = {
             // SAFETY: the class is registered in-process and the returned interface owns a reference.
             unsafe { CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER) }
@@ -84,7 +85,11 @@ impl WicCodec {
             // SAFETY: the factory is live and a null vendor GUID asks for any installed encoder.
             unsafe { factory.CreateEncoder(&GUID_ContainerFormatWebp, std::ptr::null()) }.is_ok()
         };
-        Ok(Self { factory, webp })
+        Ok(Self {
+            factory,
+            webp,
+            _com: com,
+        })
     }
 
     pub fn webp_available(&self) -> bool {
@@ -97,7 +102,6 @@ impl WicCodec {
         format: ImageFormat,
         quality: u8,
     ) -> Result<Vec<u8>, WicError> {
-        let _com = ComApartment::start()?;
         let container = container_format(format, self.webp)?;
         let quality = clamp_quality(quality);
         // SAFETY: a null initial buffer asks for an empty growable memory stream.
@@ -106,7 +110,6 @@ impl WicCodec {
     }
 
     pub fn decode(&self, bytes: &[u8]) -> Result<Image, WicError> {
-        let _com = ComApartment::start()?;
         if u32::try_from(bytes.len()).is_err() {
             return Err(WicError::Decode);
         }

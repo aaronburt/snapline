@@ -13,15 +13,7 @@
     onclick?: (event: MouseEvent) => void;
   }
 
-  let {
-    label,
-    icon,
-    count,
-    active = false,
-    height = 38,
-    href,
-    onclick,
-  }: Props = $props();
+  let { label, icon, count, active = false, height = 38, href, onclick }: Props = $props();
 
   const barTop = $derived(height === 40 ? 12 : 11);
 </script>

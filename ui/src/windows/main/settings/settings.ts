@@ -657,10 +657,7 @@ function send(patch: Patch, debounce: boolean): void {
   }
 }
 
-function generalPatch<K extends keyof GeneralSettings>(
-  key: K,
-  value: GeneralSettings[K],
-): Patch {
+function generalPatch<K extends keyof GeneralSettings>(key: K, value: GeneralSettings[K]): Patch {
   switch (key) {
     case 'launchAtSignIn':
       return { launch_at_signin: value };
@@ -775,10 +772,7 @@ function hotkeyPatch<K extends keyof HotkeySettings>(key: K, value: HotkeySettin
   }
 }
 
-function uploadsPatch<K extends keyof UploadsSettings>(
-  key: K,
-  value: UploadsSettings[K],
-): Patch {
+function uploadsPatch<K extends keyof UploadsSettings>(key: K, value: UploadsSettings[K]): Patch {
   switch (key) {
     case 'images':
       return { images: destinationValue(String(value)) };

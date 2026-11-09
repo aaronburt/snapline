@@ -21,6 +21,8 @@ mod tests {
 
     use snapline_core::chord::Chord;
     use snapline_core::ids::DestId;
+    use snapline_core::link_format::LinkFormat;
+    use snapline_core::workflow::{Step, DEFAULT_WORKFLOW_ID, DEFAULT_WORKFLOW_NAME};
 
     use super::*;
 

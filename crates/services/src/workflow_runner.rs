@@ -367,15 +367,14 @@ impl WorkflowUploadHandOff for QueueUploadHandOff {
         let uploader = self.destinations.uploader(&dest).ok_or_else(|| {
             ServiceError::Invalid("The upload destination was not found.".to_owned())
         })?;
-        let capture_id = snapline_store::history::HistoryRepo::open_read(
-            &self.services.paths()?.history_file,
-        )
-        .ok()
-        .and_then(|repo| {
-            repo.id_for_path(&file.path.to_string_lossy())
+        let capture_id =
+            snapline_store::history::HistoryRepo::open_read(&self.services.paths()?.history_file)
                 .ok()
-                .flatten()
-        });
+                .and_then(|repo| {
+                    repo.id_for_path(&file.path.to_string_lossy())
+                        .ok()
+                        .flatten()
+                });
         let job = queue::UploadJob::new(uploader, file, dest, run_id);
         let job = match capture_id {
             Some(capture_id) => job.with_capture_id(capture_id),

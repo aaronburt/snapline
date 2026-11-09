@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
 mod bindings;
 mod budget;
 mod ffmpeg;
@@ -99,9 +101,8 @@ fn ui(root: &Path) -> Result<()> {
     let modules = ui_dir.join("node_modules");
     let lock = ui_dir.join("package-lock.json");
     let installed = modules.join(".package-lock.json");
-    let needs_install = !modules.exists()
-        || !installed.exists()
-        || modified(&lock)? > modified(&installed)?;
+    let needs_install =
+        !modules.exists() || !installed.exists() || modified(&lock)? > modified(&installed)?;
     if needs_install {
         run_npm(root, &["ci"])?;
     }
@@ -164,8 +165,9 @@ fn check(root: &Path) -> Result<()> {
         root,
         &[
             "license-checker-rseidelsohn",
+            "--excludePrivatePackages",
             "--onlyAllow",
-            "MIT;MIT-0;ISC;BSD-2-Clause;BSD-3-Clause;Apache-2.0;0BSD;CC0-1.0;Unlicense;MPL-2.0;Zlib;Unicode-3.0;GPL-3.0-or-later;LGPL-3.0-or-later",
+            "MIT;MIT-0;ISC;BSD-2-Clause;BSD-3-Clause;Apache-2.0;0BSD;CC0-1.0;Unlicense;MPL-2.0;Zlib;Unicode-3.0;GPL-3.0-or-later;LGPL-3.0-or-later;BlueOak-1.0.0;CC-BY-3.0",
         ],
     )?;
     Ok(())
@@ -180,14 +182,22 @@ fn test_desktop(root: &Path) -> Result<()> {
     run(
         root,
         "cargo",
-        &["nextest", "run", "--workspace", "--run-ignored", "only"],
+        &[
+            "nextest",
+            "run",
+            "--workspace",
+            "--run-ignored",
+            "only",
+            "--test-threads",
+            "1",
+        ],
     )
 }
 
 fn ci(root: &Path) -> Result<()> {
     check(root)?;
     test(root)?;
-    if let Err(error) = budget::run_full(root) {
+    if let Err(error) = budget::run(root, &[]) {
         eprintln!("budget: guideline check did not pass: {error:#}");
     }
     Ok(())

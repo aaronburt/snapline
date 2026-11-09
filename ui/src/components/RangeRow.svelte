@@ -33,7 +33,7 @@
 <div class="row">
   <Icon name={icon} size={20} />
   <div class="text">
-    <span id={id} class="title">{title}</span>
+    <span {id} class="title">{title}</span>
     <span class="description">{description}</span>
   </div>
   <div class="range">

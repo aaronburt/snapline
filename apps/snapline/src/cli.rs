@@ -149,7 +149,10 @@ fn host_error(error: impl std::fmt::Display) -> UninstallError {
 
 fn credential_targets() -> Result<Vec<String>, UninstallError> {
     let filter_text = format!("{}*", SecretKey::TARGET_PREFIX);
-    let filter: Vec<u16> = filter_text.encode_utf16().chain(std::iter::once(0)).collect();
+    let filter: Vec<u16> = filter_text
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     let mut count = 0_u32;
     let mut entries: *mut *mut CREDENTIALW = std::ptr::null_mut();
     // SAFETY: the filter is a live null-terminated UTF-16 buffer and both out pointers are valid.

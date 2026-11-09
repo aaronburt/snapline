@@ -102,18 +102,15 @@
           </span>
           <span class="name">{tool.name}</span>
           <span class="desc">
-            {editorAvailable ? 'Open any image to annotate, crop or blur.' : 'Coming in a later version'}
+            {editorAvailable
+              ? 'Open any image to annotate, crop or blur.'
+              : 'Coming in a later version'}
           </span>
           <span class="chord">{tool.chord}</span>
         </button>
       {:else if tool.name === 'Pin to screen'}
         <div class="cardwrap">
-          <button
-            type="button"
-            class="card"
-            disabled={!pinAvailable}
-            onclick={choosePin}
-          >
+          <button type="button" class="card" disabled={!pinAvailable} onclick={choosePin}>
             <span class="tile" aria-hidden="true">
               <Icon name={tool.icon} size={20} />
             </span>

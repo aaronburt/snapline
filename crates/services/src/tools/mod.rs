@@ -12,8 +12,8 @@ use crate::tools::combine::{CombineRequest, PickedImage, Source};
 use crate::tools::pin::PinService;
 use crate::{ServiceError, Services};
 
-pub mod combine;
 pub mod colour;
+pub mod combine;
 pub mod convert;
 pub mod ocr;
 pub mod pin;
@@ -113,9 +113,7 @@ fn editor_outcome(outcome: EditorOutcome) -> EditorOutcomeDto {
             EditorAction::Upload => EditorActionDto::Upload,
         }),
         capture_id: outcome.capture_id,
-        path: outcome
-            .path
-            .map(|path| path.to_string_lossy().into_owned()),
+        path: outcome.path.map(|path| path.to_string_lossy().into_owned()),
         cancelled: outcome.cancelled,
     }
 }

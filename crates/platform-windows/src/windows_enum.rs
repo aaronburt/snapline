@@ -10,7 +10,7 @@ use windows::Win32::Graphics::Dwm::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
+    GetWindowTextW, IsWindowVisible, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
 };
 
 const CLASS_BUFFER: usize = 256;
@@ -41,7 +41,6 @@ pub struct WindowEntry {
     pub hwnd: HWND,
     pub rect: Rect,
     pub title: Option<String>,
-    pub process_id: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -70,6 +69,7 @@ pub fn snap_candidates(exclude: &[HWND]) -> Vec<SnapCandidate> {
         .collect()
 }
 
+#[cfg(test)]
 pub fn filter_in_order(items: impl IntoIterator<Item = (WindowProbe, Rect)>) -> Vec<SnapCandidate> {
     items
         .into_iter()
@@ -98,7 +98,6 @@ fn describe(hwnd: HWND) -> Option<RawWindow> {
         unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_TOOLWINDOW.0 != 0;
     let rect = frame_bounds(hwnd);
     let title = window_title(hwnd);
-    let process_id = process_id(hwnd);
     Some(RawWindow {
         probe: WindowProbe {
             visible,
@@ -108,12 +107,7 @@ fn describe(hwnd: HWND) -> Option<RawWindow> {
             desktop,
             empty: rect.is_empty(),
         },
-        entry: WindowEntry {
-            hwnd,
-            rect,
-            title,
-            process_id,
-        },
+        entry: WindowEntry { hwnd, rect, title },
     })
 }
 
@@ -183,17 +177,6 @@ fn window_title(hwnd: HWND) -> Option<String> {
         None
     } else {
         Some(text)
-    }
-}
-
-fn process_id(hwnd: HWND) -> Option<u32> {
-    let mut id = 0_u32;
-    // SAFETY: the window handle is live and `id` is a live out-parameter.
-    let thread = unsafe { GetWindowThreadProcessId(hwnd, Some(&mut id)) };
-    if thread == 0 || id == 0 {
-        None
-    } else {
-        Some(id)
     }
 }
 
