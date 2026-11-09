@@ -55,8 +55,8 @@ AND c.id IN (SELECT rowid FROM capture_fts WHERE capture_fts MATCH ?4)
 ";
 
 const INSERT_CAPTURE: &str = "
-INSERT INTO capture (kind, path, bytes, width, height, duration_ms, source_app, created_at, ocr_text)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+INSERT INTO capture (kind, path, bytes, width, height, duration_ms, source_app, created_at, ocr_text, id)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
 ";
 
 const INSERT_FTS: &str = "
@@ -93,6 +93,11 @@ impl HistoryRepo {
 
     pub fn record(&mut self, capture: NewCapture) -> Result<CaptureId, HistoryError> {
         let transaction = self.conn.transaction()?;
+        let id: CaptureId = transaction.query_row(
+            "UPDATE capture_sequence SET last_id = last_id + 1 RETURNING last_id",
+            [],
+            |row| row.get(0),
+        )?;
         transaction.execute(
             INSERT_CAPTURE,
             params![
@@ -105,9 +110,9 @@ impl HistoryRepo {
                 capture.source_app,
                 capture.created_at,
                 capture.ocr_text,
+                id,
             ],
         )?;
-        let id = transaction.last_insert_rowid();
         transaction.execute(
             INSERT_FTS,
             params![
@@ -241,6 +246,22 @@ impl HistoryRepo {
     ) -> Result<HistoryPage, HistoryError> {
         let query = fts_query(text);
         self.query_page(filter, cursor, query.as_deref())
+    }
+
+    pub fn mark_uploads_interrupted(&self) -> Result<(), HistoryError> {
+        self.conn.execute(
+            "UPDATE upload SET state = 'failed', error = 'The upload was interrupted when Snapline closed.' WHERE state IN ('queued', 'uploading')",
+            [],
+        )?;
+        Ok(())
+    }
+
+    pub fn expire_uploads(&self, cutoff: i64) -> Result<(), HistoryError> {
+        self.conn.execute(
+            "DELETE FROM upload WHERE updated_at < ?1 AND state IN ('done', 'failed', 'cancelled')",
+            [cutoff],
+        )?;
+        Ok(())
     }
 
     pub fn set_upload(&mut self, update: UploadUpdate) -> Result<UploadRecord, HistoryError> {
@@ -481,6 +502,28 @@ mod tests {
             ))
             .expect("record");
         assert_eq!(second, 2);
+    }
+
+    #[test]
+    fn deleting_the_latest_capture_does_not_reuse_its_id() {
+        let (_directory, mut repo) = repo();
+        let first = repo
+            .record(capture(CaptureKind::Image, "old.png", 1))
+            .expect("capture");
+        repo.delete(first).expect("delete");
+        let next = repo
+            .record(capture(CaptureKind::Image, "new.png", 2))
+            .expect("capture");
+        assert!(next > first);
+        assert!(repo
+            .set_upload(upload(first, UploadState::Done, 3))
+            .is_err());
+        assert!(repo
+            .get(next)
+            .expect("get")
+            .expect("capture")
+            .upload
+            .is_none());
     }
 
     #[test]

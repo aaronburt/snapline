@@ -5,12 +5,13 @@ use rusqlite::{Connection, OpenFlags};
 
 use super::HistoryError;
 
-pub const CURRENT_VERSION: u32 = 2;
+pub const CURRENT_VERSION: u32 = 3;
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(5000);
 
 const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0001_init.sql"),
     include_str!("../../migrations/0002_upload_etag.sql"),
+    include_str!("../../migrations/0003_capture_sequence.sql"),
 ];
 
 pub fn open_write(path: &Path) -> Result<Connection, HistoryError> {
@@ -170,7 +171,10 @@ mod tests {
         drop(connection);
 
         let connection = open_write(&path).expect("migrate");
-        assert_eq!(schema_version(&connection).expect("version"), 2);
+        assert_eq!(
+            schema_version(&connection).expect("version"),
+            CURRENT_VERSION
+        );
         let (url, etag): (Option<String>, Option<String>) = connection
             .query_row("SELECT url, etag FROM upload WHERE id = 1", [], |row| {
                 Ok((row.get(0)?, row.get(1)?))
