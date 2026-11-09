@@ -511,10 +511,15 @@ pub const fn text_advance(size: Px) -> i32 {
 }
 
 pub fn text_size(text: &str, size: Px) -> Size {
-    let count = text.chars().count() as i32;
+    let lines: Vec<_> = text.split('\n').collect();
+    let count = lines
+        .iter()
+        .map(|line| line.trim_end_matches('\r').chars().count())
+        .max()
+        .unwrap_or(0) as i32;
     Size::new(
-        Px(count * text_advance(size)),
-        Px(GLYPH_HEIGHT.0 * text_scale(size)),
+        Px(count * size.0.max(text_advance(size))),
+        Px(lines.len() as i32 * (size.0 + 4)),
     )
 }
 

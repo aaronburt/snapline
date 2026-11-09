@@ -21,6 +21,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 pub(crate) const COMMIT_MESSAGE: u32 = WM_APP + 1;
 pub(crate) const CANCEL_MESSAGE: u32 = WM_APP + 2;
+pub(crate) const CHANGE_MESSAGE: u32 = WM_APP + 3;
 
 const SUBCLASS_ID: usize = 0x534E_4C31;
 
@@ -231,7 +232,12 @@ unsafe extern "system" fn edit_subclass(
         let _ = unsafe { PostMessageW(Some(state.parent), COMMIT_MESSAGE, WPARAM(0), LPARAM(0)) };
     }
     // SAFETY: forwards every other message to the edit control's default procedure.
-    unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+    let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
+    if data != 0 && matches!(message, 0x0102 | 0x0302 | 0x0300 | 0x0303 | 0x0304) {
+        let state = unsafe { &*(data as *const Subclass) };
+        let _ = unsafe { PostMessageW(Some(state.parent), CHANGE_MESSAGE, WPARAM(0), LPARAM(0)) };
+    }
+    result
 }
 
 fn palette(colour: Colour) -> (COLORREF, COLORREF) {

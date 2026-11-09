@@ -215,6 +215,8 @@ enum Outcome {
 }
 
 struct Surface {
+    _dcomp_target: windows::Win32::Graphics::DirectComposition::IDCompositionTarget,
+    _visual: windows::Win32::Graphics::DirectComposition::IDCompositionVisual,
     swap_chain: IDXGISwapChain1,
     target: ID2D1Bitmap1,
     frozen: ID2D1Bitmap1,
@@ -300,6 +302,8 @@ impl Context {
         let swap = self.gpu.create_target(hwnd, width, height)?;
         let frozen = self.gpu.upload_image(&self.image)?;
         self.surface = Some(Surface {
+            _dcomp_target: swap._dcomp_target,
+            _visual: swap._visual,
             swap_chain: swap.swap_chain,
             target: swap.target,
             frozen,

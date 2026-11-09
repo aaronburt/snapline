@@ -47,7 +47,7 @@ pub(crate) fn hint_text(tool: Tool, next_step: u32) -> String {
 pub(crate) fn keyboard_segments(annotating: bool) -> &'static [(&'static str, &'static str)] {
     if annotating {
         &[
-            ("Enter", " upload"),
+            ("Enter", " finish"),
             ("Ctrl+C", " copy"),
             ("Drag edges", " resize"),
             ("Right-click", " reselect"),
@@ -165,7 +165,7 @@ mod tests {
     fn keyboard_hints_match_the_plan() {
         let annotating = keyboard_segments(true);
         assert_eq!(annotating.len(), 5);
-        assert_eq!(annotating[0], ("Enter", " upload"));
+        assert_eq!(annotating[0], ("Enter", " finish"));
         assert_eq!(annotating[1], ("Ctrl+C", " copy"));
         assert_eq!(annotating[2], ("Drag edges", " resize"));
         assert_eq!(annotating[3], ("Right-click", " reselect"));

@@ -1,4 +1,3 @@
-use std::sync::Mutex;
 use std::time::Instant;
 
 use snapline_core::annotate::{crop_image, Document};
@@ -28,14 +27,14 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_TAB, VK_UP, VK_V, VK_Y, VK_Z,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos,
-    GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId, KillTimer,
-    LoadCursorW, PostQuitMessage, RegisterClassExW, SetCursor, SetForegroundWindow, SetTimer,
-    SetWindowLongPtrW, ShowWindow, TranslateMessage, UnregisterClassW, GWLP_USERDATA, HTCLIENT,
-    IDC_ARROW, IDC_CROSS, MA_ACTIVATE, MSG, SW_SHOW, WM_CLOSE, WM_CTLCOLOREDIT, WM_DESTROY,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
-    WM_NCCREATE, WM_PAINT, WM_RBUTTONDOWN, WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW,
-    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorPos, GetForegroundWindow,
+    GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId, KillTimer, LoadCursorW,
+    PostQuitMessage, RegisterClassExW, SetCursor, SetForegroundWindow, SetTimer, ShowWindow,
+    TranslateMessage, UnregisterClassW, GWLP_USERDATA, HTCLIENT, IDC_ARROW, IDC_CROSS, MA_ACTIVATE,
+    MSG, SW_SHOW, WM_CLOSE, WM_CTLCOLOREDIT, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCCREATE, WM_PAINT, WM_RBUTTONDOWN,
+    WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 #[path = "../../platform-windows/src/uia.rs"]
@@ -67,8 +66,6 @@ const SNAP_TIMER_ID: usize = 1;
 const PILL_TIMER_ID: usize = 2;
 const SNAP_DEADLINE_MS: u32 = 30;
 
-static LAST_FLATTENED: Mutex<Option<Image>> = Mutex::new(None);
-
 pub(crate) struct ScreenSource {
     pub monitor: Monitor,
     pub scale: f32,
@@ -78,6 +75,8 @@ pub(crate) struct ScreenSource {
 }
 
 pub(crate) struct WindowState {
+    _dcomp_target: windows::Win32::Graphics::DirectComposition::IDCompositionTarget,
+    _visual: windows::Win32::Graphics::DirectComposition::IDCompositionVisual,
     pub hwnd: HWND,
     pub source: ScreenSource,
     pub swap_chain: IDXGISwapChain1,
@@ -128,6 +127,7 @@ pub(crate) struct Scene {
     pub overlay: Overlay,
     pub annotate: bool,
     pub editing: bool,
+    pub upload_on_finish: bool,
     pub record: bool,
     pub cursor: Option<Point>,
     pub pointer_monitor: usize,
@@ -168,7 +168,7 @@ pub(crate) enum Outcome {
     Cancel,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct Layout {
     pub toolbar: Option<toolbar::Toolbar>,
     pub hint: Option<hints::HintPill>,
@@ -177,6 +177,7 @@ pub(crate) struct Layout {
 }
 
 pub(crate) struct Context {
+    pub(crate) flattened: Option<Image>,
     pub windows: Vec<WindowState>,
     pub scene: Scene,
     pub gpu: Gpu,
@@ -188,6 +189,7 @@ pub(crate) struct Context {
     record_press: Option<(Rect, RecordWindow, Point)>,
     stroke: Option<ID2D1StrokeStyle>,
     previous_pointer_monitor: usize,
+    previous_selection: Option<Rect>,
     class_name: Vec<u16>,
     instance: HINSTANCE,
     sources: Vec<(ScreenSource, bool)>,
@@ -205,19 +207,12 @@ pub(crate) struct Context {
     announced_selection: Option<Rect>,
 }
 
-pub fn take_flattened() -> Option<Image> {
-    LAST_FLATTENED.lock().ok().and_then(|mut slot| slot.take())
-}
-
-pub fn flattened() -> Option<Image> {
-    LAST_FLATTENED.lock().ok().and_then(|slot| slot.clone())
-}
-
 impl Context {
     pub(crate) fn build_select(req: SelectRequest) -> Result<Self, OverlayError> {
         let SelectRequest {
             desktop,
             annotate,
+            upload_on_finish,
             snap,
             magnifier,
             full_screen_crosshair,
@@ -237,7 +232,7 @@ impl Context {
                 true,
             ));
         }
-        Self::build(
+        let mut context = Self::build(
             sources,
             annotate,
             false,
@@ -245,7 +240,9 @@ impl Context {
             magnifier,
             full_screen_crosshair,
             theme,
-        )
+        )?;
+        context.scene.upload_on_finish = upload_on_finish;
+        Ok(context)
     }
 
     pub(crate) fn build_record(req: RecordPickRequest) -> Result<Self, OverlayError> {
@@ -348,6 +345,7 @@ impl Context {
             overlay,
             annotate,
             editing,
+            upload_on_finish: false,
             record: false,
             cursor: None,
             pointer_monitor: 0,
@@ -369,7 +367,9 @@ impl Context {
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect();
+        let stroke = canvas_d2d::stroke_style(&gpu);
         let context = Self {
+            flattened: None,
             windows: Vec::new(),
             scene,
             gpu,
@@ -379,8 +379,9 @@ impl Context {
             record_target: None,
             record_entries: Vec::new(),
             record_press: None,
-            stroke: canvas_d2d::stroke_style(),
+            stroke,
             previous_pointer_monitor: 0,
+            previous_selection: None,
             class_name,
             instance: HINSTANCE(instance.0),
             sources,
@@ -401,9 +402,6 @@ impl Context {
     }
 
     pub(crate) fn activate(&mut self) -> Result<(), OverlayError> {
-        if let Ok(mut slot) = LAST_FLATTENED.lock() {
-            *slot = None;
-        }
         self.register_class()?;
         self.open()?;
         self.feed_windows();
@@ -482,26 +480,22 @@ impl Context {
             let swap = match self.gpu.create_target(hwnd, width, height) {
                 Ok(swap) => swap,
                 Err(error) => {
-                    // SAFETY: the window was created above and is owned by this thread.
-                    unsafe {
-                        let _ = DestroyWindow(hwnd);
-                    }
+                    crate::destroy_window(hwnd);
                     return Err(error);
                 }
             };
             let frozen = match self.gpu.upload_image(&source.image) {
                 Ok(frozen) => frozen,
                 Err(error) => {
-                    // SAFETY: the window was created above and is owned by this thread.
-                    unsafe {
-                        let _ = DestroyWindow(hwnd);
-                    }
+                    crate::destroy_window(hwnd);
                     return Err(error);
                 }
             };
             self.windows.push(WindowState {
                 hwnd,
                 source,
+                _dcomp_target: swap._dcomp_target,
+                _visual: swap._visual,
                 swap_chain: swap.swap_chain,
                 target: swap.target,
                 frozen,
@@ -555,11 +549,7 @@ impl Context {
             )
         }
         .map_err(|error| OverlayError::Device(error.to_string()))?;
-        let context = self as *mut Self as isize;
-        // SAFETY: the context lives in a boxed value for the whole message loop.
-        unsafe {
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, context);
-        }
+        crate::set_window_data(hwnd, self as *mut Self as isize);
         Ok(hwnd)
     }
 
@@ -589,34 +579,27 @@ impl Context {
         let Some(rect) = self.scene.overlay.selected_rect() else {
             return;
         };
-        let Some(window) = self
+        let Some(bounds) = self
             .windows
             .iter()
-            .find(|window| window.source.monitor.bounds.contains(rect.center()))
+            .map(|window| window.source.monitor.bounds)
+            .reduce(Rect::union)
         else {
             return;
         };
-        let local = local_rect(rect, window.source.origin);
-        let bounds = Rect::new(
-            Px(0),
-            Px(0),
-            Px(window.source.image.width() as i32),
-            Px(window.source.image.height() as i32),
-        );
-        let Some(clipped) = local.intersection(bounds) else {
-            return;
-        };
-        if clipped.is_empty() {
+        if rect.intersection(bounds).is_none() {
             return;
         }
-        let Ok(image) = crop_image(&window.source.image, clipped) else {
+        let Some(image) = compose_region(self.windows.iter().map(|window| &window.source), bounds)
+        else {
             return;
         };
-        self.scene.document_rect = Rect::from_origin_size(
-            window.source.origin.offset(clipped.x, clipped.y),
-            clipped.size(),
-        );
-        self.scene.document_scale = window.source.scale;
+        self.scene.document_rect = bounds;
+        self.scene.document_scale = self
+            .windows
+            .iter()
+            .find(|window| window.source.monitor.bounds.contains(rect.center()))
+            .map_or(1.0, |window| window.source.scale);
         self.scene.document = Some(Document::new(image));
     }
 
@@ -645,7 +628,7 @@ impl Context {
                 .source
                 .monitor
                 .bounds
-                .contains(self.scene.document_rect.center())
+                .contains(self.scene.document_rect.origin().offset(origin.x, origin.y))
         });
         let Some(window) = monitor else {
             return;
@@ -704,39 +687,48 @@ impl Context {
         let _ = unsafe { KillTimer(Some(hwnd), PILL_TIMER_ID) };
     }
 
-    fn flatten(&self) -> Option<Image> {
+    fn flatten(&self, selection: Rect) -> Option<Image> {
         if let Some(document) = &self.scene.document {
-            return canvas_d2d::render_document(
+            let region = if self.scene.editing {
+                document.crop()
+            } else {
+                selection_in_document(
+                    document.crop(),
+                    self.scene.document_rect.origin(),
+                    selection,
+                )?
+            };
+            return canvas_d2d::render_document_region(
                 &self.gpu,
                 document,
                 self.scene.document_scale,
                 self.stroke.as_ref(),
+                region,
             )
             .ok()
-            .or_else(|| document.render().ok());
+            .or_else(|| {
+                if document.annotations().iter().any(|annotation| {
+                    matches!(
+                        annotation.shape,
+                        snapline_core::annotate::Shape::Text { .. }
+                    )
+                }) {
+                    None
+                } else {
+                    let image = document.render().ok()?;
+                    crop_image(&image, local_rect(region, document.crop().origin())).ok()
+                }
+            });
         }
-        let selection = self.scene.overlay.selected_rect()?;
-        let window = self
+        let bounds = self
             .windows
             .iter()
-            .find(|window| window.source.monitor.bounds.contains(selection.center()))?;
-        let local = local_rect(selection, window.source.origin);
-        let bounds = Rect::new(
-            Px(0),
-            Px(0),
-            Px(window.source.image.width() as i32),
-            Px(window.source.image.height() as i32),
-        );
-        let clipped = local.intersection(bounds)?;
-        crop_image(&window.source.image, clipped).ok()
-    }
-
-    fn store_flattened(&self) {
-        if let Some(image) = self.flatten() {
-            if let Ok(mut slot) = LAST_FLATTENED.lock() {
-                *slot = Some(image);
-            }
-        }
+            .map(|window| window.source.monitor.bounds)
+            .reduce(Rect::union)?;
+        compose_region(
+            self.windows.iter().map(|window| &window.source),
+            selection.intersection(bounds)?,
+        )
     }
 
     pub(crate) fn undo(&mut self) -> bool {
@@ -771,6 +763,7 @@ impl Context {
         for index in 0..self.windows.len() {
             self.redraw_window(index);
         }
+        self.previous_selection = self.scene.live_rect();
     }
 
     fn redraw_window(&mut self, index: usize) {
@@ -782,12 +775,28 @@ impl Context {
         let icons = &mut self.icons;
         let stroke = self.stroke.as_ref();
         let focus = self.toolbar_focus;
+        let text_preview = self.text_edit.as_ref().map(|edit| {
+            snapline_core::annotate::Shape::text(
+                edit.origin(),
+                edit.text(),
+                core_colour(scene.colour),
+            )
+        });
         draw_window(
-            gpu, icons, window, index, scene, layout, tools, stroke, focus,
+            gpu,
+            icons,
+            window,
+            index,
+            scene,
+            layout,
+            tools,
+            stroke,
+            focus,
+            text_preview.as_ref(),
         );
     }
 
-    fn redraw_active(&mut self) {
+    fn redraw_active(&mut self, old_layout: &Layout) {
         let count = self.windows.len();
         let mut mask = vec![false; count];
         if let Some(cursor) = self.scene.cursor {
@@ -799,8 +808,26 @@ impl Context {
                 mask[index] = true;
             }
         }
-        if self.scene.live_rect().is_some() {
+        let selection = self.scene.live_rect();
+        if selection != self.previous_selection
+            || (selection.is_none() && self.scene.full_screen_crosshair)
+        {
             mask.fill(true);
+        }
+        if old_layout != &self.layout {
+            for index in [
+                old_layout.toolbar.as_ref().map(|item| item.monitor),
+                old_layout.hint.as_ref().map(|item| item.monitor),
+                old_layout.colour.as_ref().map(|item| item.monitor),
+                old_layout.keyboard.as_ref().map(|item| item.monitor),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if index < count {
+                    mask[index] = true;
+                }
+            }
         }
         if let Some(toolbar) = &self.layout.toolbar {
             mask[toolbar.monitor] = true;
@@ -828,6 +855,7 @@ impl Context {
                 self.redraw_window(index);
             }
         }
+        self.previous_selection = selection;
     }
 
     fn refresh(&mut self) {
@@ -840,6 +868,7 @@ impl Context {
             self.pill = None;
             self.clear_pill_timer();
         }
+        let old_layout = self.layout.clone();
         self.layout = make_layout(
             &self.windows,
             &self.scene,
@@ -852,7 +881,7 @@ impl Context {
         if self.scene.shown_selection().is_none() {
             self.announced_selection = None;
         }
-        self.redraw_active();
+        self.redraw_active(&old_layout);
         self.previous_pointer_monitor = self.scene.pointer_monitor;
     }
 
@@ -946,7 +975,7 @@ impl Context {
     }
 
     fn finish(&mut self, action: Option<OverlayAction>, selection: Selection) {
-        self.store_flattened();
+        self.flattened = self.flatten(selection.rect);
         let monitor = if self.scene.editing {
             None
         } else {
@@ -1008,9 +1037,6 @@ impl Context {
     }
 
     fn cancel(&mut self) {
-        if let Ok(mut slot) = LAST_FLATTENED.lock() {
-            *slot = None;
-        }
         self.outcome = Some(Outcome::Cancel);
         // SAFETY: posts a quit message to this thread's queue.
         unsafe { PostQuitMessage(0) };
@@ -1280,14 +1306,14 @@ impl Context {
                 if self.activate_toolbar_focus(hwnd) {
                     return;
                 }
-                self.scene.pending_action = Some(OverlayAction::Upload);
+                self.scene.pending_action = self.scene.editing.then_some(OverlayAction::Upload);
                 self.apply(Input::Upload);
             }
             VK_SPACE if self.toolbar_focus.is_some() => {
                 self.activate_toolbar_focus(hwnd);
             }
             VK_TAB => {
-                if self.layout.toolbar.is_some() {
+                if annotating && self.layout.toolbar.is_some() {
                     self.focus_toolbar(hwnd, if shift { -1 } else { 1 });
                 } else {
                     self.apply(Input::Tab);
@@ -1345,6 +1371,10 @@ impl Context {
             self.refresh();
         }
         match message {
+            text_input::CHANGE_MESSAGE => {
+                self.refresh();
+                return LRESULT(0);
+            }
             text_input::COMMIT_MESSAGE => {
                 self.commit_text();
                 self.refresh();
@@ -1478,7 +1508,20 @@ impl Context {
                         }
                         self.apply(Input::Press(point));
                     } else {
-                        let result = if tool == Tool::Colour {
+                        let result = if tool == Tool::Crop && !self.scene.editing {
+                            let local = self.document_point(point);
+                            if let (Some(document), Some(selection)) = (
+                                self.scene.document.as_ref(),
+                                self.scene.overlay.selected_rect(),
+                            ) {
+                                let selection =
+                                    local_rect(selection, self.scene.document_rect.origin());
+                                if let Some(bounds) = selection.intersection(document.crop()) {
+                                    self.tools.press_crop(local, bounds);
+                                }
+                            }
+                            tools::Press::Handled
+                        } else if tool == Tool::Colour {
                             let local = self.local_point(index, point);
                             match tools::sample_image(&self.windows[index].source.image, local) {
                                 Some(rgb) => tools::Press::Copied(rgb),
@@ -1592,10 +1635,7 @@ impl Context {
         self.clear_pill_timer();
         self.text_edit = None;
         for window in self.windows.drain(..) {
-            // SAFETY: the window handle is live and owned by this thread.
-            unsafe {
-                let _ = DestroyWindow(window.hwnd);
-            }
+            crate::destroy_window(window.hwnd);
         }
         if self.class_name.is_empty() {
             return;
@@ -1695,36 +1735,20 @@ fn make_layout(
     if scene.record {
         return record_mode_layout();
     }
-    let Some(window) = windows.get(scene.pointer_monitor) else {
+    if windows.get(scene.pointer_monitor).is_none() {
         return Layout::default();
-    };
-    let selection = scene.live_rect();
-    let Some(selection) = selection else {
-        let scale = window.source.scale;
-        let width = hints::keyboard_width(gpu, scale, false);
-        return Layout {
-            toolbar: None,
-            hint: None,
-            colour: None,
-            keyboard: Some(hints::KeyboardPill {
-                monitor: scene.pointer_monitor,
-                rect: hints::keyboard_pill(window.source.monitor.bounds, scale, width),
-                annotating: false,
-            }),
-        };
-    };
-    let monitor_index = windows
-        .iter()
-        .position(|candidate| candidate.source.monitor.bounds.contains(selection.center()))
+    }
+    let monitor_index = scene
+        .live_rect()
+        .and_then(|selection| {
+            windows
+                .iter()
+                .position(|candidate| candidate.source.monitor.bounds.contains(selection.center()))
+        })
         .unwrap_or(scene.pointer_monitor);
     let monitor = &windows[monitor_index].source;
     let scale = monitor.scale;
-    let show_toolbar = scene.annotate
-        && scene.document.is_some()
-        && matches!(
-            &scene.overlay.state,
-            State::Annotating { .. } | State::Adjusting { .. }
-        );
+    let show_toolbar = scene.annotate;
     let mut toolbar = None;
     let mut hint = None;
     if show_toolbar {
@@ -1734,6 +1758,8 @@ fn make_layout(
             monitor.monitor.bounds,
             scale,
             upload_width,
+            scene.editing,
+            scene.upload_on_finish,
         ));
         let next_step = scene
             .document
@@ -1770,6 +1796,42 @@ fn make_layout(
     }
 }
 
+fn selection_in_document(crop: Rect, document_origin: Point, selection: Rect) -> Option<Rect> {
+    local_rect(selection, document_origin).intersection(crop)
+}
+
+fn compose_region<'a>(
+    sources: impl Iterator<Item = &'a ScreenSource>,
+    bounds: Rect,
+) -> Option<Image> {
+    let mut image = Image::bgra(
+        u32::try_from(bounds.width.0).ok()?,
+        u32::try_from(bounds.height.0).ok()?,
+    )
+    .ok()?;
+    for pixel in image.pixels_mut().chunks_exact_mut(4) {
+        pixel[3] = 255;
+    }
+    for source in sources {
+        let Some(overlap) = bounds.intersection(source.monitor.bounds) else {
+            continue;
+        };
+        let x = usize::try_from(overlap.x.0 - bounds.x.0).ok()? * 4;
+        let source_x = usize::try_from(overlap.x.0 - source.origin.x.0).ok()? * 4;
+        let width = usize::try_from(overlap.width.0).ok()? * 4;
+        for row in 0..u32::try_from(overlap.height.0).ok()? {
+            let from_y = u32::try_from(overlap.y.0 - source.origin.y.0).ok()? + row;
+            let to_y = u32::try_from(overlap.y.0 - bounds.y.0).ok()? + row;
+            let from = source.image.row(from_y)?.get(source_x..source_x + width)?;
+            image
+                .row_mut(to_y)?
+                .get_mut(x..x + width)?
+                .copy_from_slice(from);
+        }
+    }
+    Some(image)
+}
+
 fn draw_window(
     gpu: &mut Gpu,
     icons: &mut IconCache,
@@ -1780,6 +1842,7 @@ fn draw_window(
     tools: &Session,
     stroke: Option<&ID2D1StrokeStyle>,
     focus: Option<usize>,
+    text_preview: Option<&snapline_core::annotate::Shape>,
 ) {
     let palette = scene.theme.palette();
     let origin = window.source.origin;
@@ -1828,9 +1891,20 @@ fn draw_window(
                 let _ = context.PushAxisAlignedClip(&clip, D2D1_ANTIALIAS_MODE_ALIASED);
             }
             canvas_d2d::draw_document(gpu, document, document_origin, scene.document_scale, stroke);
+            if let Some(shape) = text_preview {
+                let mut canvas = canvas_d2d::D2dCanvas::new(
+                    context,
+                    &gpu.write,
+                    document_origin,
+                    scene.document_scale,
+                    stroke,
+                );
+                canvas.draw_shape(shape, document.image());
+            }
             if let Some(shape) = tools.preview() {
                 let mut canvas = canvas_d2d::D2dCanvas::new(
                     context,
+                    &gpu.write,
                     document_origin,
                     scene.document_scale,
                     stroke,
@@ -1979,7 +2053,7 @@ fn draw_window(
     }
     // SAFETY: the swap chain belongs to the live window.
     unsafe {
-        let _ = window.swap_chain.Present(1, DXGI_PRESENT(0));
+        let _ = window.swap_chain.Present(0, DXGI_PRESENT(0));
     }
 }
 
@@ -2132,6 +2206,70 @@ mod tests {
 
     fn point(x: i32, y: i32) -> Point {
         Point::new(Px(x), Px(y))
+    }
+
+    fn source(bounds: Rect, colour: u8) -> ScreenSource {
+        let mut image = Image::bgra(bounds.width.0 as u32, bounds.height.0 as u32).expect("image");
+        for pixel in image.pixels_mut().chunks_exact_mut(4) {
+            pixel.copy_from_slice(&[colour, 0, 0, 255]);
+        }
+        ScreenSource {
+            monitor: Monitor {
+                id: colour as u32,
+                name: String::new(),
+                bounds,
+                work_area: bounds,
+                dpi: snapline_core::geometry::DpiScale::ONE,
+                primary: false,
+            },
+            scale: 1.0,
+            origin: bounds.origin(),
+            size: bounds.size(),
+            image,
+        }
+    }
+
+    #[test]
+    fn selections_compose_pixels_across_monitors_and_negative_origins() {
+        let sources = [source(rect(-2, 0, 2, 2), 10), source(rect(0, 0, 2, 2), 20)];
+        let image = compose_region(sources.iter(), rect(-1, 0, 2, 2)).expect("image");
+        assert_eq!(image.pixel(0, 0).expect("pixel"), [10, 0, 0, 255]);
+        assert_eq!(image.pixel(1, 0).expect("pixel"), [20, 0, 0, 255]);
+    }
+
+    #[test]
+    fn finishing_uses_the_adjusted_selection() {
+        let sources = [source(rect(-2, 0, 2, 2), 10), source(rect(0, 0, 2, 2), 20)];
+        let image = compose_region(sources.iter(), rect(-2, 0, 4, 2)).expect("image");
+        let selection = selection_in_document(rect(0, 0, 4, 2), point(-2, 0), rect(-1, 0, 3, 1))
+            .expect("selection");
+        let adjusted = crop_image(&image, selection).expect("crop");
+        assert_eq!((adjusted.width(), adjusted.height()), (3, 1));
+        assert_eq!(adjusted.pixel(0, 0).expect("pixel"), [10, 0, 0, 255]);
+        assert_eq!(adjusted.pixel(2, 0).expect("pixel"), [20, 0, 0, 255]);
+    }
+
+    #[test]
+    fn finishing_keeps_the_selection_after_overlay_returns_to_hovering() {
+        let selection = rect(20, 30, 40, 50);
+        let mut overlay = Overlay::with_annotate(true);
+        overlay.state = State::Annotating {
+            rect: selection,
+            tool: Tool::Pen,
+        };
+        let (overlay, effects) = overlay.on(Input::Upload);
+        assert!(overlay.selected_rect().is_none());
+        let finished = effects
+            .into_iter()
+            .find_map(|effect| match effect {
+                Effect::Finish(selection) => Some(selection.rect),
+                _ => None,
+            })
+            .expect("finished selection");
+        assert_eq!(
+            selection_in_document(rect(0, 0, 200, 200), Point::ORIGIN, finished),
+            Some(selection)
+        );
     }
 
     #[test]

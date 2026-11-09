@@ -36,17 +36,16 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetCapture, SetFocus, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, GetCursorPos, GetForegroundWindow, GetMessageW, GetSystemMetrics,
-    GetWindowLongPtrW, GetWindowThreadProcessId, LoadCursorW, PostMessageW, PostQuitMessage,
-    RegisterClassExW, SetCursor, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    TrackPopupMenuEx, TranslateMessage, UnregisterClassW, CS_DBLCLKS, GWLP_USERDATA, HTCLIENT,
-    IDC_ARROW, MA_ACTIVATE, MF_STRING, MSG, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOSIZE,
-    SWP_NOZORDER, SW_SHOW, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CANCELMODE, WM_CLOSE,
-    WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_PAINT, WM_RBUTTONUP,
-    WM_SETCURSOR, WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
+    GetCursorPos, GetForegroundWindow, GetMessageW, GetSystemMetrics, GetWindowLongPtrW,
+    GetWindowThreadProcessId, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassExW,
+    SetCursor, SetForegroundWindow, SetWindowPos, ShowWindow, TrackPopupMenuEx, TranslateMessage,
+    UnregisterClassW, CS_DBLCLKS, GWLP_USERDATA, HTCLIENT, IDC_ARROW, MA_ACTIVATE, MF_STRING, MSG,
+    SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOW, SW_SHOWNOACTIVATE,
+    TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CANCELMODE, WM_CLOSE, WM_DESTROY,
+    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_PAINT, WM_RBUTTONUP, WM_SETCURSOR, WM_SYSKEYDOWN,
+    WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::d2d::{self, Gpu};
@@ -104,6 +103,7 @@ pub struct PinRequest {
     pub theme: Theme,
     pub on_copy: Option<PinClipboard>,
     pub on_save: Option<PinSave>,
+    pub preview: bool,
 }
 
 impl PinRequest {
@@ -114,6 +114,7 @@ impl PinRequest {
             theme: Theme::Dark,
             on_copy: None,
             on_save: None,
+            preview: false,
         }
     }
 
@@ -276,6 +277,7 @@ struct Surface {
 }
 
 struct Context {
+    preview: bool,
     gpu: Gpu,
     hwnd: HWND,
     image: Image,
@@ -300,6 +302,7 @@ impl Context {
             theme,
             on_copy,
             on_save,
+            preview,
         } = request;
         let cursor = cursor_point().unwrap_or(Point::ORIGIN);
         let work_area = capture_origin
@@ -313,6 +316,7 @@ impl Context {
         let name = format!("{CLASS_NAME}{}", NEXT_CLASS.fetch_add(1, Ordering::Relaxed));
         let class_name: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
         Ok(Self {
+            preview,
             gpu,
             hwnd: HWND::default(),
             image,
@@ -336,11 +340,20 @@ impl Context {
         let size = self.geometry.window.size();
         let surface = create_surface(&self.gpu, self.hwnd, size, &self.image)?;
         self.surface = Some(surface);
-        self.focus();
+        if !self.preview {
+            self.focus();
+        }
         self.redraw();
         // SAFETY: the window handle is a live top level window owned by this thread.
         unsafe {
-            let _ = ShowWindow(self.hwnd, SW_SHOW);
+            let _ = ShowWindow(
+                self.hwnd,
+                if self.preview {
+                    SW_SHOWNOACTIVATE
+                } else {
+                    SW_SHOW
+                },
+            );
             let _ = UpdateWindow(self.hwnd);
         }
         Ok(())
@@ -405,11 +418,7 @@ impl Context {
             )
         }
         .map_err(|error| PinError::Window(error.to_string()))?;
-        let context = self as *mut Self as isize;
-        // SAFETY: the context lives in a boxed value for the whole message loop.
-        unsafe {
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, context);
-        }
+        crate::set_window_data(hwnd, self as *mut Self as isize);
         self.hwnd = hwnd;
         Ok(())
     }
@@ -662,6 +671,7 @@ impl Context {
         let point = cursor_point().unwrap_or(Point::ORIGIN);
         // SAFETY: the window handle is live and owned by this thread.
         let _ = unsafe { SetForegroundWindow(self.hwnd) };
+        crate::set_window_data(self.hwnd, 0);
         // SAFETY: the menu is live and every argument is a plain value.
         let command = unsafe {
             TrackPopupMenuEx(
@@ -673,6 +683,7 @@ impl Context {
                 None,
             )
         };
+        crate::set_window_data(self.hwnd, self as *const Self as isize);
         // SAFETY: destroys the menu created above exactly once.
         let _ = unsafe { DestroyMenu(menu) };
         PinMenuAction::from_command(command.0 as u32 as usize)
@@ -773,10 +784,7 @@ impl Context {
 
     fn destroy(&mut self) {
         if !self.hwnd.is_invalid() {
-            // SAFETY: the window handle is live and owned by this thread.
-            unsafe {
-                let _ = DestroyWindow(self.hwnd);
-            }
+            crate::destroy_window(self.hwnd);
             self.hwnd = HWND::default();
         }
         self.surface = None;
@@ -823,7 +831,8 @@ fn run(request: PinRequest, ready: mpsc::Sender<Result<PinReady, PinError>>) {
         let _ = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
     let alive = Arc::new(Mutex::new(true));
-    let result = Context::build(request, alive.clone()).and_then(|mut context| {
+    let result = Context::build(request, alive.clone()).and_then(|context| {
+        let mut context = Box::new(context);
         context.activate()?;
         let _ = ready.send(Ok(context.ready()));
         Context::run_message_loop();

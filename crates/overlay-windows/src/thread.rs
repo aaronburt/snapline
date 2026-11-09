@@ -44,10 +44,14 @@ fn execute(
     let outcome = context.outcome.take();
     let tool = context.scene.tool;
     let colour = context.scene.colour.rgb();
-    let image = crate::window::take_flattened();
+    let image = context.flattened.take();
+    let annotated = context.scene.annotate;
     context.destroy();
     drop(context);
     match outcome {
+        Some(Outcome::Finish { .. }) if annotated && image.is_none() => Err(OverlayError::Device(
+            "The edited capture could not be rendered.".to_owned(),
+        )),
         Some(Outcome::Finish {
             action,
             selection,

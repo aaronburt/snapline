@@ -187,7 +187,14 @@ fn separator(rects: &mut Vec<f32>, x: &mut f32, scale: f32, gap: f32, placed: &m
     *placed = true;
 }
 
-pub(crate) fn layout(monitor: usize, bounds: Rect, scale: f32, upload_label: f32) -> Toolbar {
+pub(crate) fn layout(
+    monitor: usize,
+    bounds: Rect,
+    scale: f32,
+    upload_label: f32,
+    editing: bool,
+    upload_on_finish: bool,
+) -> Toolbar {
     let scale = signed(scale);
     let pad = TOOLBAR_PADDING * scale;
     let gap = TOOLBAR_GAP * scale;
@@ -254,28 +261,34 @@ pub(crate) fn layout(monitor: usize, bounds: Rect, scale: f32, upload_label: f32
         gap,
         &mut placed,
     );
-    item(
-        &mut buttons,
-        &mut x,
-        ToolbarAction::Save,
-        TOOL_SIZE * scale,
-        gap,
-        &mut placed,
-    );
-    item(
-        &mut buttons,
-        &mut x,
-        ToolbarAction::Pin,
-        TOOL_SIZE * scale,
-        gap,
-        &mut placed,
-    );
+    if editing {
+        item(
+            &mut buttons,
+            &mut x,
+            ToolbarAction::Save,
+            TOOL_SIZE * scale,
+            gap,
+            &mut placed,
+        );
+        item(
+            &mut buttons,
+            &mut x,
+            ToolbarAction::Pin,
+            TOOL_SIZE * scale,
+            gap,
+            &mut placed,
+        );
+    }
     x += 4.0 * scale;
     let upload_width = 24.0 * scale + 16.0 * scale + 6.0 * scale + upload_label;
     item(
         &mut buttons,
         &mut x,
-        ToolbarAction::Upload,
+        if editing || upload_on_finish {
+            ToolbarAction::Upload
+        } else {
+            ToolbarAction::Save
+        },
         upload_width,
         gap,
         &mut placed,
@@ -562,7 +575,7 @@ fn draw_button(
                 18.0 * scale,
             );
         }
-        ToolbarAction::Save => {
+        ToolbarAction::Save if width <= TOOL_SIZE * scale + 1.0 => {
             icons::draw(
                 icons,
                 gpu,
@@ -584,7 +597,7 @@ fn draw_button(
                 18.0 * scale,
             );
         }
-        ToolbarAction::Upload => {
+        ToolbarAction::Save | ToolbarAction::Upload => {
             d2d::fill_round(
                 context,
                 rect_f(x, y, width, height),
@@ -597,7 +610,11 @@ fn draw_button(
             icons::draw(
                 icons,
                 gpu,
-                Icon::Upload,
+                if button.action == ToolbarAction::Save {
+                    Icon::Save
+                } else {
+                    Icon::Upload
+                },
                 palette.on_accent,
                 icon_x,
                 centre_y,
@@ -610,7 +627,11 @@ fn draw_button(
                 x + (width - content) / 2.0 + 16.0 * scale + 6.0 * scale,
                 y,
                 height,
-                "Upload",
+                if button.action == ToolbarAction::Save {
+                    "Save"
+                } else {
+                    "Upload"
+                },
             );
         }
         ToolbarAction::Cancel => {
@@ -645,7 +666,7 @@ mod tests {
 
     #[test]
     fn toolbar_order_matches_the_plan() {
-        let toolbar = layout(1, monitor(), 1.0, 47.0);
+        let toolbar = layout(1, monitor(), 1.0, 47.0, true, true);
         let actions = actions(&toolbar);
         let expected: Vec<ToolbarAction> = TOOLS
             .iter()
@@ -668,10 +689,30 @@ mod tests {
     }
 
     #[test]
+    fn capture_toolbar_offers_annotation_tools_and_completion() {
+        let toolbar = layout(0, monitor(), 1.0, 47.0, false, false);
+        let actions = actions(&toolbar);
+        assert!(actions.contains(&ToolbarAction::Tool(Tool::Pen)));
+        assert!(actions.contains(&ToolbarAction::Tool(Tool::Highlighter)));
+        assert!(actions.contains(&ToolbarAction::Copy));
+        assert!(actions.contains(&ToolbarAction::Cancel));
+        assert!(actions.contains(&ToolbarAction::Save));
+        assert!(!actions.contains(&ToolbarAction::Upload));
+        assert!(!actions.contains(&ToolbarAction::Pin));
+        let upload: Vec<_> = layout(0, monitor(), 1.0, 47.0, false, true)
+            .buttons
+            .iter()
+            .map(|button| button.action)
+            .collect();
+        assert!(upload.contains(&ToolbarAction::Upload));
+        assert!(!upload.contains(&ToolbarAction::Save));
+    }
+
+    #[test]
     fn toolbar_is_centred_fourteen_pixels_from_the_top() {
         for scale in [1.0_f32, 1.25, 1.5, 2.0] {
             let bounds = monitor();
-            let toolbar = layout(0, bounds, scale, 47.0 * scale);
+            let toolbar = layout(0, bounds, scale, 47.0 * scale, true, true);
             let centre = toolbar.rect.x.get() as f32 + toolbar.rect.width.get() as f32 / 2.0;
             let monitor_centre = bounds.x.get() as f32 + bounds.width.get() as f32 / 2.0;
             assert!((centre - monitor_centre).abs() <= 1.0);
@@ -689,7 +730,7 @@ mod tests {
 
     #[test]
     fn toolbar_buttons_are_the_documented_sizes() {
-        let toolbar = layout(0, monitor(), 1.0, 47.0);
+        let toolbar = layout(0, monitor(), 1.0, 47.0, true, true);
         for button in &toolbar.buttons {
             match button.action {
                 ToolbarAction::Tool(_) => {
@@ -715,7 +756,7 @@ mod tests {
 
     #[test]
     fn toolbar_buttons_never_overlap() {
-        let toolbar = layout(0, monitor(), 1.5, 70.0);
+        let toolbar = layout(0, monitor(), 1.5, 70.0, true, true);
         for (index, button) in toolbar.buttons.iter().enumerate() {
             for other in toolbar.buttons.iter().skip(index + 1) {
                 assert_eq!(button.rect.intersection(other.rect), None);
@@ -725,7 +766,7 @@ mod tests {
 
     #[test]
     fn hit_testing_separates_buttons_padding_and_outside() {
-        let toolbar = layout(0, monitor(), 1.0, 47.0);
+        let toolbar = layout(0, monitor(), 1.0, 47.0, true, true);
         let Some(first) = toolbar.buttons.first() else {
             return;
         };
@@ -752,7 +793,7 @@ mod tests {
     #[test]
     fn every_toolbar_button_has_a_screen_reader_name() {
         let state = state();
-        let toolbar = layout(0, monitor(), 1.0, 47.0);
+        let toolbar = layout(0, monitor(), 1.0, 47.0, true, true);
         for button in &toolbar.buttons {
             assert!(!button.action.label().is_empty());
             assert!(!button.action.announcement(&state).is_empty());

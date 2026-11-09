@@ -559,6 +559,7 @@ impl Crc {
 
 fn glyph(character: char) -> [u8; 7] {
     match character.to_ascii_uppercase() {
+        ' ' => [0; 7],
         'A' => [
             0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
         ],

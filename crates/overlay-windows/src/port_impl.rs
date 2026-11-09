@@ -13,6 +13,7 @@ impl core_ports::OverlayHost for OverlayHostImpl {
         let select = SelectRequest {
             desktop: request.desktop,
             annotate: request.annotate,
+            upload_on_finish: request.upload_on_finish,
             snap: request.snap,
             magnifier: MagnifierSettings {
                 enabled: request.magnifier.enabled,

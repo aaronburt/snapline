@@ -58,8 +58,8 @@ pub(crate) struct Gpu {
 pub(crate) struct SwapTarget {
     pub swap_chain: IDXGISwapChain1,
     pub target: ID2D1Bitmap1,
-    _dcomp_target: IDCompositionTarget,
-    _visual: IDCompositionVisual,
+    pub(crate) _dcomp_target: IDCompositionTarget,
+    pub(crate) _visual: IDCompositionVisual,
 }
 
 fn device_error(error: windows::core::Error) -> OverlayError {
@@ -185,7 +185,7 @@ impl Gpu {
         .map_err(device_error)?;
         let dcomp_target = {
             // SAFETY: the window handle is a live top level window owned by this thread.
-            unsafe { self.dcomp.CreateTargetForHwnd(hwnd, true) }.map_err(device_error)?
+            unsafe { self.dcomp.CreateTargetForHwnd(hwnd, false) }.map_err(device_error)?
         };
         // SAFETY: the composition device is live.
         let visual = unsafe { self.dcomp.CreateVisual() }.map_err(device_error)?;

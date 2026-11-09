@@ -243,6 +243,7 @@ impl Default for MagnifierSettings {
 pub struct OverlayRequest {
     pub desktop: FrozenDesktop,
     pub annotate: bool,
+    pub upload_on_finish: bool,
     pub snap: crate::overlay::SnapSet,
     pub magnifier: MagnifierSettings,
     pub full_screen_crosshair: bool,

@@ -37,6 +37,23 @@ use snapline_core::image::Image;
 use snapline_core::overlay::{Rgb, SnapSet, Tool};
 use snapline_core::ports::FrozenDesktop;
 use thiserror::Error;
+use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::WindowsAndMessaging::{DestroyWindow, SetWindowLongPtrW, GWLP_USERDATA};
+
+pub(crate) fn set_window_data(hwnd: HWND, value: isize) {
+    // SAFETY: the handle belongs to a window owned by the calling thread and the value is only a pointer-sized integer.
+    unsafe {
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, value);
+    }
+}
+
+pub(crate) fn destroy_window(hwnd: HWND) {
+    set_window_data(hwnd, 0);
+    // SAFETY: the handle is live and owned by the calling thread; the window procedure no longer sees the context.
+    unsafe {
+        let _ = DestroyWindow(hwnd);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Theme {
@@ -192,6 +209,7 @@ impl Default for StrokeSize {
 pub struct SelectRequest {
     pub desktop: FrozenDesktop,
     pub annotate: bool,
+    pub upload_on_finish: bool,
     pub snap: SnapSet,
     pub magnifier: MagnifierSettings,
     pub full_screen_crosshair: bool,
@@ -203,6 +221,7 @@ impl SelectRequest {
         Self {
             desktop,
             annotate: false,
+            upload_on_finish: false,
             snap: SnapSet::default(),
             magnifier: MagnifierSettings::default(),
             full_screen_crosshair: false,

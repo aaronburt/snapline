@@ -1,7 +1,6 @@
 use snapline_core::annotate::{
-    crop_image, label_rect, label_text_origin, smooth, step_rect, text_advance, text_scale,
-    text_size, Canvas, Document, Rgba, Shape, BLUR_BLOCK, CORNER_RADIUS, LABEL_RADIUS, STEP_RADIUS,
-    STEP_SIZE, TEXT_SIZE,
+    crop_image, label_rect, label_text_origin, smooth, step_rect, text_size, Canvas, Document,
+    Rgba, Shape, BLUR_BLOCK, CORNER_RADIUS, LABEL_RADIUS, STEP_RADIUS, STEP_SIZE, TEXT_SIZE,
 };
 use snapline_core::geometry::{Point, Px, Rect};
 use snapline_core::image::Image;
@@ -9,20 +8,27 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_IGNORE, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Bitmap1, ID2D1DeviceContext5, ID2D1Factory, ID2D1Factory1, ID2D1Image,
-    ID2D1SolidColorBrush, ID2D1StrokeStyle, D2D1_ANTIALIAS_MODE_ALIASED,
-    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-    D2D1_BITMAP_OPTIONS_CPU_READ, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
-    D2D1_CAP_STYLE_ROUND, D2D1_ELLIPSE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_LINE_JOIN_ROUND,
+    ID2D1Bitmap1, ID2D1DeviceContext5, ID2D1Factory, ID2D1Image, ID2D1SolidColorBrush,
+    ID2D1StrokeStyle, D2D1_ANTIALIAS_MODE_ALIASED, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+    D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_CPU_READ, D2D1_BITMAP_OPTIONS_TARGET,
+    D2D1_BITMAP_PROPERTIES1, D2D1_CAP_STYLE_ROUND, D2D1_ELLIPSE, D2D1_LINE_JOIN_ROUND,
     D2D1_MAP_OPTIONS_READ, D2D1_ROUNDED_RECT, D2D1_STROKE_STYLE_PROPERTIES,
+};
+use windows::Win32::Graphics::DirectWrite::{
+    IDWriteFactory, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_NORMAL,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 
 use crate::d2d::{self, Gpu};
 use crate::OverlayError;
 
+thread_local! {
+    static ANNOTATION_TEXT: std::cell::RefCell<d2d::TextCache> = std::cell::RefCell::new(d2d::TextCache::new());
+}
+
 pub(crate) struct D2dCanvas<'a> {
     context: &'a ID2D1DeviceContext5,
+    write: &'a IDWriteFactory,
     origin: (f32, f32),
     scale: f32,
     stroke: Option<&'a ID2D1StrokeStyle>,
@@ -31,12 +37,14 @@ pub(crate) struct D2dCanvas<'a> {
 impl<'a> D2dCanvas<'a> {
     pub(crate) fn new(
         context: &'a ID2D1DeviceContext5,
+        write: &'a IDWriteFactory,
         origin: Point,
         scale: f32,
         stroke: Option<&'a ID2D1StrokeStyle>,
     ) -> Self {
         Self {
             context,
+            write,
             origin: (origin.x.get() as f32, origin.y.get() as f32),
             scale: scale.max(0.01),
             stroke,
@@ -321,32 +329,27 @@ impl Canvas for D2dCanvas<'_> {
     }
 
     fn text(&mut self, origin: Point, text: &str, size: Px, bold: bool, colour: Rgba) {
-        let scale = text_scale(size);
-        let advance = text_advance(size);
-        let Some(brush) = self.brush(colour) else {
+        let weight = if bold {
+            DWRITE_FONT_WEIGHT_BOLD
+        } else {
+            DWRITE_FONT_WEIGHT_NORMAL
+        };
+        let Some(format) = ANNOTATION_TEXT.with(|cache| {
+            cache
+                .borrow_mut()
+                .format(self.write, size.0 as f32, weight, false)
+        }) else {
             return;
         };
-        self.antialias(D2D1_ANTIALIAS_MODE_ALIASED);
-        for (index, character) in text.chars().enumerate() {
-            let rows = glyph(character);
-            for (row, bits) in rows.iter().enumerate() {
-                for column in 0..5 {
-                    if bits & (1 << (4 - column)) == 0 {
-                        continue;
-                    }
-                    let x = origin.x.0 + index as i32 * advance + column * scale;
-                    let y = origin.y.0 + row as i32 * scale;
-                    let width = scale + if bold { 1 } else { 0 };
-                    let (left, top) = self.position(Point::new(Px(x), Px(y)));
-                    let area = d2d::rect(left, top, width as f32, scale as f32);
-                    // SAFETY: the rectangle and brush are live values.
-                    unsafe {
-                        let _ = self.context.FillRectangle(&area, &brush);
-                    }
-                }
-            }
-        }
-        self.antialias(D2D1_ANTIALIAS_MODE_ALIASED);
+        let (left, top) = self.position(origin);
+        let bounds = text_size(text, size);
+        d2d::draw_text(
+            self.context,
+            &format,
+            text,
+            d2d::rect(left, top, bounds.width.0 as f32, bounds.height.0 as f32),
+            rgba(colour),
+        );
     }
 
     fn pixelate(&mut self, rect: Rect, block: Px, source: &Image) {
@@ -430,10 +433,8 @@ impl Canvas for D2dCanvas<'_> {
     }
 }
 
-pub(crate) fn stroke_style() -> Option<ID2D1StrokeStyle> {
-    let factory: ID2D1Factory1 =
-        // SAFETY: a single threaded factory takes no options and no invalid pointers.
-        unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None) }.ok()?;
+pub(crate) fn stroke_style(gpu: &Gpu) -> Option<ID2D1StrokeStyle> {
+    let factory = unsafe { gpu.context.GetFactory() }.ok()?;
     let properties = D2D1_STROKE_STYLE_PROPERTIES {
         startCap: D2D1_CAP_STYLE_ROUND,
         endCap: D2D1_CAP_STYLE_ROUND,
@@ -454,19 +455,32 @@ pub(crate) fn draw_document(
     stroke: Option<&ID2D1StrokeStyle>,
 ) {
     let context = &gpu.context;
-    let mut canvas = D2dCanvas::new(context, origin, scale, stroke);
+    let mut canvas = D2dCanvas::new(context, &gpu.write, origin, scale, stroke);
     for annotation in document.annotations() {
         canvas.draw_shape(&annotation.shape, document.image());
     }
 }
 
+#[cfg(test)]
 pub(crate) fn render_document(
     gpu: &Gpu,
     document: &Document,
     scale: f32,
     stroke: Option<&ID2D1StrokeStyle>,
 ) -> Result<Image, OverlayError> {
-    let full = document.full_rect();
+    render_document_region(gpu, document, scale, stroke, document.crop())
+}
+
+pub(crate) fn render_document_region(
+    gpu: &Gpu,
+    document: &Document,
+    scale: f32,
+    stroke: Option<&ID2D1StrokeStyle>,
+    region: Rect,
+) -> Result<Image, OverlayError> {
+    let full = region
+        .intersection(document.crop())
+        .ok_or_else(|| OverlayError::Device("The annotation image is empty.".to_string()))?;
     if full.is_empty() {
         return Err(OverlayError::Device(
             "The annotation image is empty.".to_string(),
@@ -477,7 +491,9 @@ pub(crate) fn render_document(
     let height = u32::try_from(full.height.get())
         .map_err(|_| OverlayError::Device("The annotation image is too large.".to_string()))?;
     let context = &gpu.context;
-    let source = gpu.upload_image(document.image())?;
+    let cropped = crop_image(document.image(), full)
+        .map_err(|error| OverlayError::Device(error.to_string()))?;
+    let source = gpu.upload_image(&cropped)?;
     let target_properties = D2D1_BITMAP_PROPERTIES1 {
         pixelFormat: D2D1_PIXEL_FORMAT {
             format: DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -511,16 +527,17 @@ pub(crate) fn render_document(
         context,
         &source,
         d2d::rect(0.0, 0.0, width as f32, height as f32),
-        d2d::rect(
-            0.0,
-            0.0,
-            document.image().width() as f32,
-            document.image().height() as f32,
-        ),
+        d2d::rect(0.0, 0.0, width as f32, height as f32),
         false,
     );
     {
-        let mut canvas = D2dCanvas::new(context, Point::ORIGIN, scale, stroke);
+        let mut canvas = D2dCanvas::new(
+            context,
+            &gpu.write,
+            Point::new(Px(-full.x.0), Px(-full.y.0)),
+            scale,
+            stroke,
+        );
         for annotation in document.annotations() {
             canvas.draw_shape(&annotation.shape, document.image());
         }
@@ -535,9 +552,7 @@ pub(crate) fn render_document(
         }
     }
     drawn.map_err(device)?;
-    let full_image = read_back(context, &target, width, height)?;
-    crop_image(&full_image, document.crop())
-        .map_err(|error| OverlayError::Device(error.to_string()))
+    read_back(context, &target, width, height)
 }
 
 fn read_back(
@@ -642,179 +657,6 @@ fn quadratic(tail: Point, control: Point, tip: Point) -> Vec<Point> {
     points
 }
 
-fn glyph(character: char) -> [u8; 7] {
-    match character.to_ascii_uppercase() {
-        'A' => [
-            0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
-        ],
-        'B' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110,
-        ],
-        'C' => [
-            0b01111, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b01111,
-        ],
-        'D' => [
-            0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110,
-        ],
-        'E' => [
-            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
-        ],
-        'F' => [
-            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000,
-        ],
-        'G' => [
-            0b01111, 0b10000, 0b10000, 0b10111, 0b10001, 0b10001, 0b01111,
-        ],
-        'H' => [
-            0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
-        ],
-        'I' => [
-            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111,
-        ],
-        'J' => [
-            0b00111, 0b00010, 0b00010, 0b00010, 0b00010, 0b10010, 0b01100,
-        ],
-        'K' => [
-            0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001,
-        ],
-        'L' => [
-            0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
-        ],
-        'M' => [
-            0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
-        ],
-        'N' => [
-            0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
-        ],
-        'O' => [
-            0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        'P' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
-        ],
-        'Q' => [
-            0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101,
-        ],
-        'R' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
-        ],
-        'S' => [
-            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
-        ],
-        'T' => [
-            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
-        ],
-        'U' => [
-            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        'V' => [
-            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100,
-        ],
-        'W' => [
-            0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b11011, 0b10001,
-        ],
-        'X' => [
-            0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001,
-        ],
-        'Y' => [
-            0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100,
-        ],
-        'Z' => [
-            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111,
-        ],
-        '0' => [
-            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
-        ],
-        '1' => [
-            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
-        ],
-        '2' => [
-            0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111,
-        ],
-        '3' => [
-            0b11111, 0b00010, 0b00100, 0b00010, 0b00001, 0b10001, 0b01110,
-        ],
-        '4' => [
-            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
-        ],
-        '5' => [
-            0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110,
-        ],
-        '6' => [
-            0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
-        ],
-        '7' => [
-            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
-        ],
-        '8' => [
-            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
-        ],
-        '9' => [
-            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100,
-        ],
-        '.' => [
-            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b01100, 0b01100,
-        ],
-        ',' => [
-            0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b00100, 0b01000,
-        ],
-        ':' => [
-            0b00000, 0b00110, 0b00110, 0b00000, 0b00110, 0b00110, 0b00000,
-        ],
-        ';' => [
-            0b00000, 0b00110, 0b00110, 0b00000, 0b00110, 0b00110, 0b01000,
-        ],
-        '-' => [
-            0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000,
-        ],
-        '+' => [
-            0b00000, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0b00000,
-        ],
-        '/' => [
-            0b00001, 0b00010, 0b00010, 0b00100, 0b01000, 0b01000, 0b10000,
-        ],
-        '!' => [
-            0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00000, 0b00100,
-        ],
-        '?' => [
-            0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b00000, 0b00100,
-        ],
-        '\'' => [
-            0b00100, 0b00100, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000,
-        ],
-        '"' => [
-            0b01010, 0b01010, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000,
-        ],
-        '(' => [
-            0b00010, 0b00100, 0b01000, 0b01000, 0b01000, 0b00100, 0b00010,
-        ],
-        ')' => [
-            0b01000, 0b00100, 0b00010, 0b00010, 0b00010, 0b00100, 0b01000,
-        ],
-        '=' => [
-            0b00000, 0b00000, 0b11111, 0b00000, 0b11111, 0b00000, 0b00000,
-        ],
-        '#' => [
-            0b01010, 0b01010, 0b11111, 0b01010, 0b11111, 0b01010, 0b01010,
-        ],
-        '%' => [
-            0b11001, 0b11010, 0b00010, 0b00100, 0b01000, 0b01011, 0b10011,
-        ],
-        '&' => [
-            0b01100, 0b10010, 0b10100, 0b01000, 0b10101, 0b10010, 0b01101,
-        ],
-        '*' => [
-            0b00000, 0b10101, 0b01110, 0b11111, 0b01110, 0b10101, 0b00000,
-        ],
-        '@' => [
-            0b01110, 0b10001, 0b10111, 0b10101, 0b10111, 0b10000, 0b01110,
-        ],
-        _ => [
-            0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b00000, 0b00100,
-        ],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -851,31 +693,22 @@ mod tests {
 
     #[test]
     #[ignore = "desktop"]
-    fn direct2d_text_matches_the_software_rasteriser() {
+    fn direct2d_text_preserves_case_and_unicode() {
         let Ok(gpu) = Gpu::new() else {
             return;
         };
         let Some(image) = blank(180, 40) else {
             return;
         };
-        let mut document = Document::new(image);
-        let _ = document.add(Shape::text(
-            Point::new(Px(12), Px(12)),
-            "SNAP 42",
-            Colour::White,
-        ));
-        let style = stroke_style();
-        let Ok(actual) = render_document(&gpu, &document, 1.0, style.as_ref()) else {
-            return;
+        let render = |text| {
+            let mut document = Document::new(image.clone());
+            document
+                .add(Shape::text(Point::new(Px(12), Px(8)), text, Colour::White))
+                .expect("text");
+            render_document(&gpu, &document, 1.0, stroke_style(&gpu).as_ref()).expect("render")
         };
-        let Ok(expected) = document.render() else {
-            return;
-        };
-        assert_eq!(
-            different(&expected, &actual, 2),
-            0,
-            "the Direct2D text differs from the software rasteriser"
-        );
+        assert!(different(&render("hello"), &render("HELLO"), 2) > 0);
+        assert!(different(&render("é"), &render("?"), 2) > 0);
     }
 
     #[test]
@@ -892,7 +725,7 @@ mod tests {
             Rect::new(Px(20), Px(20), Px(160), Px(100)),
             Style::new(Colour::Red, Weight::Thick),
         ));
-        let style = stroke_style();
+        let style = stroke_style(&gpu);
         let Ok(actual) = render_document(&gpu, &document, 1.0, style.as_ref()) else {
             return;
         };
@@ -917,7 +750,7 @@ mod tests {
         };
         let mut document = Document::new(image);
         let _ = document.add(Shape::step(Point::new(Px(60), Px(60)), 1, Colour::Red));
-        let style = stroke_style();
+        let style = stroke_style(&gpu);
         let Ok(actual) = render_document(&gpu, &document, 1.0, style.as_ref()) else {
             return;
         };
@@ -929,7 +762,9 @@ mod tests {
             different(&expected, &actual, 2) * 4 < total,
             "the Direct2D step differs too much from the software rasteriser"
         );
-        let centre = actual.pixel(59, 54).unwrap_or_default();
-        assert!(centre[2] > 200 && centre[1] > 200 && centre[0] > 200);
+        assert!((48..72).any(|y| (48..72).any(|x| {
+            let pixel = actual.pixel(x, y).unwrap_or_default();
+            pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200
+        })));
     }
 }

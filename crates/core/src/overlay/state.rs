@@ -250,7 +250,12 @@ impl Overlay {
             State::Dragging { from } => {
                 let from = *from;
                 let old = Rect::from_points(from, previous.unwrap_or(point));
-                let rect = Rect::from_points(from, point);
+                let dragged = Rect::from_points(from, point);
+                let rect = if dragged.width.0 <= 3 && dragged.height.0 <= 3 {
+                    self.snap.hover_at(from).unwrap_or(dragged)
+                } else {
+                    dragged
+                };
                 if rect.is_empty() {
                     redraw = Some((Some(old), None));
                     next = Some(self.resting_state());
@@ -560,6 +565,39 @@ mod tests {
             panic!()
         };
         assert_eq!(*area, rect(0, 0, 100, 100));
+    }
+
+    #[test]
+    fn clicking_a_window_captures_the_topmost_candidate() {
+        let top = rect(20, 30, 200, 150);
+        let (overlay, _) = Overlay::new().on(Input::SnapCandidates(SnapSet::new(
+            vec![top, rect(0, 0, 500, 500)],
+            vec![],
+        )));
+        let (_, effects) = drag(overlay, point(60, 70), point(62, 71));
+        assert!(effects.contains(&Effect::Finish(Selection::new(top))));
+    }
+
+    #[test]
+    fn clicking_a_window_enters_annotation_when_enabled() {
+        let target = rect(20, 30, 200, 150);
+        let (overlay, _) = Overlay::with_annotate(true)
+            .on(Input::SnapCandidates(SnapSet::new(vec![target], vec![])));
+        let (overlay, effects) = drag(overlay, point(60, 70), point(60, 70));
+        assert_eq!(overlay.selected_rect(), Some(target));
+        assert!(effects
+            .iter()
+            .all(|effect| !matches!(effect, Effect::Finish(_))));
+    }
+
+    #[test]
+    fn dragging_over_a_window_captures_the_dragged_rectangle() {
+        let (overlay, _) = Overlay::new().on(Input::SnapCandidates(SnapSet::new(
+            vec![rect(0, 0, 500, 500)],
+            vec![],
+        )));
+        let (_, effects) = drag(overlay, point(60, 70), point(80, 90));
+        assert!(effects.contains(&Effect::Finish(Selection::new(rect(60, 70, 20, 20)))));
     }
 
     #[test]

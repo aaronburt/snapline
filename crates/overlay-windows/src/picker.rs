@@ -18,13 +18,13 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VIRTUAL_KEY, VK_ESCAPE};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetForegroundWindow,
-    GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId, LoadCursorW, PostQuitMessage,
-    RegisterClassExW, SetCursor, SetForegroundWindow, SetWindowLongPtrW, ShowWindow,
-    TranslateMessage, UnregisterClassW, GWLP_USERDATA, HTCLIENT, IDC_CROSS, MA_ACTIVATE, MSG,
-    SW_SHOW, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MOUSEACTIVATE,
-    WM_MOUSEMOVE, WM_NCCREATE, WM_PAINT, WM_SETCURSOR, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetForegroundWindow, GetMessageW,
+    GetWindowLongPtrW, GetWindowThreadProcessId, LoadCursorW, PostQuitMessage, RegisterClassExW,
+    SetCursor, SetForegroundWindow, ShowWindow, TranslateMessage, UnregisterClassW, GWLP_USERDATA,
+    HTCLIENT, IDC_CROSS, MA_ACTIVATE, MSG, SW_SHOW, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND,
+    WM_KEYDOWN, WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCCREATE, WM_PAINT,
+    WM_SETCURSOR, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_POPUP,
 };
 
 use crate::d2d::{self, Gpu};
@@ -117,6 +117,8 @@ struct PickerSource {
 }
 
 struct PickerWindow {
+    _dcomp_target: windows::Win32::Graphics::DirectComposition::IDCompositionTarget,
+    _visual: windows::Win32::Graphics::DirectComposition::IDCompositionVisual,
     hwnd: HWND,
     source: PickerSource,
     swap_chain: IDXGISwapChain1,
@@ -309,26 +311,22 @@ impl PickerContext {
             let swap = match self.gpu.create_target(hwnd, width, height) {
                 Ok(swap) => swap,
                 Err(error) => {
-                    // SAFETY: the window was created above and is owned by this thread.
-                    unsafe {
-                        let _ = DestroyWindow(hwnd);
-                    }
+                    crate::destroy_window(hwnd);
                     return Err(picker_error(error));
                 }
             };
             let frozen = match self.gpu.upload_image(&source.image) {
                 Ok(frozen) => frozen,
                 Err(error) => {
-                    // SAFETY: the window was created above and is owned by this thread.
-                    unsafe {
-                        let _ = DestroyWindow(hwnd);
-                    }
+                    crate::destroy_window(hwnd);
                     return Err(picker_error(error));
                 }
             };
             self.windows.push(PickerWindow {
                 hwnd,
                 source,
+                _dcomp_target: swap._dcomp_target,
+                _visual: swap._visual,
                 swap_chain: swap.swap_chain,
                 target: swap.target,
                 frozen,
@@ -359,11 +357,7 @@ impl PickerContext {
             )
         }
         .map_err(|error| PickerError::Device(error.to_string()))?;
-        let context = self as *mut Self as isize;
-        // SAFETY: the context lives in a boxed value for the whole message loop.
-        unsafe {
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, context);
-        }
+        crate::set_window_data(hwnd, self as *mut Self as isize);
         Ok(hwnd)
     }
 
@@ -584,10 +578,7 @@ impl PickerContext {
 
     fn destroy(&mut self) {
         for window in self.windows.drain(..) {
-            // SAFETY: the window handle is live and owned by this thread.
-            unsafe {
-                let _ = DestroyWindow(window.hwnd);
-            }
+            crate::destroy_window(window.hwnd);
         }
         if self.class_name.is_empty() {
             return;

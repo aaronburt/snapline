@@ -136,7 +136,7 @@ impl Session {
                 None => Press::Handled,
             },
             Tool::Crop => {
-                self.press_crop(point, document);
+                self.press_crop(point, document.crop());
                 Press::Handled
             }
             Tool::Arrow => {
@@ -361,8 +361,8 @@ impl Session {
         }
     }
 
-    fn press_crop(&mut self, point: Point, document: &Document) {
-        let before = document.crop();
+    pub(crate) fn press_crop(&mut self, point: Point, before: Rect) {
+        self.drag = None;
         let grip = before.grip_at(point);
         let current = match grip {
             Some(grip) => grip.resize_to(before, point),
