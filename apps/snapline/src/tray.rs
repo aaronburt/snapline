@@ -63,7 +63,17 @@ impl TrayHandle {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    fn sync_audio(&self) {
+        let Some((system_audio, microphone)) = audio_settings(self.tray.app_handle()) else {
+            return;
+        };
+        let mut state = self.state();
+        state.system_audio = system_audio;
+        state.microphone = microphone;
+    }
+
     fn refresh(&self) -> tauri::Result<()> {
+        self.sync_audio();
         let state = *self.state();
         let menu = build_menu(&self.tray.app_handle().clone(), state)?;
         self.tray.set_menu(Some(menu))?;
@@ -74,8 +84,21 @@ impl TrayHandle {
     }
 }
 
+fn audio_settings(app: &AppHandle) -> Option<(bool, bool)> {
+    let services = app.try_state::<Services>()?;
+    let settings = services.settings_snapshot().ok()?;
+    Some((
+        settings.capture.record_system_audio,
+        settings.capture.record_microphone,
+    ))
+}
+
 pub fn init(app: &AppHandle) -> tauri::Result<()> {
-    let state = TrayState::default();
+    let mut state = TrayState::default();
+    if let Some((system_audio, microphone)) = audio_settings(app) {
+        state.system_audio = system_audio;
+        state.microphone = microphone;
+    }
     let menu = build_menu(app, state)?;
     let icon = icon_for_state(state.icon_state())?;
     let tray = TrayIconBuilder::with_id("main")
@@ -92,8 +115,17 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } => {
                 let app = tray.app_handle();
-                let rect = crate::panel::TrayRect::from_tauri(rect);
-                crate::panel::show(app, rect.x, rect.y, rect.width, rect.height);
+                let recording = {
+                    let handle = app.state::<TrayHandle>();
+                    let state = handle.state();
+                    state.recording_seconds.is_some()
+                };
+                if recording {
+                    run_action(app, "record_stop");
+                } else {
+                    let rect = crate::panel::TrayRect::from_tauri(rect);
+                    crate::panel::show(app, rect.x, rect.y, rect.width, rect.height);
+                }
             }
             TrayIconEvent::DoubleClick {
                 button: MouseButton::Left,
@@ -143,12 +175,31 @@ pub fn set_paused(app: &AppHandle, paused: bool) {
 #[allow(dead_code)]
 pub fn set_recording(app: &AppHandle, elapsed_seconds: Option<u64>) {
     let handle = app.state::<TrayHandle>();
-    {
+    let menu_changed = {
         let mut state = handle.state();
+        let changed = state.recording_seconds.is_some() != elapsed_seconds.is_some();
         state.recording_seconds = elapsed_seconds;
+        changed
+    };
+    if menu_changed {
+        if let Err(error) = handle.refresh() {
+            tracing::error!(%error, "could not refresh the tray");
+        }
+        return;
     }
-    if let Err(error) = handle.refresh() {
-        tracing::error!(%error, "could not refresh the tray");
+    let state = *handle.state();
+    let icon = match icon_for_state(state.icon_state()) {
+        Ok(icon) => icon,
+        Err(error) => {
+            tracing::error!(%error, "could not update the tray icon");
+            return;
+        }
+    };
+    if let Err(error) = handle.tray.set_icon(Some(icon)) {
+        tracing::error!(%error, "could not update the tray icon");
+    }
+    if let Err(error) = handle.tray.set_tooltip(Some(tooltip(state))) {
+        tracing::error!(%error, "could not update the tray tooltip");
     }
 }
 
@@ -183,14 +234,31 @@ enum CheckKind {
 }
 
 fn toggle_check(app: &AppHandle, kind: CheckKind) {
-    let handle = app.state::<TrayHandle>();
-    {
-        let mut state = handle.state();
+    let patch = {
+        let services = app.state::<Services>();
+        let settings = match services.settings_snapshot() {
+            Ok(settings) => settings,
+            Err(error) => {
+                tracing::warn!(%error, "the recording audio setting could not be read");
+                return;
+            }
+        };
         match kind {
-            CheckKind::SystemAudio => state.system_audio = !state.system_audio,
-            CheckKind::Microphone => state.microphone = !state.microphone,
+            CheckKind::SystemAudio => serde_json::json!({
+                "capture": { "record_system_audio": !settings.capture.record_system_audio }
+            }),
+            CheckKind::Microphone => serde_json::json!({
+                "capture": { "record_microphone": !settings.capture.record_microphone }
+            }),
         }
+    };
+    let services = app.state::<Services>();
+    if let Err(error) = services.update_settings(&patch) {
+        tracing::warn!(%error, "the recording audio setting could not be saved");
+        return;
     }
+    drop(services);
+    let handle = app.state::<TrayHandle>();
     if let Err(error) = handle.refresh() {
         tracing::error!(%error, "could not refresh the tray");
     }
@@ -473,5 +541,19 @@ mod tests {
             ..TrayState::default()
         };
         assert_eq!(state.icon_state(), IconState::Recording);
+    }
+
+    #[test]
+    fn elapsed_minutes_and_seconds_are_padded() {
+        assert_eq!(format_elapsed(0), "0:00");
+        assert_eq!(format_elapsed(42), "0:42");
+        assert_eq!(format_elapsed(60), "1:00");
+        assert_eq!(format_elapsed(3599), "59:59");
+        assert_eq!(format_elapsed(3600), "60:00");
+        let recording = TrayState {
+            recording_seconds: Some(60),
+            ..TrayState::default()
+        };
+        assert_eq!(tooltip(recording), "Snapline · recording 1:00");
     }
 }

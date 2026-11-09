@@ -172,6 +172,12 @@
   const monitorLabel = $derived(
     `Monitor 1, 1920 by 1080, primary; Monitor 2, 2560 by 1440. Highlighted: ${rows.monitorMode}`,
   );
+
+  const microphoneOptions = $derived(
+    MICROPHONE_OPTIONS.includes(rows.microphoneDevice)
+      ? MICROPHONE_OPTIONS
+      : [...MICROPHONE_OPTIONS, rows.microphoneDevice],
+  );
 </script>
 
 <SettingsPage title="Capture">
@@ -365,7 +371,7 @@
         <SelectRow
           icon="mic"
           title="Microphone device"
-          options={MICROPHONE_OPTIONS}
+          options={microphoneOptions}
           value={rows.microphoneDevice}
           onchange={(value) => updateCapture('microphoneDevice', value)}
         />

@@ -24,8 +24,8 @@ use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
     VIRTUAL_KEY, VK_A, VK_B, VK_C, VK_CONTROL, VK_DELETE, VK_DOWN, VK_E, VK_ESCAPE, VK_H, VK_I,
-    VK_LEFT, VK_MENU, VK_N, VK_P, VK_R, VK_RETURN, VK_RIGHT, VK_S, VK_SHIFT, VK_T, VK_TAB, VK_UP,
-    VK_V, VK_Y, VK_Z,
+    VK_LEFT, VK_MENU, VK_N, VK_P, VK_R, VK_RETURN, VK_RIGHT, VK_S, VK_SHIFT, VK_SPACE, VK_T, VK_TAB,
+    VK_UP, VK_V, VK_Y, VK_Z,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos,
@@ -46,12 +46,16 @@ mod uia;
 #[path = "../../platform-windows/src/windows_enum.rs"]
 mod windows_enum;
 
+use crate::announce;
 use crate::canvas_d2d;
 use crate::d2d::Gpu;
 use crate::hints;
 use crate::icons::IconCache;
 use crate::magnifier;
 use crate::readout;
+use crate::record_border::{
+    is_click, resolve_record_target, RecordPickRequest, RecordTarget, RecordWindow,
+};
 use crate::text_input::{self, TextInput};
 use crate::tokens::Palette;
 use crate::toolbar::{self, ToolbarAction, ToolbarHit, ToolbarState};
@@ -127,6 +131,7 @@ pub(crate) struct Scene {
     pub overlay: Overlay,
     pub annotate: bool,
     pub editing: bool,
+    pub record: bool,
     pub cursor: Option<Point>,
     pub pointer_monitor: usize,
     pub magnifier: MagnifierSettings,
@@ -181,6 +186,9 @@ pub(crate) struct Context {
     pub icons: IconCache,
     pub layout: Layout,
     pub outcome: Option<Outcome>,
+    pub(crate) record_target: Option<RecordTarget>,
+    record_entries: Vec<windows_enum::WindowEntry>,
+    record_press: Option<(Rect, RecordWindow, Point)>,
     stroke: Option<ID2D1StrokeStyle>,
     previous_pointer_monitor: usize,
     class_name: Vec<u16>,
@@ -196,6 +204,8 @@ pub(crate) struct Context {
     text_edit: Option<TextInput>,
     pill: Option<tools::ColourPill>,
     pill_timer: Option<HWND>,
+    toolbar_focus: Option<usize>,
+    announced_selection: Option<Rect>,
 }
 
 pub fn take_flattened() -> Option<Image> {
@@ -239,6 +249,33 @@ impl Context {
             full_screen_crosshair,
             theme,
         )
+    }
+
+    pub(crate) fn build_record(req: RecordPickRequest) -> Result<Self, OverlayError> {
+        let RecordPickRequest {
+            desktop,
+            snap,
+            magnifier,
+            theme,
+        } = req;
+        let mut sources = Vec::new();
+        for frozen in desktop.monitors {
+            let monitor = frozen.monitor;
+            sources.push((
+                ScreenSource {
+                    scale: monitor.dpi.scale(),
+                    origin: monitor.bounds.origin(),
+                    size: monitor.bounds.size(),
+                    monitor,
+                    image: frozen.image,
+                },
+                true,
+            ));
+        }
+        let mut context = Self::build(sources, false, false, snap, magnifier, false, theme)?;
+        context.scene.record = true;
+        context.snap_worker = None;
+        Ok(context)
     }
 
     pub(crate) fn build_edit(req: EditRequest) -> Result<Self, OverlayError> {
@@ -314,6 +351,7 @@ impl Context {
             overlay,
             annotate,
             editing,
+            record: false,
             cursor: None,
             pointer_monitor: 0,
             magnifier,
@@ -341,6 +379,9 @@ impl Context {
             icons: IconCache::new(),
             layout: Layout::default(),
             outcome: None,
+            record_target: None,
+            record_entries: Vec::new(),
+            record_press: None,
             stroke: canvas_d2d::stroke_style(),
             previous_pointer_monitor: 0,
             class_name,
@@ -356,6 +397,8 @@ impl Context {
             text_edit: None,
             pill: None,
             pill_timer: None,
+            toolbar_focus: None,
+            announced_selection: None,
         };
         Ok(context)
     }
@@ -381,6 +424,18 @@ impl Context {
 
     fn feed_windows(&mut self) {
         let exclude: Vec<HWND> = self.windows.iter().map(|window| window.hwnd).collect();
+        if self.scene.record {
+            let entries = windows_enum::enumerate(&exclude);
+            self.record_entries = entries;
+            self.snap.set_windows(
+                self.record_entries
+                    .iter()
+                    .map(|entry| SnapCandidate::new(entry.rect))
+                    .collect(),
+            );
+            self.apply_snap();
+            return;
+        }
         let windows = windows_enum::snap_candidates(&exclude);
         if windows.is_empty() {
             return;
@@ -761,7 +816,8 @@ impl Context {
         let gpu = &mut self.gpu;
         let icons = &mut self.icons;
         let stroke = self.stroke.as_ref();
-        draw_window(gpu, icons, window, index, scene, layout, tools, stroke);
+        let focus = self.toolbar_focus;
+        draw_window(gpu, icons, window, index, scene, layout, tools, stroke, focus);
     }
 
     fn redraw_active(&mut self) {
@@ -823,6 +879,12 @@ impl Context {
             self.pill.as_ref(),
             &mut self.gpu,
         );
+        if self.layout.toolbar.is_none() {
+            self.toolbar_focus = None;
+        }
+        if self.scene.shown_selection().is_none() {
+            self.announced_selection = None;
+        }
         self.redraw_active();
         self.previous_pointer_monitor = self.scene.pointer_monitor;
     }
@@ -923,6 +985,10 @@ impl Context {
         } else {
             self.monitor_id(selection.rect.center())
         };
+        if self.scene.record {
+            let id = monitor.unwrap_or_else(|| self.pointer_monitor_id());
+            self.record_target = Some(resolve_record_target(selection.rect, id, None));
+        }
         self.outcome = Some(Outcome::Finish {
             action,
             selection: selection.rect,
@@ -930,6 +996,48 @@ impl Context {
         });
         // SAFETY: posts a quit message to this thread's queue.
         unsafe { PostQuitMessage(0) };
+    }
+
+    fn finish_record_window(&mut self, point: Point) -> bool {
+        let Some((rect, window, start)) = self.record_press.take() else {
+            return false;
+        };
+        if !is_click(start, point) || !rect.contains(point) {
+            return false;
+        }
+        let monitor = self
+            .monitor_id(point)
+            .unwrap_or_else(|| self.pointer_monitor_id());
+        self.record_target = Some(resolve_record_target(rect, monitor, Some(window)));
+        self.outcome = Some(Outcome::Finish {
+            action: None,
+            selection: rect,
+            monitor: Some(monitor),
+        });
+        // SAFETY: posts a quit message to this thread's queue.
+        unsafe { PostQuitMessage(0) };
+        true
+    }
+
+    fn record_window_at(&self, point: Point) -> Option<(Rect, RecordWindow)> {
+        self.record_entries
+            .iter()
+            .find(|entry| entry.rect.contains(point))
+            .map(|entry| {
+                (
+                    entry.rect,
+                    RecordWindow::new(
+                        entry.hwnd.0 as isize,
+                        entry.title.clone().unwrap_or_default(),
+                    ),
+                )
+            })
+    }
+
+    fn pointer_monitor_id(&self) -> u32 {
+        self.windows
+            .get(self.scene.pointer_monitor)
+            .map_or(0, |window| window.source.monitor.id)
     }
 
     fn cancel(&mut self) {
@@ -1004,15 +1112,92 @@ impl Context {
         )
     }
 
-    fn on_toolbar(&mut self, point: Point) -> bool {
-        let Some(toolbar) = &self.layout.toolbar else {
+    fn focus_toolbar(&mut self, hwnd: HWND, delta: i32) -> bool {
+        let Some(count) = self.layout.toolbar.as_ref().map(|toolbar| toolbar.buttons.len()) else {
+            self.toolbar_focus = None;
             return false;
         };
-        let action = match toolbar.hit(point) {
-            ToolbarHit::Outside => return false,
-            ToolbarHit::Padding => return true,
-            ToolbarHit::Action(action) => action,
+        if count == 0 {
+            self.toolbar_focus = None;
+            return false;
+        }
+        let next = match toolbar::next_focus(self.toolbar_focus, count, delta > 0) {
+            Some(next) => next,
+            None => {
+                self.toolbar_focus = None;
+                return false;
+            }
         };
+        let Some(action) = self
+            .layout
+            .toolbar
+            .as_ref()
+            .map(|toolbar| toolbar.buttons[next].action)
+        else {
+            return false;
+        };
+        let state = self.toolbar_state();
+        self.toolbar_focus = Some(next);
+        announce::notify(hwnd, &action.announcement(&state));
+        self.refresh();
+        true
+    }
+
+    fn activate_toolbar_focus(&mut self, hwnd: HWND) -> bool {
+        let Some(index) = self.toolbar_focus else {
+            return false;
+        };
+        let Some(action) = self
+            .layout
+            .toolbar
+            .as_ref()
+            .and_then(|toolbar| toolbar.buttons.get(index))
+            .map(|button| button.action)
+        else {
+            self.toolbar_focus = None;
+            return false;
+        };
+        announce::notify(hwnd, &format!("{} activated", action.label()));
+        self.run_action(action);
+        self.refresh();
+        true
+    }
+
+    fn toolbar_state(&self) -> ToolbarState {
+        ToolbarState {
+            tool: self.scene.tool,
+            colour: self.scene.colour,
+            stroke: self.scene.stroke,
+            can_undo: self
+                .scene
+                .document
+                .as_ref()
+                .is_some_and(|document| document.can_undo()),
+            can_redo: self
+                .scene
+                .document
+                .as_ref()
+                .is_some_and(|document| document.can_redo()),
+            focus: self.toolbar_focus,
+        }
+    }
+
+    fn announce_selection(&mut self, hwnd: HWND) {
+        let Some(selection) = self.scene.shown_selection() else {
+            self.announced_selection = None;
+            return;
+        };
+        if selection.width.get() <= 0 || selection.height.get() <= 0 {
+            return;
+        }
+        if self.announced_selection == Some(selection) {
+            return;
+        }
+        self.announced_selection = Some(selection);
+        announce::notify(hwnd, &announce::selection_text(selection));
+    }
+
+    fn run_action(&mut self, action: ToolbarAction) {
         match action {
             ToolbarAction::Tool(tool) => self.set_tool(tool),
             ToolbarAction::Colour(colour) => self.scene.colour = colour,
@@ -1043,10 +1228,23 @@ impl Context {
                 self.apply(Input::Cancel);
             }
         }
+    }
+
+    fn on_toolbar(&mut self, point: Point) -> bool {
+        let Some(toolbar) = &self.layout.toolbar else {
+            return false;
+        };
+        let action = match toolbar.hit(point) {
+            ToolbarHit::Outside => return false,
+            ToolbarHit::Padding => return true,
+            ToolbarHit::Action(action) => action,
+        };
+        self.toolbar_focus = None;
+        self.run_action(action);
         true
     }
 
-    fn on_key(&mut self, key: VIRTUAL_KEY) {
+    fn on_key(&mut self, hwnd: HWND, key: VIRTUAL_KEY) {
         let annotating = matches!(
             &self.scene.overlay.state,
             State::Annotating { .. } | State::Adjusting { .. }
@@ -1076,6 +1274,10 @@ impl Context {
         let alt = key_down(VK_MENU);
         match key {
             VK_ESCAPE => {
+                if self.toolbar_focus.take().is_some() {
+                    self.refresh();
+                    return;
+                }
                 if self.text_edit.is_some() {
                     self.cancel_text();
                     return;
@@ -1103,11 +1305,21 @@ impl Context {
                 }
             }
             VK_RETURN if annotating => {
+                if self.activate_toolbar_focus(hwnd) {
+                    return;
+                }
                 self.scene.pending_action = Some(OverlayAction::Upload);
                 self.apply(Input::Upload);
             }
+            VK_SPACE if self.toolbar_focus.is_some() => {
+                self.activate_toolbar_focus(hwnd);
+            }
             VK_TAB => {
-                self.apply(Input::Tab);
+                if self.layout.toolbar.is_some() {
+                    self.focus_toolbar(hwnd, if shift { -1 } else { 1 });
+                } else {
+                    self.apply(Input::Tab);
+                }
             }
             VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN if !self.scene.editing => {
                 let direction = match key {
@@ -1121,6 +1333,7 @@ impl Context {
                     shift,
                     alt,
                 });
+                self.announce_selection(hwnd);
             }
             VK_V => self.set_tool(Tool::Move),
             VK_R => self.set_tool(Tool::Rect),
@@ -1258,6 +1471,11 @@ impl Context {
                 let point = self.pointer(index, lparam);
                 self.scene.cursor = Some(point);
                 self.scene.pointer_monitor = self.monitor_index(point);
+                if self.scene.record {
+                    self.record_press = self
+                        .record_window_at(point)
+                        .map(|(rect, window)| (rect, window, point));
+                }
                 if self
                     .text_edit
                     .as_ref()
@@ -1272,6 +1490,7 @@ impl Context {
                     self.refresh();
                     return LRESULT(0);
                 }
+                self.toolbar_focus = None;
                 if self.annotating() {
                     let tool = self.scene.tool;
                     let on_selection = tool != Tool::Crop
@@ -1328,6 +1547,10 @@ impl Context {
                 unsafe {
                     let _ = ReleaseCapture();
                 }
+                if self.scene.record && self.finish_record_window(point) {
+                    self.refresh();
+                    return LRESULT(0);
+                }
                 if self.annotating() {
                     let local = self.document_point(point);
                     let shift = key_down(VK_SHIFT);
@@ -1341,6 +1564,7 @@ impl Context {
                 } else if !self.scene.editing {
                     self.apply(Input::Release(point));
                 }
+                self.announce_selection(hwnd);
                 self.refresh();
                 return LRESULT(0);
             }
@@ -1365,7 +1589,7 @@ impl Context {
             }
             WM_KEYDOWN => {
                 let key = VIRTUAL_KEY(wparam.0 as u16);
-                self.on_key(key);
+                self.on_key(hwnd, key);
                 if self.outcome.is_none() {
                     self.refresh();
                 }
@@ -1374,7 +1598,7 @@ impl Context {
             WM_SYSKEYDOWN => {
                 let key = VIRTUAL_KEY(wparam.0 as u16);
                 if matches!(key, VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) {
-                    self.on_key(key);
+                    self.on_key(hwnd, key);
                     if self.outcome.is_none() {
                         self.refresh();
                     }
@@ -1496,6 +1720,9 @@ fn make_layout(
     pill: Option<&tools::ColourPill>,
     gpu: &mut Gpu,
 ) -> Layout {
+    if scene.record {
+        return record_mode_layout();
+    }
     let Some(window) = windows.get(scene.pointer_monitor) else {
         return Layout::default();
     };
@@ -1580,6 +1807,7 @@ fn draw_window(
     layout: &Layout,
     tools: &Session,
     stroke: Option<&ID2D1StrokeStyle>,
+    focus: Option<usize>,
 ) {
     let palette = scene.theme.palette();
     let origin = window.source.origin;
@@ -1748,6 +1976,7 @@ fn draw_window(
                     .document
                     .as_ref()
                     .is_some_and(|document| document.can_redo()),
+                focus,
             };
             toolbar::draw(gpu, icons, palette, scale, origin, toolbar, &state);
         }
@@ -1915,6 +2144,10 @@ fn overlap(area: Rect, bounds: Rect) -> Option<Rect> {
     area.intersection(bounds)
 }
 
+pub(crate) fn record_mode_layout() -> Layout {
+    Layout::default()
+}
+
 #[cfg(test)]
 mod tests {
     use snapline_core::overlay::{Input, Overlay, SnapMode};
@@ -2024,6 +2257,15 @@ mod tests {
             local_rect(rect(1920, 10, 100, 50), point(1920, 0)),
             rect(0, 10, 100, 50)
         );
+    }
+
+    #[test]
+    fn record_mode_has_no_toolbar_hints_or_keyboard_pills() {
+        let layout = record_mode_layout();
+        assert!(layout.toolbar.is_none());
+        assert!(layout.hint.is_none());
+        assert!(layout.colour.is_none());
+        assert!(layout.keyboard.is_none());
     }
 
     #[test]

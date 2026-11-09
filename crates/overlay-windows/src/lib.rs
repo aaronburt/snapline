@@ -12,6 +12,7 @@
     clippy::unused_self
 )]
 
+mod announce;
 pub mod canvas_d2d;
 pub mod d2d;
 pub mod hints;
@@ -21,6 +22,7 @@ pub mod picker;
 pub mod pin;
 pub mod port_impl;
 pub mod readout;
+pub mod record_border;
 #[allow(dead_code)]
 pub mod render;
 pub mod ruler;

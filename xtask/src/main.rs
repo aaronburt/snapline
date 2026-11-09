@@ -187,5 +187,5 @@ fn test_desktop(root: &Path) -> Result<()> {
 fn ci(root: &Path) -> Result<()> {
     check(root)?;
     test(root)?;
-    budget::run(root, &[])
+    budget::run_full(root)
 }

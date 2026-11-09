@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { expectAccessible } from '../../../test/axe';
 import CapturePage from './CapturePage.svelte';
 import { BUNDLED_FFMPEG_PATH, resetSettings } from './settings';
 import { settingsDto } from './settingsDto';
@@ -26,7 +27,8 @@ afterEach(cleanup);
 
 describe('CapturePage', () => {
   it('gets the settings on mount and renders every section', async () => {
-    render(CapturePage);
+    const { container } = render(CapturePage);
+    await expectAccessible(container);
     for (const title of [
       'Screenshots',
       'Region selection',

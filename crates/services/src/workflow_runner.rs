@@ -17,6 +17,7 @@ use snapline_upload::queue::{self, UploadFile};
 
 use crate::capture::{self, CaptureOutcome};
 use crate::dto::hotkeys::{HotkeysReq, HotkeysResp};
+use crate::recording::RecordError;
 use crate::saver::{CaptureRequest, SystemClock};
 use crate::uploads::DestinationSource;
 use crate::worker;
@@ -184,13 +185,13 @@ impl RunnerPorts {
             .unwrap_or_else(|| Arc::new(UnavailableAnnotate));
         Self {
             capture,
-            record: Arc::new(UnavailableRecord),
+            record: Arc::new(ServiceRecordPort::new(services)),
             annotate,
             save: save.clone(),
             upload: Arc::new(QueueUploadPort::new(save, hand_off)),
             clipboard: options.clipboard,
             text,
-            gif: Arc::new(UnavailableGif),
+            gif: Arc::new(ServiceGifPort::new(services)),
             notify: options.notifier,
             sound: options.sound,
             clock: Arc::new(SystemClock),
@@ -259,6 +260,52 @@ impl SavePort for WorkerSavePort {
         outcome
             .path
             .ok_or_else(|| WorkflowError::Failed("The capture was not saved.".to_owned()))
+    }
+}
+
+pub struct ServiceRecordPort {
+    services: Services,
+}
+
+impl ServiceRecordPort {
+    pub fn new(services: &Services) -> Self {
+        Self {
+            services: services.clone(),
+        }
+    }
+}
+
+impl RecordPort for ServiceRecordPort {
+    fn record(&self, kind: RecordKind) -> Result<Recorded, WorkflowError> {
+        crate::recording::record_blocking(&self.services, kind)
+            .map(|path| Recorded { path })
+            .map_err(record_error)
+    }
+}
+
+pub struct ServiceGifPort {
+    services: Services,
+}
+
+impl ServiceGifPort {
+    pub fn new(services: &Services) -> Self {
+        Self {
+            services: services.clone(),
+        }
+    }
+}
+
+impl GifPort for ServiceGifPort {
+    fn convert(&self, recording: &Path) -> Result<PathBuf, WorkflowError> {
+        crate::recording::convert_to_gif(&self.services, recording).map_err(record_error)
+    }
+}
+
+fn record_error(error: RecordError) -> WorkflowError {
+    match error {
+        RecordError::Cancelled => WorkflowError::Cancelled,
+        RecordError::NotYet => WorkflowError::NotAvailableYet,
+        other => WorkflowError::Failed(other.to_string()),
     }
 }
 
@@ -359,15 +406,18 @@ impl UploadPort for QueueUploadPort {
     fn hand_off(&self, request: UploadRequest<'_>) -> Result<UploadId, WorkflowError> {
         let path = match request.saved_file {
             Some(path) => path.to_path_buf(),
-            None => {
-                let image = request.image.ok_or(WorkflowError::NotAvailableYet)?;
-                self.save.save(SaveRequest {
-                    image: Some(image),
-                    recording: request.recording,
-                    converted: request.converted,
-                    file_name: request.file_name,
-                })?
-            }
+            None => match request.converted.or(request.recording) {
+                Some(path) => path.to_path_buf(),
+                None => {
+                    let image = request.image.ok_or(WorkflowError::NotAvailableYet)?;
+                    self.save.save(SaveRequest {
+                        image: Some(image),
+                        recording: request.recording,
+                        converted: request.converted,
+                        file_name: request.file_name,
+                    })?
+                }
+            },
         };
         let file = UploadFile::read(&path, content_type(&path))
             .map_err(|error| WorkflowError::Failed(error.to_string()))?;
@@ -1265,5 +1315,37 @@ mod tests {
             .expect("run");
         assert_eq!(outcome, RunOutcome::Skipped);
         assert!(ports.entries().is_empty());
+    }
+
+    #[test]
+    fn recording_ports_report_not_available_without_the_recorder() {
+        let directory = tempfile::tempdir().expect("temp");
+        let services = services(directory.path());
+        let record = ServiceRecordPort::new(&services);
+        assert!(matches!(
+            record.record(RecordKind::Video),
+            Err(WorkflowError::NotAvailableYet)
+        ));
+        let gif = ServiceGifPort::new(&services);
+        assert!(matches!(
+            gif.convert(Path::new("C:/Temp/clip.mp4")),
+            Err(WorkflowError::NotAvailableYet)
+        ));
+    }
+
+    #[test]
+    fn recording_errors_map_to_workflow_errors() {
+        assert!(matches!(
+            record_error(RecordError::Cancelled),
+            WorkflowError::Cancelled
+        ));
+        assert!(matches!(
+            record_error(RecordError::NotYet),
+            WorkflowError::NotAvailableYet
+        ));
+        assert!(matches!(
+            record_error(RecordError::NoTarget),
+            WorkflowError::Failed(_)
+        ));
     }
 }
