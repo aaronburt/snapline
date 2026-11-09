@@ -1320,10 +1320,13 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 - Built: WASAPI shared-mode loopback on the default render device and capture on the chosen/default microphone; mix-format conversion to s16le/f32le/s32le 48 kHz stereo (or caller format), silence padding, friendly device names, named pipes `\\.\pipe\snapline-audio-<n>`, stop with CancelSynchronousIo/join cap, full RAII and close event classification. Tests written, not run. Local kernel32 declarations/property-store vtable used instead of adding missing Windows features.
 
 **8.5 Recording border and target pick.** Owns: `crates/overlay-windows/src/record_border.rs`. Shared: `window.rs` (a record mode for the picker that skips the toolbar).
+- Built: click-through layered top-most 2 px red border outside the recorded area, clamped to the monitor and excluded from capture with `WDA_EXCLUDEFROMCAPTURE`; record pick mode with drag-region or click-window results (rect, monitor, window handle/title), no toolbar/hints, and existing selection/snap/magnifier. Tests written, not run.
 
 **8.6 Recorder wiring.** Needs 8.2 to 8.5. Owns: `crates/services/src/recording.rs`, `crates/services/src/dto/record.rs`, `ui/src/lib/ipc/record.ts`. Shared: `apps/snapline/src/tray.rs` (recording state), Capture settings bindings for the recording rows.
+- Built: real recorder service/thread over the core state machine, region/window pick through record mode, live 2 px border, FFmpeg ddagrab + hardware fallback, WASAPI system/mic pipes, stop via hotkey/tray/left-click with `q` + 5 s kill, first-frame thumbnail and History save through a worker command (the worker keeps the only History write connection), per-second tray icon/tooltip, settings-bound audio checks, typed Record DTO/IPC/events, and real Record/ConvertToGif workflow ports. Tests written, not run.
 
 **8.7 Recording budget.** Needs 8.6. Owns: `xtask/src/budget.rs` (adds the 60 s 1080p30 run).
+- Built: opt-in `cargo xtask budget --record` starts the app in budget mode, records via the normal region recorder, validates a 1920x1080@30 hardware-encoder FFmpeg command line, samples six 10 s windows, checks under 150 MiB and under 5% CPU, stops cleanly and reports each failure. The run is interactive: Aaron must select a 1920x1080 region when the overlay appears. Tests written, not run; the real 60 s run waits for Aaron.
 
 ### Milestone 9: Tools
 
@@ -1362,6 +1365,7 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 - Built: error-correction-M SVG/Image generation, BGRA luma scan with `rqrr`, URL detection; services make/copy/save/scan; Tool DTOs and QrTool Scan/Make tabs with live preview and exact actions. Tests written, not run. Per Aaron, QR is parked for now; Scan/copy-text/save-PNG remain `NotYet` until the overlay selection and file dialogs are wired.
 
 **9.6 Image editor and pin cards.** Owns: `crates/services/src/tools/editor.rs`, `crates/services/src/tools/pin.rs`. Shared: `window.rs`.
+- Built: Pin to screen card with the native Win32 From file…/From clipboard popup (`snapline_win::menu`), editor-service pin helpers, image decoding and the existing retained `EditorPin` handles; `ToolResp::Available` reports the editor and pin cards from the installed ports. Tests written, not run.
 
 **9.7 Image combiner.** Owns: `crates/core/src/combine.rs`, `crates/services/src/tools/combine.rs`, `ui/src/windows/main/tools/CombinerTool.svelte`, the `combine` scheme in a new file `apps/snapline/src/protocol_combine.rs` (registered by the integrator in `main.rs`).
 - Built: pure side-by-side/stacked layout with spacing/align/background and no upscaling; process-local preview job registry with numeric ids only; `combine` scheme with correct MIME/404; CombinerTool with History picker, file picker, reorder, options, preview and save. Scheme registered in main and CSP updated. Tests written, not run. Per Aaron, the combiner is parked for now.
@@ -1369,9 +1373,10 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **9.8 Video converter.** Needs 8.2, 8.3. Owns: `crates/services/src/tools/convert.rs`, `ui/src/windows/main/tools/ConverterTool.svelte`. Shared: new builders in `crates/core/src/ffmpeg_args.rs`.
 
 **9.9 Gist.** Owns: `crates/upload/src/gist.rs`, its form in `ui/src/windows/main/settings/destinations/GistForm.svelte`.
-- Built: GitHub Gist uploader with Bearer token from Credential Manager, public/secret gist, raw/page links, typed error mapping and no token leakage; GistForm with SecretInput/Public/Test/Save/Remove. Tests written, not run. Destinations registry/UploadsPage wiring is reported for integration.
+- Built: GitHub Gist uploader with Bearer token from Credential Manager, public/secret gist, raw/page links, typed error mapping and no token leakage; GistForm with SecretInput/Public/Test/Save/Remove, plus registry and UploadsPage routing as a real destination. Tests written, not run.
 
 **9.10 SFTP.** Owns: `crates/upload/src/sftp.rs`, `crates/platform-windows/src/known_hosts.rs`, `ui/src/windows/main/settings/destinations/SftpForm.svelte`.
+- Built: real SFTP destination with password/private-key auth, remote folder, public URL pattern, TOFU host-key store and fingerprint prompt, registry/UploadsPage routing, secret isolation and test upload through the queue. App injects the Windows known-hosts store and TaskDialog confirmer. Tests written, not run.
 
 Every tool task also replaces its card's disabled state on the Tools page (`ToolsPage.svelte` reads availability from `ipc_tool` → `Available`, so no task edits the page itself) and adds its `ipc_tool` request variants to `crates/services/src/dto/tool.rs` (one task at a time; the integrator orders them).
 
@@ -1397,10 +1402,12 @@ Every tool task also replaces its card's disabled state on the Tools page (`Tool
 - Built: NSIS currentUser bundle with embedBootstrapper and FFmpeg/licence/source resources; install path `%LOCALAPPDATA%\Programs\Snapline`, AUMID shortcut, launch-at-finish, pre-uninstall cleanup hook; `cargo xtask package` builds UI + NSIS and creates the portable zip with a `portable` marker using `tar.exe`. Config/hook/staging tests written, not run; NSIS not compiled because `makensis` is unavailable.
 
 **10.2 Uninstall cleanup.** Owns: `crates/services/src/uninstall.rs`. Shared: `--uninstall-cleanup` in `apps/snapline/src/cli.rs`.
+- Built: `cleanup` removes the Run value, restores PrtSc, removes the AUMID, lists/deletes only `SnapLine:*` credentials, asks before deleting credentials/settings/history, keeps captures, and reports each step; `--uninstall-cleanup` runs it from the NSIS hook. Tests written, not run.
 
 **10.3 Full budget check.** Owns: `xtask/src/budget.rs`.
 
 **10.4 Accessibility pass.** Runs alone. Touches every `.svelte` file and the overlay's toolbar code.
+- Built: axe-core checks for every page/component; accessible names and labels, focus-trapped popovers/menus with Esc and outside close, keyboard segmented controls and menus, live status/error regions, named progress bars, table/list semantics, thumbnail alt text and disabled reasons; overlay selection UIA notification and a Tab-reachable toolbar with a visual focus ring and announcements. Tests written, not run. Narrator/NVDA delivery and real WebView2 focus order still need a human check.
 
 **10.5 Windows 10 and 11 test pass.** Last. Needs Aaron's screen or a virtual machine.
 
@@ -1465,9 +1472,9 @@ The executing agent must not answer these itself.
 | 4 | Saving to disk and History | Built, not tested | 574495e |
 | 5 | Annotation | Built, not tested | ad3e7f7 |
 | 6 | Networking and uploads | Built, not tested | 1ed0d15 |
-| 7 | Workflows | Built, not tested | |
-| 8 | Recording | Not started | |
-| 9 | Tools | Not started | |
-| 10 | Release | Not started | |
+| 7 | Workflows | Built, not tested | 175ff93 |
+| 8 | Recording | Built, not tested | 4a732fe |
+| 9 | Tools | Built, not tested | 4b7b6d7 |
+| 10 | Release | Built, not tested | d2571fa |
 
 Update this table, and the task's line, whenever a task or milestone lands.
