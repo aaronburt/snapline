@@ -31,7 +31,6 @@
     onannotate: (id: number) => void;
     onpin: (id: number) => void;
     ondelete: (id: number) => void;
-    onupload: (id: number) => void;
   }
 
   type ShareStatus = 'uploaded' | 'local' | 'failed' | 'uploading';
@@ -159,18 +158,6 @@
   const canDeleteFromHost = $derived(
     share.status === 'uploaded' && (share.destId === 'imgur' || share.destId === 's3'),
   );
-  const defaultUploadable = $derived(
-    defaultDestination !== '' &&
-      defaultDestination !== 'save_locally_only' &&
-      defaultDestination !== 'none',
-  );
-  const uploadReason = $derived(
-    !defaultUploadable
-      ? 'No upload destination is configured.'
-      : busy
-        ? 'An upload is already being started.'
-        : '',
-  );
 
   $effect(() => {
     const id = capture?.id ?? null;
@@ -217,16 +204,6 @@
       return 'Amazon S3';
     }
     return id;
-  }
-
-  function destinationLabel(id: string): string {
-    if (id === 'save_locally_only') {
-      return 'Save locally only';
-    }
-    if (id === 'none') {
-      return 'None';
-    }
-    return hostLabel(id);
   }
 
   function describe(error: unknown): string {
@@ -512,6 +489,7 @@
       </button>
     </div>
 
+    {#if share.status !== 'local'}
     <section class="sharing" aria-label="Sharing">
       <div class="sharinghead">
         <h2 class="heading">Link</h2>
@@ -546,18 +524,6 @@
             <span>Delete from {hostLabel(share.destId ?? '')}</span>
           </div>
         {/if}
-      {:else if share.status === 'local'}
-        <div class="note">Saved on this PC only. Upload it to get a shareable link.</div>
-        <button
-          type="button"
-          class="upload"
-          disabled={!defaultUploadable || busy}
-          aria-describedby={uploadReason === '' ? undefined : 'upload-reason'}
-          onclick={() => void enqueue(defaultDestination)}
-        >
-          Upload to {destinationLabel(defaultDestination)}
-        </button>
-        <span id="upload-reason" class="sr-only">{uploadReason}</span>
       {:else if share.status === 'failed'}
         <div class="note">
           Upload failed: {share.error ?? 'the destination did not accept the file.'}
@@ -619,6 +585,7 @@
         <div class="note" role="status">The link could not be copied.</div>
       {/if}
     </section>
+    {/if}
 
     <section class="info" aria-label="File info">
       <h2 class="heading infoheading">Info</h2>

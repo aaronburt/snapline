@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
+  import { onEvent } from '../../../lib/events';
   import EmptyState from '../../../components/EmptyState.svelte';
   import Icon from '../../../components/Icon.svelte';
   import Segmented from '../../../components/Segmented.svelte';
@@ -17,11 +18,11 @@
     historyStats,
   } from '../../../lib/ipc/history';
   import { get as settingsGet } from '../../../lib/ipc/settings';
-  import { editorOpenHistory } from '../../../lib/ipc/tool';
+  import { editorOpenHistory, pinHistory } from '../../../lib/ipc/tool';
   import CaptureGrid from './CaptureGrid.svelte';
   import CaptureList from './CaptureList.svelte';
   import DetailPane from './DetailPane.svelte';
-  import { filterValue, formatBytes, groupCaptures, historyFilters } from './data';
+  import { captureCardGap, captureCardWidth, filterValue, formatBytes, groupCaptures, historyFilters } from './data';
   import { searchQuery } from './search';
 
   let filterLabel = $state('All');
@@ -43,7 +44,7 @@
   const filter = $derived(filterValue(filterLabel));
   const groups = $derived(groupCaptures(items));
   const selected = $derived(items.find((capture) => capture.id === selectedId) ?? null);
-  const columns = $derived(Math.max(1, Math.floor((Math.max(viewportWidth, 320) + 12) / 188)));
+  const columns = $derived(Math.max(1, Math.floor((viewportWidth + captureCardGap) / (captureCardWidth + captureCardGap))));
 
   function describe(error: unknown): string {
     if (
@@ -60,18 +61,26 @@
   async function fetchPage(reset: boolean): Promise<void> {
     const current = ++token;
     const cursor = reset ? null : next;
+    const minimum = reset ? items.length : 0;
     loading = true;
     try {
       const term = $searchQuery.trim();
-      const page = term
-        ? await historySearch(term, filter, cursor)
-        : await historyPage(filter, cursor);
+      const read = (at: typeof cursor) =>
+        term ? historySearch(term, filter, at) : historyPage(filter, at);
+      const page = await read(cursor);
+      if (reset) {
+        while (page.next && page.items.length < minimum && current === token) {
+          const more = await read(page.next);
+          page.items.push(...more.items);
+          page.next = more.next;
+        }
+      }
       if (current !== token) {
         return;
       }
       if (reset) {
         items = page.items;
-        selectedId = page.items[0]?.id ?? null;
+        selectedId = page.items.some((item) => item.id === selectedId) ? selectedId : null;
       } else {
         const known = new Set(items.map((capture) => capture.id));
         items = [...items, ...page.items.filter((capture) => !known.has(capture.id))];
@@ -124,6 +133,19 @@
   });
 
   onMount(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void onEvent((event) => {
+      if ((event.area === 'history' && event.event.kind !== 'ping') ||
+          (event.area === 'upload' && event.event.kind === 'stateChanged' &&
+           ['done', 'failed', 'cancelled'].includes(event.event.data.status))) {
+        void fetchPage(true);
+        void refreshStats();
+      }
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    }).catch(() => undefined);
     void settingsGet()
       .then((settings) => {
         const destination = settings.uploads.images;
@@ -132,6 +154,7 @@
         }
       })
       .catch(() => undefined);
+    return () => { disposed = true; unlisten?.(); };
   });
 
   function onscroll(event: Event): void {
@@ -149,6 +172,13 @@
 
   function select(id: number): void {
     selectedId = id;
+  }
+
+  function deselectBackground(event: MouseEvent): void {
+    const target = event.target;
+    if (target instanceof Element && target.closest('main.page') && !target.closest('[data-capture-id], button, a, input, select, textarea')) {
+      selectedId = null;
+    }
   }
 
   function move(delta: number): void {
@@ -196,12 +226,8 @@
       });
   }
 
-  function pin(_id: number): void {
-    void _id;
-  }
-
-  function upload(_id: number): void {
-    void _id;
+  function pin(id: number): void {
+    void pinHistory(id).catch((error: unknown) => { errorMessage = describe(error); });
   }
 
   async function askDelete(id: number): Promise<void> {
@@ -211,11 +237,9 @@
         return;
       }
       await historyDelete(id);
-      const index = items.findIndex((capture) => capture.id === id);
       items = items.filter((capture) => capture.id !== id);
       if (selectedId === id) {
-        const target = items[Math.min(index, items.length - 1)];
-        selectedId = target?.id ?? null;
+        selectedId = null;
       }
       void refreshStats();
     } catch (error) {
@@ -277,7 +301,7 @@
   }
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} onclick={deselectBackground} />
 
 <main class="page">
   <div class="pagehead">
@@ -344,7 +368,6 @@
         {groups}
         {selectedId}
         {columns}
-        {viewportWidth}
         {viewportHeight}
         bind:scrollTop
         {scroller}
@@ -368,6 +391,7 @@
   </div>
 </main>
 
+{#if selected}
 <DetailPane
   capture={selected}
   {defaultDestination}
@@ -379,8 +403,8 @@
   ondelete={(id) => {
     void askDelete(id);
   }}
-  onupload={upload}
 />
+{/if}
 
 <style>
   .page {

@@ -17,7 +17,6 @@
   import {
     addDestination,
     exportSxcu,
-    importSxcu,
     listDestinations,
     removeDestination,
     saveDestination,
@@ -48,7 +47,6 @@
   const rows = $derived($settings.uploads);
   let destinations = $state<DestinationView[]>([]);
   let destinationError = $state('');
-  let importWarnings = $state<string[]>([]);
   let activeView = $state<DestinationView | null>(null);
   let addOpen = $state(false);
 
@@ -91,7 +89,6 @@
 
   const accountsVisible = $derived(
     matches('Accounts and uploaders') ||
-      matches('Import ShareX uploader (.sxcu)') ||
       matches('Add destination') ||
       destinations.some(
         (destination) =>
@@ -198,21 +195,6 @@
     }
   }
 
-  async function importUploader(): Promise<void> {
-    destinationError = '';
-    importWarnings = [];
-    try {
-      const imported = await importSxcu();
-      importWarnings = imported.warnings;
-      if (imported.destination) {
-        destinations = [...destinations, imported.destination];
-        activeView = imported.destination;
-      }
-    } catch (failure) {
-      destinationError = errorText(failure);
-    }
-  }
-
   function open(view: DestinationView): void {
     activeView = view;
     destinationError = '';
@@ -310,9 +292,6 @@
       <div class="accounts-head">
         <h2>Accounts and uploaders</h2>
         <div class="account-actions">
-          <Button variant="secondary" height={32} icon="save" onclick={importUploader}>
-            Import ShareX uploader (.sxcu)
-          </Button>
           <div class="add-wrap">
             <Button
               variant="accent"
@@ -324,7 +303,7 @@
             >
               Add destination
             </Button>
-            <Popover label="Add destination" bind:open={addOpen} onclose={() => (addOpen = false)}>
+            <Popover label="Add destination" align="end" bind:open={addOpen} onclose={() => (addOpen = false)}>
               <div class="menu">
                 <button type="button" class="hv" onclick={() => add('imgur')}>
                   <Icon name="image" size={16} />
@@ -366,9 +345,6 @@
         </Card>
       {/if}
 
-      {#if importWarnings.length > 0}
-        <p class="warning" role="status">{importWarnings.join(' ')}</p>
-      {/if}
       {#if destinationError}
         <p class="error" role="alert">{destinationError}</p>
       {/if}
@@ -554,12 +530,6 @@
     margin: 0;
     font-size: 12px;
     color: var(--text3);
-  }
-
-  .warning {
-    margin: 0;
-    color: var(--text2);
-    font-size: 12px;
   }
 
   .error {

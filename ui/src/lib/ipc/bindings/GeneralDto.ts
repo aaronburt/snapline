@@ -4,4 +4,4 @@ import type { LinkFormatDto } from "./LinkFormatDto";
 import type { SubfoldersDto } from "./SubfoldersDto";
 import type { WorkflowStepDto } from "./WorkflowStepDto";
 
-export type GeneralDto = { launchAtSignin: boolean, startMinimised: boolean, notifications: boolean, saveFolder: string, subfolders: SubfoldersDto, imageFormat: ImageFormatDto, lossyQuality: number, namePattern: string, defaultWorkflow: Array<WorkflowStepDto>, copiedLinkFormat: LinkFormatDto, };
+export type GeneralDto = { launchAtSignin: boolean, startMinimised: boolean, trayClickCapture: boolean, notifications: boolean, saveFolder: string, subfolders: SubfoldersDto, imageFormat: ImageFormatDto, lossyQuality: number, namePattern: string, defaultWorkflow: Array<WorkflowStepDto>, copiedLinkFormat: LinkFormatDto, };

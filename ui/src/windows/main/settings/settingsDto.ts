@@ -6,6 +6,7 @@ export function settingsDto(): SettingsDto {
     general: {
       launchAtSignin: true,
       startMinimised: true,
+      trayClickCapture: false,
       notifications: true,
       saveFolder: '%USERPROFILE%\\Pictures\\Snapline',
       subfolders: 'by_month',

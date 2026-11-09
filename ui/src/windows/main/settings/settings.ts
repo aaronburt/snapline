@@ -11,6 +11,7 @@ export interface WorkflowStepSettings {
 export interface GeneralSettings {
   launchAtSignIn: boolean;
   startMinimised: boolean;
+  trayClickCapture: boolean;
   notifications: boolean;
   saveFolder: string;
   subfolders: string;
@@ -436,6 +437,7 @@ export function toView(dto: SettingsDto): Settings {
     general: {
       launchAtSignIn: dto.general.launchAtSignin,
       startMinimised: dto.general.startMinimised,
+      trayClickCapture: dto.general.trayClickCapture,
       notifications: dto.general.notifications,
       saveFolder: dto.general.saveFolder,
       subfolders: subfolderLabel(dto.general.subfolders),
@@ -512,6 +514,7 @@ export function defaultSettings(): Settings {
     general: {
       launchAtSignIn: true,
       startMinimised: true,
+      trayClickCapture: false,
       notifications: true,
       saveFolder: '%USERPROFILE%\\Pictures\\Snapline',
       subfolders: SUBFOLDER_OPTIONS[0],
@@ -663,6 +666,8 @@ function generalPatch<K extends keyof GeneralSettings>(key: K, value: GeneralSet
       return { launch_at_signin: value };
     case 'startMinimised':
       return { start_minimised: value };
+    case 'trayClickCapture':
+      return { tray_click_capture: value };
     case 'notifications':
       return { notifications: value };
     case 'saveFolder':

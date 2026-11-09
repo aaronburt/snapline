@@ -96,8 +96,9 @@
   const notificationsVisible = $derived(
     matches('Notifications', 'Show a toast when an upload finishes or a link is copied'),
   );
+  const trayClickVisible = $derived(matches('Open capture on tray click', 'When off, clicking the tray icon opens the menu'));
   const showStartup = $derived(
-    matches('Startup') || launchVisible || minimiseVisible || notificationsVisible,
+    matches('Startup') || launchVisible || minimiseVisible || notificationsVisible || trayClickVisible,
   );
 
   const folderVisible = $derived(
@@ -153,6 +154,15 @@
           description="Don't open the main window on launch"
           checked={rows.startMinimised}
           onchange={(value) => updateGeneral('startMinimised', value)}
+        />
+      {/if}
+      {#if trayClickVisible}
+        <ToggleRow
+          icon="tray"
+          title="Open capture on tray click"
+          description="When off, clicking the tray icon opens the menu"
+          checked={rows.trayClickCapture}
+          onchange={(value) => updateGeneral('trayClickCapture', value)}
         />
       {/if}
       {#if notificationsVisible}

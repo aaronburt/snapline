@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import Badge from '../../../components/Badge.svelte';
   import Thumb from '../../../components/Thumb.svelte';
   import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
@@ -47,7 +48,8 @@
     }
     const rowTop = HEADER + index * ROW;
     const height = Math.max(viewportHeight, 320);
-    if (rowTop < scrollTop || rowTop + ROW > scrollTop + height) {
+    const currentScrollTop = untrack(() => scrollTop);
+    if (rowTop < currentScrollTop || rowTop + ROW > currentScrollTop + height) {
       const target = Math.max(0, rowTop - 12);
       scrollTop = target;
       if (scroller) {

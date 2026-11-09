@@ -11,6 +11,13 @@ export const settingRegistry: SettingEntry[] = [
     page: 'settings-general',
     pageLabel: 'General',
     route: '/settings/general',
+    title: 'Open capture on tray click',
+    description: 'When off, clicking the tray icon opens the menu',
+  },
+  {
+    page: 'settings-general',
+    pageLabel: 'General',
+    route: '/settings/general',
     title: 'Launch at sign-in',
     description: 'Start Snapline in the tray when you sign in to Windows',
   },

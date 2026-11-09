@@ -5,11 +5,12 @@
   interface Props {
     open?: boolean;
     label: string;
+    align?: 'start' | 'end';
     onclose?: () => void;
     children?: Snippet;
   }
 
-  let { open = $bindable(false), label, onclose, children }: Props = $props();
+  let { open = $bindable(false), label, align = 'start', onclose, children }: Props = $props();
   let element = $state<HTMLDivElement | null>(null);
   let previous: HTMLElement | null = null;
 
@@ -91,6 +92,7 @@
 {#if open}
   <div
     class="popover"
+    class:end={align === 'end'}
     role="dialog"
     aria-modal="true"
     aria-label={label}
@@ -115,5 +117,9 @@
   .popover:focus-visible {
     outline: 2px solid var(--text);
     outline-offset: 1px;
+  }
+
+  .popover.end {
+    right: 0;
   }
 </style>

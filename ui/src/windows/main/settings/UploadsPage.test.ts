@@ -21,7 +21,6 @@ const uploadIpc = vi.hoisted(() => ({
   saveDestination: vi.fn(),
   removeDestination: vi.fn(),
   testDestination: vi.fn(),
-  importSxcu: vi.fn(),
   exportSxcu: vi.fn(),
 }));
 
@@ -80,10 +79,8 @@ beforeEach(() => {
   uploadIpc.saveDestination.mockReset();
   uploadIpc.removeDestination.mockReset();
   uploadIpc.testDestination.mockReset();
-  uploadIpc.importSxcu.mockReset();
   uploadIpc.exportSxcu.mockReset();
   uploadIpc.listDestinations.mockResolvedValue([]);
-  uploadIpc.importSxcu.mockResolvedValue({ destination: null, warnings: [] });
 });
 
 afterEach(cleanup);
@@ -106,9 +103,7 @@ describe('UploadsPage', () => {
 
   it('shows the account buttons and the empty destination list', () => {
     render(UploadsPage);
-    expect(
-      screen.getByRole('button', { name: /Import ShareX uploader \(\.sxcu\)/ }),
-    ).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /Import ShareX uploader/ })).toBeNull();
     expect(screen.getByRole('button', { name: /Add destination/ })).not.toBeNull();
     expect(screen.getByText('No destinations yet')).not.toBeNull();
   });
@@ -234,33 +229,6 @@ describe('UploadsPage', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Amazon S3' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Test upload' }));
     expect(await screen.findByText('Test failed: The server returned HTTP 401.')).not.toBeNull();
-  });
-
-  it('imports a ShareX uploader into the card list', async () => {
-    uploadIpc.importSxcu.mockResolvedValue({
-      destination: destination({
-        id: 'custom',
-        kind: 'custom',
-        name: 'My server',
-        detail: 'Custom uploader · imported from .sxcu',
-        status: 'configured',
-        action: 'edit',
-        configured: true,
-        method: 'POST',
-        requestUrl: 'https://example.test/upload',
-        body: 'MultipartFormData',
-        fileFormField: 'file',
-        link: '{json:$.data.url}',
-        importedFromSxcu: true,
-      }),
-      warnings: [],
-    });
-    render(UploadsPage);
-    await fireEvent.click(screen.getByRole('button', { name: /Import ShareX uploader/ }));
-    await waitFor(() => expect(uploadIpc.importSxcu).toHaveBeenCalledTimes(1));
-    expect((await screen.findAllByText('My server')).length).toBeGreaterThan(0);
-    expect(screen.getByText('Custom uploader · imported from .sxcu')).not.toBeNull();
-    expect(screen.getByRole('button', { name: 'Edit' })).not.toBeNull();
   });
 
   it('offers GitHub Gist and SFTP in the Add destination menu', async () => {

@@ -1,8 +1,9 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import Badge from '../../../components/Badge.svelte';
   import Thumb from '../../../components/Thumb.svelte';
   import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
-  import { badgeStatus, formatBytes, formatDuration, formatTime, typeTag } from './data';
+  import { badgeStatus, captureCardWidth, formatBytes, formatDuration, formatTime, typeTag } from './data';
 
   interface Group {
     key: string;
@@ -15,7 +16,6 @@
     groups: Group[];
     selectedId: number | null;
     columns: number;
-    viewportWidth: number;
     viewportHeight: number;
     scrollTop?: number;
     scroller?: HTMLDivElement;
@@ -27,7 +27,6 @@
     groups,
     selectedId,
     columns,
-    viewportWidth,
     viewportHeight,
     scrollTop = $bindable(0),
     scroller,
@@ -54,8 +53,7 @@
 
   type Row = HeaderRow | CardsRow;
 
-  const cardWidth = $derived((Math.max(viewportWidth, 320) - (columns - 1) * 12) / columns);
-  const rowHeight = $derived(Math.round(cardWidth * 0.625) + 64 + 12);
+  const rowHeight = Math.round(captureCardWidth * 0.625) + 64 + 12;
   const height = $derived(Math.max(viewportHeight, 320));
 
   const layout = $derived.by(() => {
@@ -113,7 +111,8 @@
       return;
     }
     const height = Math.max(viewportHeight, 320);
-    if (row.top < scrollTop || row.top + row.height > scrollTop + height) {
+    const currentScrollTop = untrack(() => scrollTop);
+    if (row.top < currentScrollTop || row.top + row.height > currentScrollTop + height) {
       const target = Math.max(0, row.top - 12);
       scrollTop = target;
       if (scroller) {
@@ -138,7 +137,7 @@
     <div
       class="gridrow"
       style:height="{row.height - 12}px"
-      style:grid-template-columns="repeat({columns}, minmax(0, 1fr))"
+      style:grid-template-columns="repeat({columns}, {captureCardWidth}px)"
     >
       {#each row.items as capture (capture.id)}
         <button

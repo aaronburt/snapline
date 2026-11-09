@@ -17,10 +17,6 @@
 
 <div class="shell">
   <nav aria-label="Settings">
-    <a class="hv back" href={`#${$lastMainRoute}`}>
-      <Icon name="back" size={16} strokeWidth={1.8} />
-      Back to Snapline
-    </a>
     <label class="find">
       <input
         type="search"
@@ -69,6 +65,10 @@
       active={page === 'settings-uploads'}
       href="#/settings/uploads"
     />
+    <a class="hv back" href={`#${$lastMainRoute}`}>
+      <Icon name="back" size={16} strokeWidth={1.8} />
+      Back to Snapline
+    </a>
   </nav>
 
   <main class="content">
@@ -98,6 +98,7 @@
 
   nav {
     display: flex;
+    align-self: stretch;
     flex: 1 1 240px;
     flex-direction: column;
     gap: 4px;
@@ -111,6 +112,7 @@
     align-items: center;
     gap: 10px;
     align-self: flex-start;
+    margin-top: auto;
     height: 36px;
     padding: 0 10px;
     border-radius: 4px;

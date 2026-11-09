@@ -1,8 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import Logo from '../../components/Logo.svelte';
   import Icon from '../../components/Icon.svelte';
-  import CaptionButtons from '../../components/CaptionButtons.svelte';
   import { currentRoute, navigate } from '../../router';
   import { searchQuery } from './history/search';
 
@@ -35,10 +33,8 @@
   });
 </script>
 
-<div class="titlebar" data-tauri-drag-region>
-  <Logo size={16} dot={false} />
-  <span class="name">{settings ? 'Snapline Settings' : 'Snapline'}</span>
-  {#if !settings}
+{#if !settings}
+<div class="searchbar">
     <div class="searchwrap">
       <label class="search">
         <Icon name="search" size={14} strokeWidth={2} />
@@ -46,24 +42,15 @@
         <input type="search" placeholder="Search by name, app, text in image…" {value} {oninput} />
       </label>
     </div>
-  {:else}
-    <div class="spacer"></div>
-  {/if}
-  <CaptionButtons />
 </div>
+{/if}
 
 <style>
-  .titlebar {
+  .searchbar {
     height: 44px;
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding-left: 16px;
-    flex: none;
-  }
-
-  .name {
-    font-size: 12px;
+    padding: 0 16px;
     flex: none;
   }
 
@@ -72,10 +59,6 @@
     min-width: 0;
     display: flex;
     justify-content: center;
-  }
-
-  .spacer {
-    flex: 1;
   }
 
   .search {

@@ -2,7 +2,9 @@ import type { CaptureKindDto } from '../../../lib/ipc/bindings/CaptureKindDto';
 import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
 import type { HistoryFilter } from '../../../lib/ipc/bindings/HistoryFilter';
 
-export const historyFilters = ['All', 'Images', 'Videos', 'GIFs', 'Uploaded', 'Local only'];
+export const historyFilters = ['All', 'Images', 'Videos', 'GIFs'];
+export const captureCardWidth = 200;
+export const captureCardGap = 12;
 
 export const captureCount = '';
 
@@ -15,12 +17,6 @@ export function filterValue(label: string): HistoryFilter {
   }
   if (label === 'GIFs') {
     return 'gifs';
-  }
-  if (label === 'Uploaded') {
-    return 'uploaded';
-  }
-  if (label === 'Local only') {
-    return 'localOnly';
   }
   return 'all';
 }

@@ -106,6 +106,13 @@ async function flush(): Promise<void> {
   await tick();
 }
 
+async function selectFirst(): Promise<void> {
+  const card = document.querySelector('[data-capture-id="1"]');
+  if (!card) throw new Error('Capture not found');
+  await fireEvent.click(card);
+  await flush();
+}
+
 function page(items: HistoryCaptureDto[], next: { createdAt: number; id: number } | null = null) {
   return { items, next };
 }
@@ -234,15 +241,39 @@ describe('History page', () => {
   it('selects a capture and shows its details', async () => {
     const { container } = render(HistoryPage);
     await flush();
+    expect(screen.queryByRole('complementary', { name: 'Capture details' })).toBeNull();
     const cards = container.querySelectorAll('[data-capture-id]');
     await fireEvent.click(cards[1] as Element);
     await flush();
     expect(container.querySelector('aside')?.textContent).toContain('capture-2.png');
   });
 
+  it('keeps capture cards a fixed width when details open and close', async () => {
+    const { container } = render(HistoryPage);
+    await flush();
+    const row = container.querySelector('.gridrow') as HTMLElement;
+    expect(row.style.gridTemplateColumns).toContain('200px');
+    await selectFirst();
+    expect((container.querySelector('.gridrow') as HTMLElement).style.gridTemplateColumns).toContain('200px');
+    await fireEvent.click(container.querySelector('.scroll') as Element);
+    await flush();
+    expect((container.querySelector('.gridrow') as HTMLElement).style.gridTemplateColumns).toContain('200px');
+  });
+
+  it('deselects a capture when the history background is clicked', async () => {
+    const { container } = render(HistoryPage);
+    await flush();
+    await selectFirst();
+    expect(screen.getByRole('complementary', { name: 'Capture details' })).not.toBeNull();
+    await fireEvent.click(container.querySelector('.scroll') as Element);
+    await flush();
+    expect(screen.queryByRole('complementary', { name: 'Capture details' })).toBeNull();
+  });
+
   it('moves the selection with the arrow keys', async () => {
     const { container } = render(HistoryPage);
     await flush();
+    await selectFirst();
     await fireEvent.keyDown(window, { key: 'ArrowRight' });
     await flush();
     expect(container.querySelector('aside')?.textContent).toContain('capture-2.png');
@@ -251,6 +282,7 @@ describe('History page', () => {
   it('opens the selected image in the native editor', async () => {
     render(HistoryPage);
     await flush();
+    await selectFirst();
     await fireEvent.click(screen.getByRole('button', { name: 'Annotate' }));
     await waitFor(() => expect(mocks.editor).toHaveBeenCalledWith(1));
   });
@@ -271,6 +303,7 @@ describe('History page', () => {
     mocks.confirm.mockResolvedValue(false);
     const { container } = render(HistoryPage);
     await flush();
+    await selectFirst();
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await flush();
     expect(mocks.remove).not.toHaveBeenCalled();
@@ -298,6 +331,7 @@ describe('History page', () => {
   it('opens the selected file with Enter and copies it with Ctrl+C', async () => {
     render(HistoryPage);
     await flush();
+    await selectFirst();
     await fireEvent.keyDown(window, { key: 'Enter' });
     await flush();
     expect(mocks.open).toHaveBeenCalledWith(1);
@@ -323,6 +357,7 @@ describe('History sharing', () => {
     );
     render(HistoryPage);
     await flush();
+    await selectFirst();
     const input = screen.getByLabelText('Share link') as HTMLInputElement;
     expect(input.value).toBe('https://i.imgur.com/abc123.png');
     expect(input.readOnly).toBe(true);
@@ -342,28 +377,15 @@ describe('History sharing', () => {
     );
     render(HistoryPage);
     await flush();
+    await selectFirst();
     expect(screen.getByText('Delete from Amazon S3')).not.toBeNull();
   });
 
-  it('uploads a local capture to the default destination and can cancel it', async () => {
+  it('hides sharing for a local capture', async () => {
     render(HistoryPage);
     await flush();
-    expect(
-      screen.getByText('Saved on this PC only. Upload it to get a shareable link.'),
-    ).not.toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Upload to Imgur' }));
-    await flush();
-    expect(uploads.call).toHaveBeenCalledWith('ipc_upload', {
-      kind: 'uploadElsewhere',
-      data: { capture_id: 1, dest: 'Imgur' },
-    });
-    expect(screen.getByRole('progressbar', { name: 'Uploading' })).not.toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await flush();
-    expect(uploads.call).toHaveBeenLastCalledWith('ipc_upload', {
-      kind: 'cancel',
-      data: { id: 42 },
-    });
+    await selectFirst();
+    expect(screen.queryByRole('region', { name: 'Sharing' })).toBeNull();
   });
 
   it('retries a failed upload in place', async () => {
@@ -380,6 +402,7 @@ describe('History sharing', () => {
     );
     render(HistoryPage);
     await flush();
+    await selectFirst();
     expect(screen.getByText('Upload failed: The server returned HTTP 500.')).not.toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await flush();
@@ -399,6 +422,7 @@ describe('History sharing', () => {
     );
     render(HistoryPage);
     await flush();
+    await selectFirst();
     await fireEvent.click(screen.getByRole('button', { name: 'Upload elsewhere…' }));
     await flush();
     expect(uploads.destinations).toHaveBeenCalledOnce();
@@ -425,6 +449,7 @@ describe('History sharing', () => {
     );
     render(HistoryPage);
     await flush();
+    await selectFirst();
     const trigger = screen.getByRole('button', { name: 'Upload elsewhere…' });
     await fireEvent.click(trigger);
     await flush();
@@ -440,25 +465,25 @@ describe('History sharing', () => {
   });
 
   it('retries through the queue once a live upload is known', async () => {
-    let handler: ((event: AppEvent) => void) | undefined;
+    const handlers: ((event: AppEvent) => void)[] = [];
     uploads.onEvent.mockImplementation((callback: (event: AppEvent) => void) => {
-      handler = callback;
+      handlers.push(callback);
       return Promise.resolve(() => undefined);
     });
     render(HistoryPage);
     await flush();
-    await fireEvent.click(screen.getByRole('button', { name: 'Upload to Imgur' }));
-    await flush();
-    handler?.({
+    await selectFirst();
+    handlers.forEach((handler) => handler({
       area: 'upload',
       event: {
         kind: 'stateChanged',
         data: uploadState(42, {
+          captureId: 1,
           status: 'failed',
           error: 'The host refused the file.',
         }),
       },
-    });
+    }));
     await flush();
     expect(screen.getByText('Upload failed: The host refused the file.')).not.toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));

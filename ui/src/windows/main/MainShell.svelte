@@ -3,7 +3,6 @@
   import type { RouteMatch } from '../../router';
   import { currentRoute } from '../../router';
   import { info } from '../../lib/ipc/app';
-  import TitleBar from './TitleBar.svelte';
   import Nav from './Nav.svelte';
   import HistoryPage from './history/HistoryPage.svelte';
   import WorkflowsPage from './workflows/WorkflowsPage.svelte';
@@ -46,7 +45,6 @@
 </script>
 
 <div class="root" class:mica={hasMica}>
-  <TitleBar settings={isSettings} />
   <div class="body">
     {#if isSettings}
       <SettingsShell />
@@ -92,7 +90,6 @@
   .body {
     flex: 1;
     display: flex;
-    flex-wrap: wrap;
     align-items: stretch;
     min-height: 0;
   }
@@ -106,8 +103,8 @@
     border-right: none;
     border-bottom: none;
     border-top-left-radius: 8px;
+    overflow: auto;
     display: flex;
-    flex-wrap: wrap;
     align-items: stretch;
   }
 </style>
