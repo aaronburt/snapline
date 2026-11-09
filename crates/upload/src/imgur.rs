@@ -199,16 +199,17 @@ impl ImgurUploader {
 
     fn client_id(&self, secrets: &dyn SecretStore) -> Result<String, UploadError> {
         match secrets.get(&self.dest_id, CLIENT_ID_FIELD) {
-            Ok(Some(bytes)) => {
-                let value = std::str::from_utf8(&bytes).map_err(|_| {
+            Ok(Some(mut bytes)) => {
+                let value = std::str::from_utf8(&bytes)
+                    .ok()
+                    .filter(|value| {
+                        !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_graphic())
+                    })
+                    .map(str::to_owned);
+                bytes.fill(0);
+                value.ok_or_else(|| {
                     UploadError::Permanent("The saved Imgur Client ID is not valid.".to_owned())
-                })?;
-                if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_graphic()) {
-                    return Err(UploadError::Permanent(
-                        "The saved Imgur Client ID is not valid.".to_owned(),
-                    ));
-                }
-                Ok(value.to_owned())
+                })
             }
             Ok(None) => Err(UploadError::Permanent(
                 "No Imgur Client ID is saved. Add one in Settings.".to_owned(),

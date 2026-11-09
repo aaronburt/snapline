@@ -1,6 +1,8 @@
 use snapline_core::geometry::{Point, Px, Rect, Size};
 use snapline_core::image::Image;
-use snapline_core::overlay::{Effect, Input, Overlay, Selection, SnapSet, State, Tool};
+use snapline_core::overlay::{
+    Effect, Input, Overlay, Selection, SnapCandidate, SnapSet, State, Tool,
+};
 use snapline_core::ports::Monitor;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
@@ -8,21 +10,29 @@ use windows::Win32::Graphics::Direct2D::ID2D1Bitmap1;
 use windows::Win32::Graphics::Dxgi::IDXGISwapChain1;
 use windows::Win32::Graphics::Gdi::{UpdateWindow, ValidateRect};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, ReleaseCapture, SetCapture, SetFocus, VIRTUAL_KEY, VK_A, VK_B, VK_C, VK_CONTROL,
-    VK_DOWN, VK_E, VK_ESCAPE, VK_H, VK_I, VK_LEFT, VK_MENU, VK_N, VK_P, VK_R, VK_RETURN, VK_RIGHT,
-    VK_S, VK_SHIFT, VK_T, VK_TAB, VK_UP, VK_V,
+    GetKeyState, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
+    VIRTUAL_KEY, VK_A, VK_B, VK_C, VK_CONTROL, VK_DOWN, VK_E, VK_ESCAPE, VK_H, VK_I, VK_LEFT,
+    VK_MENU, VK_N, VK_P, VK_R, VK_RETURN, VK_RIGHT, VK_S, VK_SHIFT, VK_T, VK_TAB, VK_UP, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetForegroundWindow,
-    GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId, LoadCursorW, PostQuitMessage,
-    RegisterClassExW, SetCursor, SetForegroundWindow, SetWindowLongPtrW, ShowWindow,
-    TranslateMessage, UnregisterClassW, GWLP_USERDATA, HTCLIENT, IDC_ARROW, IDC_CROSS, MA_ACTIVATE,
-    MSG, SW_SHOW, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCCREATE, WM_PAINT, WM_RBUTTONDOWN, WM_SETCURSOR,
-    WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_POPUP,
+    GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId, KillTimer, LoadCursorW,
+    PostQuitMessage, RegisterClassExW, SetCursor, SetForegroundWindow, SetTimer, SetWindowLongPtrW,
+    ShowWindow, TranslateMessage, UnregisterClassW, GWLP_USERDATA, HTCLIENT, IDC_ARROW, IDC_CROSS,
+    MA_ACTIVATE, MSG, SW_SHOW, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCCREATE, WM_PAINT, WM_RBUTTONDOWN,
+    WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
+
+#[allow(dead_code)]
+#[path = "../../platform-windows/src/uia.rs"]
+mod uia;
+#[allow(dead_code)]
+#[path = "../../platform-windows/src/windows_enum.rs"]
+mod windows_enum;
 
 use crate::d2d::Gpu;
 use crate::icons::IconCache;
@@ -33,6 +43,8 @@ use crate::{
 };
 
 pub(crate) const CLASS_NAME: &str = "SnaplineOverlayWindow";
+const SNAP_TIMER_ID: usize = 1;
+const SNAP_DEADLINE_MS: u32 = 30;
 
 pub(crate) struct ScreenSource {
     pub monitor: Monitor,
@@ -48,6 +60,45 @@ pub(crate) struct WindowState {
     pub swap_chain: IDXGISwapChain1,
     pub target: ID2D1Bitmap1,
     pub frozen: ID2D1Bitmap1,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SnapFeed {
+    windows: Vec<SnapCandidate>,
+    control: Option<SnapCandidate>,
+}
+
+impl SnapFeed {
+    pub(crate) fn new(set: SnapSet) -> Self {
+        Self {
+            windows: set.windows,
+            control: set.controls.into_iter().next(),
+        }
+    }
+
+    pub(crate) fn set_windows(&mut self, windows: Vec<SnapCandidate>) {
+        self.windows = windows;
+    }
+
+    pub(crate) fn set_control(&mut self, rect: Option<Rect>) -> bool {
+        let next = rect.map(SnapCandidate::new);
+        if self.control == next {
+            return false;
+        }
+        self.control = next;
+        true
+    }
+
+    pub(crate) fn clear_control(&mut self) -> bool {
+        self.set_control(None)
+    }
+
+    pub(crate) fn set(&self) -> SnapSet {
+        SnapSet {
+            windows: self.windows.clone(),
+            controls: self.control.into_iter().collect(),
+        }
+    }
 }
 
 pub(crate) struct Scene {
@@ -101,6 +152,12 @@ pub(crate) struct Context {
     class_name: Vec<u16>,
     instance: HINSTANCE,
     sources: Vec<(ScreenSource, bool)>,
+    snap: SnapFeed,
+    snap_worker: Option<uia::ControlSnapWorker>,
+    snap_generation: u64,
+    snap_pending: Option<u64>,
+    snap_timer: Option<HWND>,
+    tracking_mouse: bool,
 }
 
 impl Context {
@@ -185,6 +242,12 @@ impl Context {
             return Err(OverlayError::NoMonitors);
         }
         let gpu = Gpu::new()?;
+        let snap = SnapFeed::new(snap);
+        let snap_worker = if editing {
+            None
+        } else {
+            Some(uia::ControlSnapWorker::spawn())
+        };
         let mut overlay = Overlay::with_annotate(annotate);
         if editing {
             let first = &sources[0].0;
@@ -193,7 +256,7 @@ impl Context {
                 tool: overlay.tool,
             };
         }
-        let (overlay, _) = overlay.on(Input::SnapCandidates(snap));
+        let (overlay, _) = overlay.on(Input::SnapCandidates(snap.set()));
         let tool = overlay.tool;
         let scene = Scene {
             overlay,
@@ -227,6 +290,12 @@ impl Context {
             class_name,
             instance: HINSTANCE(instance.0),
             sources,
+            snap,
+            snap_worker,
+            snap_generation: 0,
+            snap_pending: None,
+            snap_timer: None,
+            tracking_mouse: false,
         };
         Ok(context)
     }
@@ -234,10 +303,26 @@ impl Context {
     pub(crate) fn activate(&mut self) -> Result<(), OverlayError> {
         self.register_class()?;
         self.open()?;
+        self.feed_windows();
         self.layout = render::layout(&self.windows, &self.scene, &mut self.gpu);
         self.redraw();
         self.show();
         Ok(())
+    }
+
+    fn feed_windows(&mut self) {
+        let exclude: Vec<HWND> = self.windows.iter().map(|window| window.hwnd).collect();
+        let windows = windows_enum::snap_candidates(&exclude);
+        if windows.is_empty() {
+            return;
+        }
+        self.snap.set_windows(windows);
+        self.apply_snap();
+    }
+
+    fn apply_snap(&mut self) -> bool {
+        let set = self.snap.set();
+        self.apply(Input::SnapCandidates(set))
     }
 
     fn register_class(&mut self) -> Result<(), OverlayError> {
@@ -437,6 +522,95 @@ impl Context {
         self.previous_pointer_monitor = self.scene.pointer_monitor;
     }
 
+    fn track_leave(&mut self, hwnd: HWND) {
+        if self.tracking_mouse {
+            return;
+        }
+        let mut event = TRACKMOUSEEVENT {
+            cbSize: u32::try_from(std::mem::size_of::<TRACKMOUSEEVENT>()).unwrap_or(0),
+            dwFlags: TME_LEAVE,
+            hwndTrack: hwnd,
+            dwHoverTime: 0,
+        };
+        // SAFETY: the event structure is live for the duration of the call and the window belongs to this thread.
+        if unsafe { TrackMouseEvent(&mut event) }.is_ok() {
+            self.tracking_mouse = true;
+        }
+    }
+
+    fn query_control(&mut self, hwnd: HWND, point: Point) {
+        if self.snap_worker.is_none() {
+            return;
+        }
+        if !matches!(self.scene.overlay.state, State::Hovering { .. }) {
+            return;
+        }
+        self.snap_generation = self.snap_generation.wrapping_add(1);
+        let generation = self.snap_generation;
+        let sent = self
+            .snap_worker
+            .as_ref()
+            .is_some_and(|worker| worker.query(generation, point));
+        if !sent {
+            return;
+        }
+        self.snap_pending = Some(generation);
+        if self.snap_timer != Some(hwnd) {
+            self.cancel_snap_timer();
+        }
+        // SAFETY: arms a one-shot deadline timer on a live window owned by this thread.
+        let timer = unsafe { SetTimer(Some(hwnd), SNAP_TIMER_ID, SNAP_DEADLINE_MS, None) };
+        if timer == 0 {
+            self.snap_pending = None;
+        } else {
+            self.snap_timer = Some(hwnd);
+        }
+    }
+
+    fn cancel_snap_timer(&mut self) {
+        let Some(hwnd) = self.snap_timer.take() else {
+            return;
+        };
+        // SAFETY: cancels a timer on a live window owned by this thread.
+        let _ = unsafe { KillTimer(Some(hwnd), SNAP_TIMER_ID) };
+    }
+
+    fn poll_control(&mut self) -> bool {
+        let Some(worker) = &self.snap_worker else {
+            return false;
+        };
+        let mut reply = None;
+        while let Some(next) = worker.poll() {
+            if next.generation() == self.snap_generation {
+                reply = Some(next);
+            }
+        }
+        let Some(reply) = reply else {
+            return false;
+        };
+        let generation = self.snap_generation;
+        let Some(rect) = reply.rect_for(generation) else {
+            return false;
+        };
+        self.snap_pending = None;
+        self.cancel_snap_timer();
+        if !self.snap.set_control(rect) {
+            return false;
+        }
+        self.apply_snap();
+        true
+    }
+
+    fn clear_snap(&mut self) {
+        self.snap_pending = None;
+        self.snap_generation = self.snap_generation.wrapping_add(1);
+        self.cancel_snap_timer();
+        self.scene.cursor = None;
+        self.scene.overlay.pointer = None;
+        self.snap.clear_control();
+        self.apply_snap();
+    }
+
     fn finish(&mut self, action: Option<OverlayAction>, selection: Selection) {
         let monitor = if self.scene.editing {
             None
@@ -631,6 +805,9 @@ impl Context {
             // SAFETY: the message is passed straight through for windows not owned by the context.
             return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
         };
+        if message != WM_DESTROY && self.poll_control() {
+            self.refresh();
+        }
         match message {
             WM_MOUSEACTIVATE => {
                 let _ = index;
@@ -660,12 +837,33 @@ impl Context {
                 }
                 return LRESULT(0);
             }
+            WM_TIMER if wparam.0 == SNAP_TIMER_ID => {
+                self.snap_timer = None;
+                // SAFETY: cancels the deadline timer on a live window owned by this thread.
+                let _ = unsafe { KillTimer(Some(hwnd), SNAP_TIMER_ID) };
+                if self.snap_pending.take().is_some() {
+                    self.snap_generation = self.snap_generation.wrapping_add(1);
+                    if self.snap.clear_control() {
+                        self.apply_snap();
+                    }
+                    self.refresh();
+                }
+                return LRESULT(0);
+            }
+            WM_MOUSELEAVE => {
+                self.tracking_mouse = false;
+                self.clear_snap();
+                self.refresh();
+                return LRESULT(0);
+            }
             WM_MOUSEMOVE => {
+                self.track_leave(hwnd);
                 let point = self.pointer(index, lparam);
                 self.scene.cursor = Some(point);
                 self.scene.pointer_monitor = self.monitor_index(point);
                 if !self.scene.editing {
                     self.apply(Input::Move(point));
+                    self.query_control(hwnd, point);
                 }
                 self.refresh();
                 return LRESULT(0);
@@ -804,4 +1002,108 @@ unsafe extern "system" fn window_proc(
     // SAFETY: the pointer was installed by Context::create_window and remains valid.
     let context = unsafe { &mut *pointer };
     context.handle(hwnd, message, wparam, lparam)
+}
+
+#[cfg(test)]
+mod tests {
+    use snapline_core::overlay::{Input, Overlay, SnapMode};
+
+    use super::*;
+
+    fn rect(x: i32, y: i32, width: i32, height: i32) -> Rect {
+        Rect::new(Px(x), Px(y), Px(width), Px(height))
+    }
+
+    fn point(x: i32, y: i32) -> Point {
+        Point::new(Px(x), Px(y))
+    }
+
+    #[test]
+    fn snap_feed_maps_windows_and_the_control() {
+        let mut feed = SnapFeed::new(SnapSet::new(
+            vec![rect(0, 0, 500, 500)],
+            vec![rect(10, 10, 20, 20)],
+        ));
+        assert_eq!(
+            feed.set().windows,
+            vec![SnapCandidate::new(rect(0, 0, 500, 500))]
+        );
+        assert_eq!(
+            feed.set().controls,
+            vec![SnapCandidate::new(rect(10, 10, 20, 20))]
+        );
+        assert!(feed.set_control(Some(rect(100, 100, 50, 50))));
+        let set = feed.set();
+        assert_eq!(set.windows, vec![SnapCandidate::new(rect(0, 0, 500, 500))]);
+        assert_eq!(
+            set.controls,
+            vec![SnapCandidate::new(rect(100, 100, 50, 50))]
+        );
+    }
+
+    #[test]
+    fn snap_feed_reports_control_changes_only_once() {
+        let mut feed = SnapFeed::default();
+        assert!(feed.set_control(Some(rect(1, 2, 3, 4))));
+        assert!(!feed.set_control(Some(rect(1, 2, 3, 4))));
+        assert!(feed.set_control(None));
+        assert!(!feed.clear_control());
+        assert!(feed.set().controls.is_empty());
+    }
+
+    #[test]
+    fn snap_feed_replaces_the_window_list_without_touching_the_control() {
+        let mut feed = SnapFeed::new(SnapSet::new(vec![rect(0, 0, 10, 10)], vec![]));
+        feed.set_control(Some(rect(20, 20, 5, 5)));
+        feed.set_windows(vec![
+            SnapCandidate::new(rect(30, 30, 40, 40)),
+            SnapCandidate::new(rect(50, 50, 60, 60)),
+        ]);
+        let set = feed.set();
+        assert_eq!(
+            set.windows,
+            vec![
+                SnapCandidate::new(rect(30, 30, 40, 40)),
+                SnapCandidate::new(rect(50, 50, 60, 60)),
+            ]
+        );
+        assert_eq!(set.controls, vec![SnapCandidate::new(rect(20, 20, 5, 5))]);
+    }
+
+    #[test]
+    fn tab_switches_between_window_and_control_snapping() {
+        let mut feed = SnapFeed::new(SnapSet::new(
+            vec![rect(0, 0, 500, 500)],
+            vec![rect(100, 100, 200, 200)],
+        ));
+        feed.set_control(Some(rect(100, 100, 200, 200)));
+        let (mut overlay, _) = Overlay::new().on(Input::SnapCandidates(feed.set()));
+        let (next, _) = overlay.on(Input::Move(point(150, 150)));
+        overlay = next;
+        assert_eq!(overlay.snap.mode, SnapMode::Window);
+        assert_eq!(overlay.snap.hovered, Some(rect(0, 0, 500, 500)));
+        let (next, _) = overlay.on(Input::Tab);
+        overlay = next;
+        assert_eq!(overlay.snap.mode, SnapMode::Control);
+        assert_eq!(overlay.snap.hovered, Some(rect(100, 100, 200, 200)));
+        let (next, _) = overlay.on(Input::Tab);
+        overlay = next;
+        assert_eq!(overlay.snap.mode, SnapMode::Window);
+        assert_eq!(overlay.snap.hovered, Some(rect(0, 0, 500, 500)));
+    }
+
+    #[test]
+    fn clearing_the_snap_feed_removes_the_hovered_rectangle() {
+        let mut feed = SnapFeed::new(SnapSet::new(vec![rect(0, 0, 500, 500)], vec![]));
+        feed.set_control(Some(rect(100, 100, 50, 50)));
+        let (mut overlay, _) = Overlay::new().on(Input::SnapCandidates(feed.set()));
+        let (next, _) = overlay.on(Input::Move(point(120, 120)));
+        overlay = next;
+        assert_eq!(overlay.snap.hovered, Some(rect(100, 100, 50, 50)));
+        feed.clear_control();
+        overlay.pointer = None;
+        let (next, _) = overlay.on(Input::SnapCandidates(feed.set()));
+        overlay = next;
+        assert_eq!(overlay.snap.hovered, None);
+    }
 }

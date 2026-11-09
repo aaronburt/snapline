@@ -3,6 +3,7 @@ mod budget;
 mod ffmpeg;
 mod icons;
 mod no_comments;
+mod package;
 mod tokens;
 
 use std::env;
@@ -29,6 +30,7 @@ fn main() -> Result<()> {
         "no-comments" => no_comments::run(&root),
         "budget" => budget::run(&root, &rest),
         "fetch-ffmpeg" => ffmpeg::run(&root),
+        "package" => package::run(&root),
         "help" | "--help" | "-h" => {
             help();
             Ok(())
@@ -39,7 +41,7 @@ fn main() -> Result<()> {
 
 fn help() {
     println!(
-        "cargo xtask <command>\n\ncommands:\n  ui           install and build the web frontend\n  bindings     generate TypeScript types from the Rust DTOs\n  tokens       generate CSS and overlay tokens\n  icons        render tray menu icons\n  check        run every static check\n  test         run unit and component tests\n  test-desktop run the ignored desktop tests\n  ci           check, test and budget\n  no-comments  scan for forbidden comments\n  budget       measure resource use\n  fetch-ffmpeg download the pinned FFmpeg build and unpack it"
+        "cargo xtask <command>\n\ncommands:\n  ui           install and build the web frontend\n  bindings     generate TypeScript types from the Rust DTOs\n  tokens       generate CSS and overlay tokens\n  icons        render tray menu icons\n  check        run every static check\n  test         run unit and component tests\n  test-desktop run the ignored desktop tests\n  ci           check, test and budget\n  no-comments  scan for forbidden comments\n  budget       measure resource use\n  fetch-ffmpeg download the pinned FFmpeg build and unpack it\n  package      build the NSIS installer and the portable zip"
     );
 }
 

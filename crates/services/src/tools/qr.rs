@@ -129,10 +129,7 @@ impl ToolService {
         let bytes = codec
             .encode(&image, ImageFormat::Png, 0)
             .map_err(|error| ServiceError::Internal(error.to_string()))?;
-        let host = self
-            ._services
-            .history_host()
-            .ok_or(ServiceError::NotYet)?;
+        let host = self._services.history_host().ok_or(ServiceError::NotYet)?;
         host.set_clipboard_image(&bytes)?;
         Ok(ToolResp::QrCopied)
     }
@@ -141,10 +138,7 @@ impl ToolService {
         let link = core_qr::link_of(link).ok_or_else(|| {
             ServiceError::Invalid("Only http and https links can be opened.".to_owned())
         })?;
-        let host = self
-            ._services
-            .history_host()
-            .ok_or(ServiceError::NotYet)?;
+        let host = self._services.history_host().ok_or(ServiceError::NotYet)?;
         host.open_url(&link)?;
         Ok(ToolResp::QrOpened)
     }
@@ -333,9 +327,7 @@ mod tests {
     fn scan_and_copy_writes_the_text() {
         let clipboard = FakeClipboard::default();
         let image = core_qr::make_image("copied text").expect("image");
-        let scanned = QrTool::new(&clipboard)
-            .scan_and_copy(&image)
-            .expect("scan");
+        let scanned = QrTool::new(&clipboard).scan_and_copy(&image).expect("scan");
         assert_eq!(scanned.text, "copied text");
         assert_eq!(
             clipboard.text.lock().expect("text").as_deref(),
@@ -361,14 +353,8 @@ mod tests {
     #[test]
     fn not_found_maps_to_the_not_found_code() {
         assert_eq!(service_error(QrError::NotFound), ServiceError::NotFound);
-        assert_eq!(
-            service_error(QrError::EmptyText).code(),
-            "invalid"
-        );
-        assert_eq!(
-            service_error(QrError::UnsupportedImage).code(),
-            "invalid"
-        );
+        assert_eq!(service_error(QrError::EmptyText).code(), "invalid");
+        assert_eq!(service_error(QrError::UnsupportedImage).code(), "invalid");
     }
 
     #[test]
@@ -397,7 +383,9 @@ mod tests {
             Err(ServiceError::NotYet)
         );
         assert_eq!(
-            services.tool().handle(ToolReq::QrScan { capture_id: Some(1) }),
+            services.tool().handle(ToolReq::QrScan {
+                capture_id: Some(1)
+            }),
             Err(ServiceError::NotYet)
         );
     }

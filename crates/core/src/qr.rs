@@ -47,7 +47,9 @@ pub fn make_svg(text: &str) -> Result<String, QrError> {
         .map_err(|_| QrError::Invalid)?
         .checked_add(QUIET_ZONE * 2)
         .ok_or(QrError::TooLong)?;
-    let pixels = side.checked_mul(SVG_MODULE_PIXELS).ok_or(QrError::TooLong)?;
+    let pixels = side
+        .checked_mul(SVG_MODULE_PIXELS)
+        .ok_or(QrError::TooLong)?;
     let colors = code.to_colors();
     let mut path = String::new();
     for y in 0..modules {
@@ -140,8 +142,12 @@ pub fn link_of(text: &str) -> Option<String> {
         return None;
     }
     let lower = trimmed.to_ascii_lowercase();
-    let https = lower.strip_prefix("https://").is_some_and(|rest| !rest.is_empty());
-    let http = lower.strip_prefix("http://").is_some_and(|rest| !rest.is_empty());
+    let https = lower
+        .strip_prefix("https://")
+        .is_some_and(|rest| !rest.is_empty());
+    let http = lower
+        .strip_prefix("http://")
+        .is_some_and(|rest| !rest.is_empty());
     if https || http {
         Some(trimmed.to_owned())
     } else {
@@ -207,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn png_source_image_is_black_and_white_bgra() {
+    fn source_image_is_black_and_white_bgra() {
         let image = make_image("hello").expect("image");
         assert_eq!(image.width(), image.height());
         assert_eq!(image.pixel(0, 0), Ok([255, 255, 255, 255]));
@@ -241,7 +247,7 @@ mod tests {
 
     #[test]
     fn scaled_images_still_scan() {
-        let image = make_image_with("scale test", 3, 4).expect("image");
+        let image = make_image_with("scale test", 4, 4).expect("image");
         assert_eq!(scan(&image).expect("scan").text, "scale test");
     }
 

@@ -125,8 +125,18 @@ mod tests {
     #[test]
     fn every_step_has_the_editor_label() {
         let steps = [
-            (Step::Capture { kind: CaptureKind::Region }, "Capture"),
-            (Step::Record { kind: RecordKind::Video }, "Record"),
+            (
+                Step::Capture {
+                    kind: CaptureKind::Region,
+                },
+                "Capture",
+            ),
+            (
+                Step::Record {
+                    kind: RecordKind::Video,
+                },
+                "Record",
+            ),
             (Step::CopyImage, "Copy image"),
             (Step::Annotate, "Annotate"),
             (Step::Save, "Save"),

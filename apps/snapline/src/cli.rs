@@ -1,3 +1,15 @@
+use snapline_core::secret::SecretKey;
+use snapline_services::uninstall::{self, UninstallError, UninstallHost};
+use snapline_store::io::Paths;
+use windows::core::PCWSTR;
+use windows::Win32::Foundation::ERROR_NOT_FOUND;
+use windows::Win32::Security::Credentials::{
+    CredDeleteW, CredEnumerateW, CredFree, CREDENTIALW, CRED_TYPE_GENERIC,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONQUESTION, MB_YESNO, MESSAGEBOX_STYLE,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BudgetWindow {
     Panel,
@@ -74,6 +86,137 @@ impl Args {
             0
         };
         Self::parse(argv.iter().skip(skip))
+    }
+}
+
+pub fn run_uninstall_cleanup() -> i32 {
+    let paths = match Paths::discover() {
+        Ok(paths) => paths,
+        Err(error) => {
+            eprintln!("Snapline could not find its folders: {error}");
+            return 1;
+        }
+    };
+    let report = uninstall::cleanup(&WindowsUninstallHost, &paths);
+    if report.succeeded() {
+        println!("{}", report.summary());
+        0
+    } else {
+        eprintln!("{}", report.summary());
+        1
+    }
+}
+
+struct WindowsUninstallHost;
+
+impl UninstallHost for WindowsUninstallHost {
+    fn remove_run_value(&self) -> Result<(), UninstallError> {
+        snapline_win::autostart::disable().map_err(host_error)
+    }
+
+    fn restore_prtsc(&self, previous: Option<u32>) -> Result<(), UninstallError> {
+        snapline_win::prtsc::restore(previous).map_err(host_error)
+    }
+
+    fn remove_app_id(&self) -> Result<(), UninstallError> {
+        snapline_win::notify::remove_app_id().map_err(host_error)
+    }
+
+    fn list_credential_targets(&self) -> Result<Vec<String>, UninstallError> {
+        credential_targets()
+    }
+
+    fn delete_credential_target(&self, target: &str) -> Result<(), UninstallError> {
+        delete_credential_target(target)
+    }
+
+    fn confirm(&self, message: &str, default_yes: bool) -> Result<bool, UninstallError> {
+        let message: Vec<u16> = message.encode_utf16().chain(std::iter::once(0)).collect();
+        let title: Vec<u16> = "Snapline"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut style: MESSAGEBOX_STYLE = MB_YESNO | MB_ICONQUESTION;
+        if !default_yes {
+            style |= MB_DEFBUTTON2;
+        }
+        // SAFETY: both strings are live null-terminated UTF-16 buffers that outlive the call.
+        let result = unsafe {
+            MessageBoxW(
+                None,
+                PCWSTR(message.as_ptr()),
+                PCWSTR(title.as_ptr()),
+                style,
+            )
+        };
+        Ok(result == IDYES)
+    }
+}
+
+fn host_error(error: impl std::fmt::Display) -> UninstallError {
+    UninstallError::new(error.to_string())
+}
+
+fn credential_targets() -> Result<Vec<String>, UninstallError> {
+    let filter_text = format!("{}*", SecretKey::TARGET_PREFIX);
+    let filter: Vec<u16> = filter_text.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut count = 0_u32;
+    let mut entries: *mut *mut CREDENTIALW = std::ptr::null_mut();
+    // SAFETY: the filter is a live null-terminated UTF-16 buffer and both out pointers are valid.
+    let status = unsafe { CredEnumerateW(PCWSTR(filter.as_ptr()), None, &mut count, &mut entries) };
+    if let Err(error) = status {
+        if error.code() == ERROR_NOT_FOUND.to_hresult() {
+            return Ok(Vec::new());
+        }
+        return Err(host_error(error.message()));
+    }
+    let list = CredentialList(entries);
+    let mut targets = Vec::new();
+    for index in 0..count as usize {
+        // SAFETY: CredEnumerateW returned `count` entries in this array and index is inside it.
+        let entry = unsafe { *list.0.add(index) };
+        if entry.is_null() {
+            continue;
+        }
+        // SAFETY: entry is a live CREDENTIALW from CredEnumerateW.
+        let name = unsafe { (*entry).TargetName };
+        if name.is_null() {
+            continue;
+        }
+        // SAFETY: the target name is a live null-terminated UTF-16 string owned by the array.
+        if let Ok(target) = unsafe { name.to_string() } {
+            if target.starts_with(SecretKey::TARGET_PREFIX) {
+                targets.push(target);
+            }
+        }
+    }
+    Ok(targets)
+}
+
+fn delete_credential_target(target: &str) -> Result<(), UninstallError> {
+    if !target.starts_with(SecretKey::TARGET_PREFIX) {
+        return Err(UninstallError::new(
+            "Snapline refused to delete a credential it does not own.",
+        ));
+    }
+    let target: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: the target is a live null-terminated UTF-16 buffer for the duration of the call.
+    match unsafe { CredDeleteW(PCWSTR(target.as_ptr()), CRED_TYPE_GENERIC, None) } {
+        Ok(()) => Ok(()),
+        Err(error) if error.code() == ERROR_NOT_FOUND.to_hresult() => Ok(()),
+        Err(error) => Err(host_error(error.message())),
+    }
+}
+
+struct CredentialList(*mut *mut CREDENTIALW);
+
+impl Drop for CredentialList {
+    fn drop(&mut self) {
+        if self.0.is_null() {
+            return;
+        }
+        // SAFETY: CredEnumerateW allocated this array and it is freed exactly once here.
+        unsafe { CredFree(self.0.cast()) };
     }
 }
 

@@ -177,7 +177,10 @@ mod tests {
     fn rejects_invalid_images() {
         assert_eq!(Image::new(0, 1, 0, Vec::new()), Err(ImageError::Empty));
         assert_eq!(Image::new(1, 1, 3, vec![0; 12]), Err(ImageError::Stride));
-        assert_eq!(Image::new(1, 1, 4, vec![0; 3]), Err(ImageError::ShortBuffer));
+        assert_eq!(
+            Image::new(1, 1, 4, vec![0; 3]),
+            Err(ImageError::ShortBuffer)
+        );
     }
 
     #[test]

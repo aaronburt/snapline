@@ -6,8 +6,7 @@ use anyhow::{Context, Result};
 pub fn generate(root: &Path) -> Result<()> {
     let dir = root.join("ui/src/lib/ipc/bindings");
     if dir.exists() {
-        fs::remove_dir_all(&dir)
-            .with_context(|| format!("cannot clear {}", dir.display()))?;
+        fs::remove_dir_all(&dir).with_context(|| format!("cannot clear {}", dir.display()))?;
     }
     fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
     snapline_services::export_bindings(&dir)?;
@@ -67,11 +66,7 @@ fn files(dir: &Path) -> Result<Vec<String>> {
         let path = entry.path();
         if path.is_dir() {
             for name in files(&path)? {
-                names.push(format!(
-                    "{}/{}",
-                    entry.file_name().to_string_lossy(),
-                    name
-                ));
+                names.push(format!("{}/{}", entry.file_name().to_string_lossy(), name));
             }
         } else if path.extension().is_some_and(|value| value == "ts") {
             names.push(entry.file_name().to_string_lossy().to_string());

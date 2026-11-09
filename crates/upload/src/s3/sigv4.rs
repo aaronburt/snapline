@@ -2,7 +2,6 @@ use std::fmt;
 
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
-use snapline_core::secret::Secret;
 
 pub const ALGORITHM: &str = "AWS4-HMAC-SHA256";
 pub const EMPTY_PAYLOAD_SHA256: &str =
@@ -14,15 +13,12 @@ const HEX: &[u8; 16] = b"0123456789ABCDEF";
 #[derive(Clone, PartialEq, Eq)]
 pub struct Credentials {
     access_key_id: String,
-    secret_access_key: Secret,
-    session_token: Option<Secret>,
+    secret_access_key: String,
+    session_token: Option<String>,
 }
 
 impl Credentials {
-    pub fn new(
-        access_key_id: impl Into<String>,
-        secret_access_key: impl Into<Secret>,
-    ) -> Self {
+    pub fn new(access_key_id: impl Into<String>, secret_access_key: impl Into<String>) -> Self {
         Self {
             access_key_id: access_key_id.into(),
             secret_access_key: secret_access_key.into(),
@@ -30,7 +26,7 @@ impl Credentials {
         }
     }
 
-    pub fn with_session_token(mut self, token: impl Into<Secret>) -> Self {
+    pub fn with_session_token(mut self, token: impl Into<String>) -> Self {
         self.session_token = Some(token.into());
         self
     }
@@ -39,12 +35,12 @@ impl Credentials {
         &self.access_key_id
     }
 
-    pub fn session_token(&self) -> Option<&Secret> {
-        self.session_token.as_ref()
+    pub fn session_token(&self) -> Option<&str> {
+        self.session_token.as_deref()
     }
 
     fn secret_access_key(&self) -> &[u8] {
-        self.secret_access_key.expose()
+        self.secret_access_key.as_bytes()
     }
 }
 
@@ -100,8 +96,7 @@ pub fn sign(
         request.payload_hash
     );
     let canonical_request_hash = sha256_hex(canonical_request.as_bytes());
-    let string_to_sign =
-        format!("{ALGORITHM}\n{amz_date}\n{scope}\n{canonical_request_hash}");
+    let string_to_sign = format!("{ALGORITHM}\n{amz_date}\n{scope}\n{canonical_request_hash}");
     let key = signing_key(credentials.secret_access_key(), date, region, service);
     let signature = hex(&hmac_sha256(&key, string_to_sign.as_bytes()));
     let authorization = format!(
@@ -117,15 +112,15 @@ pub fn sign(
     }
 }
 
-pub fn canonical_headers(
-    headers: &[(&str, &str)],
-    unsigned_headers: &[&str],
-) -> (String, String) {
+pub fn canonical_headers(headers: &[(&str, &str)], unsigned_headers: &[&str]) -> (String, String) {
     let mut pairs: Vec<(String, String)> = headers
         .iter()
         .filter_map(|(name, value)| {
             let name = name.trim();
-            if name.is_empty() || unsigned_headers.iter().any(|skip| skip.eq_ignore_ascii_case(name))
+            if name.is_empty()
+                || unsigned_headers
+                    .iter()
+                    .any(|skip| skip.eq_ignore_ascii_case(name))
             {
                 return None;
             }
@@ -284,10 +279,7 @@ mod tests {
     use super::*;
 
     fn credentials() -> Credentials {
-        Credentials::new(
-            "AKIDEXAMPLE",
-            "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
-        )
+        Credentials::new("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
     }
 
     fn s3_credentials() -> Credentials {
@@ -298,7 +290,13 @@ mod tests {
     }
 
     fn sign_suite(request: &SignRequest<'_>) -> Signature {
-        sign(&credentials(), "us-east-1", "service", "20150830T123600Z", request)
+        sign(
+            &credentials(),
+            "us-east-1",
+            "service",
+            "20150830T123600Z",
+            request,
+        )
     }
 
     #[test]
@@ -446,6 +444,7 @@ mod tests {
 
     #[test]
     fn unsigned_headers_are_excluded_from_the_signature() {
+        let payload_hash = sha256_hex(b"Param1=value1");
         let headers = [
             ("Content-Type", "application/x-www-form-urlencoded"),
             ("Host", "example.amazonaws.com"),
@@ -458,7 +457,7 @@ mod tests {
             query: &[],
             headers: &headers,
             unsigned_headers: &["content-length"],
-            payload_hash: EMPTY_PAYLOAD_SHA256,
+            payload_hash: &payload_hash,
         });
         assert_eq!(
             signature.signature,
@@ -561,9 +560,7 @@ mod tests {
             signature.signature,
             "98ad721746da40c64f1a55b78f14c238d841ea1380cd77a1b5971af0ece108bd"
         );
-        assert!(signature
-            .canonical_request
-            .contains("/test%24file.text\n"));
+        assert!(signature.canonical_request.contains("/test%24file.text\n"));
     }
 
     #[test]
@@ -631,10 +628,7 @@ mod tests {
         );
         assert_eq!(canonical_uri(""), "/");
         assert_eq!(canonical_uri("/"), "/");
-        assert_eq!(
-            canonical_uri("/a/b?c"),
-            "/a/b%3Fc"
-        );
+        assert_eq!(canonical_uri("/a/b?c"), "/a/b%3Fc");
     }
 
     #[test]

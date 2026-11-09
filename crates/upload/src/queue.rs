@@ -72,6 +72,10 @@ impl UploadFile {
             bytes,
         })
     }
+
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,10 +135,23 @@ pub enum SecretError {
 
 pub trait SecretStore: Send + Sync {
     fn get(&self, dest_id: &str, field: &str) -> Result<Option<Vec<u8>>, SecretError>;
+
+    fn secret(&self, dest_id: &str, field: &str) -> Result<Option<String>, UploadError> {
+        match self.get(dest_id, field) {
+            Ok(Some(bytes)) => String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|_| UploadError::Permanent("The saved secret is not valid.".to_owned())),
+            Ok(None) => Ok(None),
+            Err(_) => Err(UploadError::Permanent(
+                "The saved secret could not be read.".to_owned(),
+            )),
+        }
+    }
 }
 
 pub trait Uploader: Send + Sync {
-    fn upload(&self, file: &UploadFile, secrets: &dyn SecretStore) -> Result<Uploaded, UploadError>;
+    fn upload(&self, file: &UploadFile, secrets: &dyn SecretStore)
+        -> Result<Uploaded, UploadError>;
 
     fn delete(&self, link: &DeletionLink, secrets: &dyn SecretStore) -> Result<(), UploadError>;
 }
@@ -744,7 +761,12 @@ mod tests {
                 .lock()
                 .expect("results")
                 .pop_front()
-                .unwrap_or_else(|| Ok(Uploaded::new(format!("https://example.test/{}", file.file_name))));
+                .unwrap_or_else(|| {
+                    Ok(Uploaded::new(format!(
+                        "https://example.test/{}",
+                        file.file_name
+                    )))
+                });
             self.in_flight.fetch_sub(1, Ordering::SeqCst);
             result
         }
@@ -816,28 +838,16 @@ mod tests {
     fn queue(
         results: Vec<Result<Uploaded, UploadError>>,
         policy: RetryPolicy,
-    ) -> (
-        Arc<FakeUploader>,
-        Queue,
-        Receiver<UploadEvent>,
-        Handle,
-    ) {
+    ) -> (Arc<FakeUploader>, Queue, Receiver<UploadEvent>, Handle) {
         let uploader = FakeUploader::new(results);
-        let (queue, events) =
-            Queue::start(Arc::new(TestSecrets), policy).expect("queue");
+        let (queue, events) = Queue::start(Arc::new(TestSecrets), policy).expect("queue");
         let handle = queue.handle();
         (uploader, queue, events, handle)
     }
 
-    fn wait_for(
-        events: &Receiver<UploadEvent>,
-        id: UploadId,
-        status: &Status,
-    ) -> UploadSnapshot {
+    fn wait_for(events: &Receiver<UploadEvent>, id: UploadId, status: &Status) -> UploadSnapshot {
         loop {
-            let event = events
-                .recv_timeout(Duration::from_secs(5))
-                .expect("event");
+            let event = events.recv_timeout(Duration::from_secs(5)).expect("event");
             if event.0.id == id && event.0.status == *status {
                 return event.0;
             }
@@ -846,9 +856,7 @@ mod tests {
 
     fn wait_terminal(events: &Receiver<UploadEvent>, id: UploadId) -> UploadSnapshot {
         loop {
-            let event = events
-                .recv_timeout(Duration::from_secs(5))
-                .expect("event");
+            let event = events.recv_timeout(Duration::from_secs(5)).expect("event");
             if event.0.id == id && event.0.status.terminal() {
                 return event.0;
             }
@@ -858,9 +866,7 @@ mod tests {
     fn wait_all_terminal(events: &Receiver<UploadEvent>, count: usize) -> Vec<UploadSnapshot> {
         let mut finished = Vec::new();
         while finished.len() < count {
-            let event = events
-                .recv_timeout(Duration::from_secs(5))
-                .expect("event");
+            let event = events.recv_timeout(Duration::from_secs(5)).expect("event");
             if event.0.status.terminal() {
                 finished.push(event.0);
             }
@@ -889,7 +895,11 @@ mod tests {
             Status::Done
         );
         assert_eq!(
-            handle.state(second).expect("state").expect("second").attempts,
+            handle
+                .state(second)
+                .expect("state")
+                .expect("second")
+                .attempts,
             1
         );
         assert_eq!(
@@ -903,7 +913,9 @@ mod tests {
     fn a_retryable_failure_retries_then_succeeds() {
         let policy = RetryPolicy::with_backoff(3, vec![Duration::from_millis(1)]);
         let (uploader, queue, events, handle) = queue(
-            vec![Err(UploadError::Retryable("timed out".to_owned()))],
+            vec![Err(UploadError::Retryable(
+                "The request timed out.".to_owned(),
+            ))],
             policy,
         );
         let id = handle
@@ -976,9 +988,8 @@ mod tests {
 
     #[test]
     fn retry_after_overrides_the_backoff_schedule() {
-        let error = UploadError::Retryable(
-            "The server returned HTTP 429, retry after 2 s.".to_owned(),
-        );
+        let error =
+            UploadError::Retryable("The server returned HTTP 429, retry after 2 s.".to_owned());
         assert_eq!(retry_after(&error), Some(Duration::from_secs(2)));
         assert_eq!(
             RetryPolicy::new(3).delay_for(1, &error),
@@ -988,13 +999,9 @@ mod tests {
             retry_after(&UploadError::Retryable("The request timed out.".to_owned())),
             None
         );
-        let zero = UploadError::Retryable(
-            "The server returned HTTP 429, retry after 0 s.".to_owned(),
-        );
-        assert_eq!(
-            RetryPolicy::new(3).delay_for(1, &zero),
-            Duration::ZERO
-        );
+        let zero =
+            UploadError::Retryable("The server returned HTTP 429, retry after 0 s.".to_owned());
+        assert_eq!(RetryPolicy::new(3).delay_for(1, &zero), Duration::ZERO);
     }
 
     #[test]
@@ -1026,9 +1033,7 @@ mod tests {
             .expect("enqueue");
         let mut seen = Vec::new();
         loop {
-            let event = events
-                .recv_timeout(Duration::from_secs(5))
-                .expect("event");
+            let event = events.recv_timeout(Duration::from_secs(5)).expect("event");
             if event.0.id != id {
                 continue;
             }
@@ -1055,13 +1060,15 @@ mod tests {
     #[test]
     fn a_queued_upload_can_be_cancelled() {
         let (gate, started, release) = GateUploader::new();
-        let (queue, events) = Queue::start(Arc::new(TestSecrets), RetryPolicy::new(0))
-            .expect("queue");
+        let (queue, events) =
+            Queue::start(Arc::new(TestSecrets), RetryPolicy::new(0)).expect("queue");
         let handle = queue.handle();
         let first = handle
             .enqueue(UploadJob::new(gate, file("first.png"), "test", None))
             .expect("first");
-        started.recv_timeout(Duration::from_secs(5)).expect("started");
+        started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("started");
         let second = handle
             .enqueue(job(FakeUploader::new(Vec::new()), "second.png"))
             .expect("second");

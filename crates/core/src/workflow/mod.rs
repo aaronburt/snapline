@@ -14,8 +14,8 @@ mod run;
 mod step;
 
 pub use run::{
-    resume_after_upload, run, Recorded, RunContext, RunError, RunErrorKind, RunReport,
-    SaveRequest, StepOutcome, StepStatus, UploadRequest, Uploaded,
+    resume_after_upload, run, Recorded, RunContext, RunError, RunErrorKind, RunReport, SaveRequest,
+    StepOutcome, StepStatus, UploadRequest, Uploaded,
 };
 pub use step::{CaptureKind, RecordKind, Step};
 
@@ -58,9 +58,7 @@ impl Workflow {
     pub fn validate(&self) -> Vec<Violation> {
         let mut violations = Vec::new();
         let characters = self.name.chars().count();
-        if self.name.trim().is_empty()
-            || characters < NAME_MIN_CHARS
-            || characters > NAME_MAX_CHARS
+        if self.name.trim().is_empty() || characters < NAME_MIN_CHARS || characters > NAME_MAX_CHARS
         {
             violations.push(Violation {
                 step: None,
@@ -243,7 +241,8 @@ pub(crate) mod serde_link_format {
         D: Deserializer<'de>,
     {
         let value = String::deserialize(deserializer)?;
-        parse(&value).ok_or_else(|| serde::de::Error::custom(format!("Unknown link format: {value}")))
+        parse(&value)
+            .ok_or_else(|| serde::de::Error::custom(format!("Unknown link format: {value}")))
     }
 
     const fn name(value: LinkFormat) -> &'static str {

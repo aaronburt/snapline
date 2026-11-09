@@ -195,47 +195,47 @@ mod tests {
 
     #[test]
     fn magnifier_flips_to_stay_on_screen() {
-        let geometry = geometry(
+        let flipped = geometry(
             Point::new(Px(1900), Px(1070)),
             size(1920, 1080),
             size(1920, 1080),
             1.0,
             4,
         );
-        assert!(geometry.destination.right().get() <= 1920);
-        assert!(geometry.readout.bottom().get() <= 1080);
-        assert!(geometry.readout_above);
-        let geometry = geometry(
+        assert!(flipped.destination.right().get() <= 1920);
+        assert!(flipped.readout.bottom().get() <= 1080);
+        assert!(flipped.readout_above);
+        let near = geometry(
             Point::new(Px(5), Px(5)),
             size(1920, 1080),
             size(1920, 1080),
             1.0,
             4,
         );
-        assert!(geometry.destination.x.get() >= 0);
-        assert!(geometry.readout.x.get() >= 0);
-        assert!(!geometry.readout_above);
+        assert!(near.destination.x.get() >= 0);
+        assert!(near.readout.x.get() >= 0);
+        assert!(!near.readout_above);
     }
 
     #[test]
     fn magnifier_source_is_clamped_to_the_image() {
-        let geometry = geometry(
+        let near = geometry(
             Point::new(Px(2), Px(2)),
             size(1920, 1080),
             size(1920, 1080),
             1.0,
             8,
         );
-        assert_eq!(geometry.source.x.get(), 0);
-        assert_eq!(geometry.source.y.get(), 0);
-        let geometry = geometry(
+        assert_eq!(near.source.x.get(), 0);
+        assert_eq!(near.source.y.get(), 0);
+        let far = geometry(
             Point::new(Px(1918), Px(1078)),
             size(1920, 1080),
             size(1920, 1080),
             1.0,
             8,
         );
-        assert_eq!(geometry.source.right().get(), 1920);
-        assert_eq!(geometry.source.bottom().get(), 1080);
+        assert_eq!(far.source.right().get(), 1920);
+        assert_eq!(far.source.bottom().get(), 1080);
     }
 }

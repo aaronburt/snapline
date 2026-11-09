@@ -144,11 +144,7 @@ impl Notice {
         }
     }
 
-    pub fn for_capture(
-        title: impl Into<String>,
-        body: impl Into<String>,
-        capture_id: i64,
-    ) -> Self {
+    pub fn for_capture(title: impl Into<String>, body: impl Into<String>, capture_id: i64) -> Self {
         Self {
             title: title.into(),
             body: body.into(),
@@ -195,4 +191,83 @@ mod tests {
         }
         .is_empty());
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayTheme {
+    Dark,
+    Light,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayAction {
+    Copy,
+    Save,
+    Pin,
+    Upload,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MagnifierZoom {
+    X2,
+    X4,
+    X8,
+}
+
+impl MagnifierZoom {
+    pub const fn factor(self) -> i32 {
+        match self {
+            Self::X2 => 2,
+            Self::X4 => 4,
+            Self::X8 => 8,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MagnifierSettings {
+    pub enabled: bool,
+    pub zoom: MagnifierZoom,
+}
+
+impl Default for MagnifierSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            zoom: MagnifierZoom::X4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OverlayRequest {
+    pub desktop: FrozenDesktop,
+    pub annotate: bool,
+    pub snap: crate::overlay::SnapSet,
+    pub magnifier: MagnifierSettings,
+    pub full_screen_crosshair: bool,
+    pub theme: OverlayTheme,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OverlayResult {
+    pub action: Option<OverlayAction>,
+    pub selection: Rect,
+    pub monitor: Option<u32>,
+    pub tool: crate::overlay::Tool,
+    pub colour: crate::overlay::Rgb,
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum OverlayError {
+    #[error("The overlay was cancelled.")]
+    Cancelled,
+    #[error("The overlay could not be shown: {0}")]
+    Failed(String),
+    #[error("There is no monitor to draw the overlay on.")]
+    NoMonitors,
+}
+
+pub trait OverlayHost {
+    fn select_region(&self, request: OverlayRequest) -> Result<OverlayResult, OverlayError>;
 }

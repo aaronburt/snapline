@@ -1,14 +1,7 @@
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hasher};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde_json::Value;
 use serde_json_path::JsonPath;
+use snapline_core::naming::{ThreadRandom, TokenSource};
 use thiserror::Error;
-
-const RANDOM_ALPHABET: &[u8; 36] = b"abcdefghijklmnopqrstuvwxyz0123456789";
-const RANDOM_LENGTH: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum TemplateError {
@@ -127,22 +120,7 @@ pub fn migrate_legacy(template: &str) -> String {
 }
 
 pub fn random_token() -> String {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let mut hasher = RandomState::new().build_hasher();
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_nanos());
-    hasher.write_u128(nanos);
-    hasher.write_u32(std::process::id());
-    hasher.write_u64(COUNTER.fetch_add(1, Ordering::Relaxed));
-    let mut value = hasher.finish();
-    let mut token = String::with_capacity(RANDOM_LENGTH);
-    for _ in 0..RANDOM_LENGTH {
-        let index = (value % RANDOM_ALPHABET.len() as u64) as usize;
-        token.push(char::from(RANDOM_ALPHABET[index]));
-        value /= RANDOM_ALPHABET.len() as u64;
-    }
-    token
+    ThreadRandom.random_chars()
 }
 
 fn placeholder(
@@ -251,10 +229,7 @@ mod tests {
     fn response_placeholder_returns_the_body() {
         let body = r#"{"ok":true}"#;
         let context = context("shot.png", "abcd", Some(body), None);
-        assert_eq!(
-            expand("{response}", &context, false),
-            Ok(body.to_owned())
-        );
+        assert_eq!(expand("{response}", &context, false), Ok(body.to_owned()));
     }
 
     #[test]
@@ -265,14 +240,8 @@ mod tests {
             expand("{json:$.data.url}", &context, false),
             Ok("https://i.example/a.png".to_owned())
         );
-        assert_eq!(
-            expand("{json:data.n}", &context, false),
-            Ok("3".to_owned())
-        );
-        assert_eq!(
-            expand("{json:[0]}", &context, false),
-            Ok(String::new())
-        );
+        assert_eq!(expand("{json:data.n}", &context, false), Ok("3".to_owned()));
+        assert_eq!(expand("{json:[0]}", &context, false), Ok(String::new()));
     }
 
     #[test]
@@ -304,10 +273,7 @@ mod tests {
 
     #[test]
     fn legacy_sharex_syntax_is_migrated() {
-        assert_eq!(
-            migrate_legacy("$json:data.url$"),
-            "{json:data.url}"
-        );
+        assert_eq!(migrate_legacy("$json:data.url$"), "{json:data.url}");
         assert_eq!(migrate_legacy("$response$"), "{response}");
         assert_eq!(
             migrate_legacy("https://example.test/$filename$"),

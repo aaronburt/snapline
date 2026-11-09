@@ -1,10 +1,68 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import Button from '../../../components/Button.svelte';
+  import EmptyState from '../../../components/EmptyState.svelte';
   import Icon from '../../../components/Icon.svelte';
   import { navigate } from '../../../router';
-  import { defaultWorkflowTooltip, displayName, setWorkflowEnabled, workflows } from './data';
+  import type { WorkflowInfo } from '../../../lib/ipc/bindings/WorkflowInfo';
+  import { get as getHotkeys } from '../../../lib/ipc/hotkeys';
+  import type { HotkeysState } from '../../../lib/ipc/hotkeys';
+  import { list, update } from '../../../lib/ipc/workflow';
+  import {
+    chordFor,
+    clashLine,
+    defaultWorkflowTooltip,
+    displayName,
+    isBlocked,
+    stepLabel,
+    workflowInput,
+  } from './data';
 
-  let flows = $state(workflows.map((workflow) => ({ ...workflow })));
+  let workflows = $state<WorkflowInfo[]>([]);
+  let live = $state<HotkeysState>({ bindings: [], blocked: [], paused: false });
+  let loaded = $state(false);
+  let message = $state('');
+
+  onMount(() => {
+    void load();
+  });
+
+  async function load(): Promise<void> {
+    try {
+      const [result, hotkeys] = await Promise.all([list(), getHotkeys()]);
+      workflows = result.workflows;
+      live = hotkeys;
+      message = '';
+    } catch (cause) {
+      message = messageOf(cause);
+    } finally {
+      loaded = true;
+    }
+  }
+
+  async function toggle(workflow: WorkflowInfo, enabled: boolean): Promise<void> {
+    if (workflow.isDefault) {
+      return;
+    }
+    try {
+      const updated = await update(workflow.id, { ...workflowInput(workflow), enabled });
+      workflows = workflows.map((item) => (item.id === updated.id ? updated : item));
+      live = await getHotkeys();
+      message = '';
+    } catch (cause) {
+      message = messageOf(cause);
+    }
+  }
+
+  function messageOf(cause: unknown): string {
+    if (typeof cause === 'object' && cause !== null && 'message' in cause) {
+      const value = (cause as { message?: unknown }).message;
+      if (typeof value === 'string') {
+        return value;
+      }
+    }
+    return 'The workflows could not be loaded.';
+  }
 </script>
 
 <main class="page">
@@ -23,22 +81,35 @@
     >
   </div>
 
+  {#if message}
+    <p class="message" role="alert">{message}</p>
+  {/if}
+
+  {#if loaded && workflows.length === 0}
+    <EmptyState title="No workflows yet" />
+  {/if}
+
   <div class="list">
-    {#each flows as workflow (workflow.id)}
+    {#each workflows as workflow (workflow.id)}
+      {@const blocked = isBlocked(workflow, live)}
+      {@const clash = clashLine(workflow, live)}
       <article class="card">
         <div class="main">
           <div class="nameRow">
             <span class="name" class:off={!workflow.enabled}>{displayName(workflow)}</span>
-            <span class="chord">{workflow.chord}</span>
+            <span class="chord" class:blocked>{chordFor(workflow, live)}</span>
           </div>
           <div class="steps">
-            {#each workflow.steps as step, index (step)}
+            {#each workflow.steps as step, index (index)}
               {#if index > 0}
                 <span class="chevron"><Icon name="chevronRight" size={12} strokeWidth={2} /></span>
               {/if}
-              <span class="step">{step}</span>
+              <span class="step">{stepLabel(step)}</span>
             {/each}
           </div>
+          {#if clash}
+            <p class="clash">{clash}</p>
+          {/if}
         </div>
         <div class="side">
           <Button
@@ -48,10 +119,7 @@
               navigate(`/workflows/${workflow.id}`);
             }}>Edit</Button
           >
-          <label
-            class="toggle"
-            title={workflow.isDefault ? defaultWorkflowTooltip : undefined}
-          >
+          <label class="toggle" title={workflow.isDefault ? defaultWorkflowTooltip : undefined}>
             {workflow.enabled ? 'On' : 'Off'}
             <input
               type="checkbox"
@@ -61,11 +129,7 @@
               checked={workflow.enabled}
               disabled={workflow.isDefault}
               onchange={(event) => {
-                flows = setWorkflowEnabled(
-                  flows,
-                  workflow.id,
-                  (event.currentTarget as HTMLInputElement).checked,
-                );
+                void toggle(workflow, (event.currentTarget as HTMLInputElement).checked);
               }}
             />
           </label>
@@ -110,6 +174,13 @@
   .sub {
     font-size: 12px;
     color: var(--text3);
+  }
+
+  .message,
+  .clash {
+    margin: 0;
+    font-size: 12px;
+    color: var(--err);
   }
 
   .list {
@@ -160,6 +231,11 @@
     border: 1px solid var(--strokeHi);
     color: var(--text2);
     font-family: var(--type-mono);
+  }
+
+  .chord.blocked {
+    color: var(--err);
+    border-color: var(--err);
   }
 
   .steps {

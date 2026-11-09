@@ -1118,11 +1118,13 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 - Built: native per-monitor topmost overlay windows with a DirectComposition/D3D11/D2D swap chain, frozen-image upload, core state-machine input, dim/selection/handles/snap rect, magnifier, size/readouts, exact toolbar and hint pills, SVG icons, edit mode and result channel. Toolbar/DPI/magnifier tests written, not run. No device-loss recovery yet; the overlay API is in the overlay crate pending core-neutral `OverlayHost` types in M3.6.
 
 **3.4 Snapping.** Needs 3.3. Owns: `crates/platform-windows/src/windows_enum.rs`, `crates/platform-windows/src/uia.rs`. Shared: `crates/overlay-windows/src/window.rs` (snap target feed).
+- Built: z-ordered visible/non-cloaked/non-tool window enumeration with extended frame bounds; UIA element query on a dedicated 30 ms-deadline thread with generation tokens and late replies dropped; overlay snap feed, Tab switching, hover clear. Tests written, not run. The overlay currently includes the two platform modules by `#[path]` to avoid a crate dependency; a later snap-source port is the cleaner architecture.
 
 **3.5 Clipboard.** Owns: `crates/platform-windows/src/clipboard.rs`. Desktop tests: PNG and DIBV5 decode to the same pixels.
 - Built: one OpenClipboard transaction publishing registered `PNG` and `CF_DIBV5` with alpha plus `CF_UNICODETEXT`, 10×10 ms retry with the exact busy message, PNG via WIC and DIBV5 fallback, HGLOBAL/session RAII, top-down BITMAPV5HEADER, and desktop tests that restore clipboard text. The core `Clipboard` port exists; an impl can be added without changing this module.
 
 **3.6 Capture service.** Needs 3.2, 3.3, 3.5. Owns: `crates/services/src/capture.rs`, `crates/platform-windows/src/countdown.rs`. Wires `capture_region`, `capture_window`, `capture_screen`, `capture_last_region` through the router (fixed behaviour for now: capture then copy; workflows arrive in M7, saving in M4).
+- Built: CaptureService with core capture/overlay/clipboard/countdown ports, physical-pixel region crop, all three full-screen monitor modes, window capture, last-region persistence, delay/countdown, router dispatch; native 88px countdown window. Tests written, not run. The app now installs the service with `CaptureBackend`, `OverlayHostImpl`, clipboard, countdown and a capture context. Known limits: frozen desktop is cloned for cropping; `[capture.last_region]` shape is implementation-defined; freeze always on; shutter sound waits for M4.
 
 ### Milestone 4: Saving to disk and History
 
@@ -1224,12 +1226,15 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 - Built: blocking `HttpTransport` over ureq with rustls/platform-verifier, system/custom/no proxy, timeouts, Snapline UA, multipart/form/JSON/raw helpers, typed error mapping and Retry-After; IE proxy detection via dynamic WinHTTP loading; fixture-CA TLS server test with a test-only rustls dev-dependency approved by Aaron. Tests written, not run.
 
 **6.2 Queue.** Needs 6.1. Owns: `crates/upload/src/queue.rs`, `crates/services/src/uploads.rs`. Tests: retry decisions per error kind, backoff schedule, cancel.
+- Built: one-at-a-time FIFO uploader thread with uploader thread name, 2/8/30/120/300 s backoff capped by settings, Retry-After override, states Queued/Uploading/BackingOff/Done/Failed/Cancelled, cancel for queued/backing-off and retry for failed/cancelled, typed service DTOs and event sink, core SecretStore bridge. Tests written, not run. App/uploader-thread wiring is pending the destinations registry (6.7).
 
 **6.3 Imgur.** Needs 6.1. Owns: `crates/upload/src/imgur.rs`.
 
 **6.4 S3.** Needs 6.1. Owns: `crates/upload/src/s3/` (`mod.rs`, `sigv4.rs`). Tests: AWS SigV4 test vectors.
+- Built: in-house SigV4 canonical request/query/header signing with AWS published vectors, session token and unsigned headers; S3 uploader with virtual-host/path-style/custom endpoints, path prefix, public URL pattern, public-read ACL, ETag capture and If-Match/versionId deletion; typed error mapping and fake transport tests. `snapline-upload` now depends on `snapline-core` (internal). Open point: path-style has no settings control in 7.3.
 
 **6.5 Custom uploaders.** Needs 6.1. Owns: `crates/upload/src/custom/` (`mod.rs`, `sxcu.rs`, `template.rs`). Tests: ShareX example round trips, size and scheme limits, export blanks header values.
+- Built: ShareX `.sxcu` import/export with all 7.3 fields, 64 KiB cap, https/http-with-warning and scheme rejection; secret header values stay in Credential Manager and are blank on export unless requested; placeholders `{filename}`, `{random}`, `{json:path}`, `{response}` plus legacy syntax; multipart/binary/form/JSON bodies; JSONPath link/thumbnail/deletion/error. Tests written, not run. JSON/form data uses a base64 file value because the ShareX `Data` field is not in 7.3.
 
 **6.6 EXIF and link formats.** Owns: `crates/upload/src/exif.rs`, `crates/core/src/link_format.rs`.
 - Built: all five link formats with HTML attribute escaping and the Page-link fallback; JPEG APP1 EXIF/XMP and PNG eXIf/tEXt/zTXt/iTXt stripping without re-encoding, preserving pixels, ICC and comments; orientation reported rather than silently rotated. Tests written, not run.
@@ -1262,10 +1267,12 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 - Built: `Workflow`/`Step`/validation with typed UI strings, workflow-specific ports for capture/record/annotate/save/upload/text/GIF, `run` and `resume_after_upload`, deferred CopyLink, upload handoff by run id, typed not-available steps, 40 fake-port tests written not run. Validation strings and the default workflow creation are left to 7.2/7.6.
 
 **7.2 Workflows in settings.** Needs 7.1. Owns: `crates/store/src/settings/workflows.rs` and its migration in `migrate.rs` (shared with the integrator for the version number).
+- Built: settings version 2 with a real workflow list (core `Workflow`/`Step` types), unknown keys preserved, and a 1→2 migration that adds one default workflow only when the list is empty. Default steps are Copy image, Save, Upload, Copy link Direct, Play sound; Annotate is omitted because the model has no per-step enabled flag. Tests written, not run. `store` now has the inward `snapline-core` dependency. The default workflow has no Capture step and needs the 7.4/7.3 validation exception.
 
 **7.3 Workflow hotkeys and running.** Needs 7.1, 7.2. Owns: `crates/services/src/workflows.rs`. Shared: the chord collection function in `crates/services/src/hotkeys.rs`.
 
 **7.4 Workflows tab and editor.** Needs 7.1's types. Owns: `crates/services/src/dto/workflow.rs`, `ui/src/lib/ipc/workflow.ts`, `ui/src/windows/main/workflows/`.
+- Built: typed List/Get/Create/Update/Delete/Duplicate/Validate DTOs with a `StepDto` wrapper matching the core serde shape; services persistence, default guards, validation mapping and hotkey replanning; real workflow cards with clash text and the full editor with reorder/parameters/duplicate/delete. Tests written, not run. Upload-destination options await 6.7's destination identifiers.
 
 **7.5 Default workflow in Settings.** Needs 7.2, 7.4. Owns: the default workflow section of `ui/src/windows/main/settings/GeneralPage.svelte`.
 
@@ -1302,6 +1309,7 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **8.3 FFmpeg runner.** Needs 8.1. Owns: `crates/platform-windows/src/ffmpeg.rs` (spawn by absolute path with `CREATE_NO_WINDOW`, encoder detection, progress from `-progress pipe:1`, stop and kill).
 
 **8.4 Audio.** Owns: `crates/platform-windows/src/audio.rs` (device list for the Microphone device select, loopback and capture, PCM to named pipes).
+- Built: WASAPI shared-mode loopback on the default render device and capture on the chosen/default microphone; mix-format conversion to s16le/f32le/s32le 48 kHz stereo (or caller format), silence padding, friendly device names, named pipes `\\.\pipe\snapline-audio-<n>`, stop with CancelSynchronousIo/join cap, full RAII and close event classification. Tests written, not run. Local kernel32 declarations/property-store vtable used instead of adding missing Windows features.
 
 **8.5 Recording border and target pick.** Owns: `crates/overlay-windows/src/record_border.rs`. Shared: `window.rs` (a record mode for the picker that skips the toolbar).
 
@@ -1343,10 +1351,12 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **9.4 Colour picker.** Owns: `crates/core/src/colour.rs`, `crates/overlay-windows/src/picker.rs`, `crates/services/src/tools/colour.rs`. Shared: `window.rs`.
 
 **9.5 QR codes.** Owns: `crates/core/src/qr.rs`, `crates/services/src/tools/qr.rs`, `ui/src/windows/main/tools/QrTool.svelte`.
+- Built: error-correction-M SVG/Image generation, BGRA luma scan with `rqrr`, URL detection; services make/copy/save/scan; Tool DTOs and QrTool Scan/Make tabs with live preview and exact actions. Tests written, not run. Scan/copy-text/save-PNG return `NotYet` until the overlay selection, text clipboard host and save dialog are wired in M9.
 
 **9.6 Image editor and pin cards.** Owns: `crates/services/src/tools/editor.rs`, `crates/services/src/tools/pin.rs`. Shared: `window.rs`.
 
 **9.7 Image combiner.** Owns: `crates/core/src/combine.rs`, `crates/services/src/tools/combine.rs`, `ui/src/windows/main/tools/CombinerTool.svelte`, the `combine` scheme in a new file `apps/snapline/src/protocol_combine.rs` (registered by the integrator in `main.rs`).
+- Built: pure side-by-side/stacked layout with spacing/align/background and no upscaling; process-local preview job registry with numeric ids only; `combine` scheme with correct MIME/404; CombinerTool with History picker, file picker, reorder, options, preview and save. Scheme registered in main and CSP updated. Tests written, not run. Tool DTO/host wiring remains.
 
 **9.8 Video converter.** Needs 8.2, 8.3. Owns: `crates/services/src/tools/convert.rs`, `ui/src/windows/main/tools/ConverterTool.svelte`. Shared: new builders in `crates/core/src/ffmpeg_args.rs`.
 
@@ -1375,6 +1385,7 @@ Every tool task also replaces its card's disabled state on the Tools page (`Tool
 **Order:** 10.1 and 10.2 together. Then 10.3. Then 10.4 alone (it touches every page). Then 10.5.
 
 **10.1 Installer and portable zip.** Owns: `xtask/src/package.rs`, the `bundle` section of `apps/snapline/tauri.conf.json` (integrator-approved), `apps/snapline/installer/` (NSIS hooks). Shared: portable path lookup in `crates/store/src/io.rs`.
+- Built: NSIS currentUser bundle with embedBootstrapper and FFmpeg/licence/source resources; install path `%LOCALAPPDATA%\Programs\Snapline`, AUMID shortcut, launch-at-finish, pre-uninstall cleanup hook; `cargo xtask package` builds UI + NSIS and creates the portable zip with a `portable` marker using `tar.exe`. Config/hook/staging tests written, not run; NSIS not compiled because `makensis` is unavailable.
 
 **10.2 Uninstall cleanup.** Owns: `crates/services/src/uninstall.rs`. Shared: `--uninstall-cleanup` in `apps/snapline/src/cli.rs`.
 
@@ -1440,9 +1451,9 @@ The executing agent must not answer these itself.
 |---|-----------|--------|--------|
 | 0 | Foundations | Built, not tested | |
 | 1 | Basic UI shell (includes the webview gate) | Built, not tested | 6ff3546 |
-| 2 | Settings and hotkeys | Built, not tested | |
-| 3 | Screenshot | Not started | |
-| 4 | Saving to disk and History | Not started | |
+| 2 | Settings and hotkeys | Built, not tested | e92db22 |
+| 3 | Screenshot | Built, not tested | |
+| 4 | Saving to disk and History | Built, not tested | |
 | 5 | Annotation | Not started | |
 | 6 | Networking and uploads | Not started | |
 | 7 | Workflows | Not started | |

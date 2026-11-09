@@ -1,14 +1,20 @@
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{unbounded, Receiver};
 use serde::{Deserialize, Serialize};
 use snapline_core::actions::ActionId;
 use snapline_core::ports::SecretStore as CoreSecretStore;
 use snapline_core::secret::SecretKey;
+use snapline_store::settings::uploads::Retry;
 use snapline_upload::queue;
 use ts_rs::TS;
 
-use crate::dto::upload::{UploadReq, UploadResp, UploadState, UploadStatus};
+use crate::destinations::DestinationOperations;
+use crate::dto::upload::{
+    DestinationReq, DestinationResp, DestinationTestOutcomeDto, DestinationTestStatusDto,
+    UploadReq, UploadResp, UploadState, UploadStatus,
+};
 use crate::{AppEvent, ServiceError, Services};
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -30,10 +36,14 @@ pub trait FileSource: Send + Sync {
 
 pub trait DestinationSource: Send + Sync {
     fn uploader(&self, dest: &str) -> Option<Arc<dyn queue::Uploader>>;
+
+    fn operations(&self) -> Option<Arc<dyn DestinationOperations>> {
+        None
+    }
 }
 
 #[derive(Clone)]
-pub(crate) struct Runtime {
+pub struct UploadRuntime {
     queue: queue::Handle,
     files: Arc<dyn FileSource>,
     destinations: Arc<dyn DestinationSource>,
@@ -42,7 +52,7 @@ pub(crate) struct Runtime {
 #[derive(Clone)]
 pub struct UploadService {
     _services: Services,
-    runtime: Option<Runtime>,
+    runtime: Option<UploadRuntime>,
 }
 
 impl UploadService {
@@ -53,7 +63,7 @@ impl UploadService {
         }
     }
 
-    pub(crate) fn with_runtime(services: &Services, runtime: Runtime) -> Self {
+    pub fn with_runtime(services: &Services, runtime: UploadRuntime) -> Self {
         Self {
             _services: services.clone(),
             runtime: Some(runtime),
@@ -105,7 +115,10 @@ impl UploadService {
                     ));
                 }
                 let runtime = self.runtime()?;
-                let file = runtime.files.file(capture_id)?.ok_or(ServiceError::NotFound)?;
+                let file = runtime
+                    .files
+                    .file(capture_id)?
+                    .ok_or(ServiceError::NotFound)?;
                 let uploader = runtime.destinations.uploader(&dest).ok_or_else(|| {
                     ServiceError::Invalid("The upload destination was not found.".to_owned())
                 })?;
@@ -115,10 +128,104 @@ impl UploadService {
                     .map_err(queue_error)?;
                 Ok(UploadResp::Accepted { id: id.get() })
             }
+            UploadReq::Destination(req) => self.handle_destination(req),
         }
     }
 
-    fn runtime(&self) -> Result<&Runtime, ServiceError> {
+    fn handle_destination(&self, req: DestinationReq) -> Result<UploadResp, ServiceError> {
+        let runtime = self.runtime()?;
+        let operations = runtime.destinations.operations().ok_or(ServiceError::NotYet)?;
+        let response = match req {
+            DestinationReq::List => {
+                DestinationResp::Destinations(operations.list()?)
+            }
+            DestinationReq::Add { kind } => DestinationResp::Destination(operations.add(kind)?),
+            DestinationReq::Save { input } => {
+                DestinationResp::Destination(operations.save(input)?)
+            }
+            DestinationReq::Remove { id } => {
+                operations.remove(&id)?;
+                DestinationResp::Removed { id }
+            }
+            DestinationReq::ImportSxcu => {
+                let (destination, warnings) = operations.import_sxcu()?;
+                DestinationResp::Imported {
+                    destination,
+                    warnings,
+                }
+            }
+            DestinationReq::ExportSxcu {
+                id,
+                include_header_values,
+            } => DestinationResp::Exported {
+                path: operations.export_sxcu(&id, include_header_values)?,
+            },
+            DestinationReq::Test { id } => {
+                let (uploader, file) = operations.test_uploader(&id)?;
+                let upload_id = runtime
+                    .queue
+                    .enqueue(queue::UploadJob::new(uploader, file, id.clone(), None))
+                    .map_err(queue_error)?;
+                let deadline = Instant::now() + Duration::from_secs(120);
+                loop {
+                    let snapshot = runtime
+                        .queue
+                        .state(upload_id)
+                        .map_err(queue_error)?;
+                    if let Some(snapshot) = snapshot {
+                        if snapshot.status.terminal() {
+                            let outcome = match snapshot.status {
+                                queue::Status::Done => DestinationTestOutcomeDto {
+                                    status: DestinationTestStatusDto::Succeeded,
+                                    link: snapshot.link.clone(),
+                                    message: None,
+                                },
+                                queue::Status::Failed => DestinationTestOutcomeDto {
+                                    status: DestinationTestStatusDto::Failed,
+                                    link: None,
+                                    message: Some(
+                                        snapshot
+                                            .error
+                                            .map(|error| error.to_string())
+                                            .unwrap_or_else(|| {
+                                                "The test upload failed.".to_owned()
+                                            }),
+                                    ),
+                                },
+                                queue::Status::Cancelled => DestinationTestOutcomeDto {
+                                    status: DestinationTestStatusDto::Failed,
+                                    link: None,
+                                    message: Some("The test upload was cancelled.".to_owned()),
+                                },
+                                _ => DestinationTestOutcomeDto {
+                                    status: DestinationTestStatusDto::NotTested,
+                                    link: None,
+                                    message: None,
+                                },
+                            };
+                            return Ok(UploadResp::Destination(DestinationResp::Test {
+                                outcome,
+                            }));
+                        }
+                    }
+                    if Instant::now() >= deadline {
+                        let _ = runtime.queue.cancel(upload_id);
+                        return Ok(UploadResp::Destination(DestinationResp::Test {
+                            outcome: DestinationTestOutcomeDto {
+                                status: DestinationTestStatusDto::Failed,
+                                link: None,
+                                message: Some("The test upload timed out.".to_owned()),
+                            },
+                        }));
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+        };
+        Ok(UploadResp::Destination(response))
+    }
+
+    fn runtime(&self) -> Result<&UploadRuntime, ServiceError> {
         self.runtime.as_ref().ok_or(ServiceError::NotYet)
     }
 }
@@ -127,6 +234,7 @@ pub struct UploaderThread {
     queue: queue::Queue,
     events: Option<Receiver<AppEvent>>,
     service: UploadService,
+    runtime: UploadRuntime,
 }
 
 impl UploaderThread {
@@ -168,20 +276,26 @@ impl UploaderThread {
         };
         let queue = queue::Queue::start_with_sink(Arc::new(CoreSecrets(secrets)), policy, sink)
             .map_err(|error| ServiceError::Internal(error.to_string()))?;
-        let runtime = Runtime {
+        let runtime = UploadRuntime {
             queue: queue.handle(),
             files,
             destinations,
         };
+        let service = UploadService::with_runtime(services, runtime.clone());
         Ok(Self {
             queue,
             events: None,
-            service: UploadService::with_runtime(services, runtime),
+            service,
+            runtime,
         })
     }
 
     pub fn service(&self) -> UploadService {
         self.service.clone()
+    }
+
+    pub fn runtime(&self) -> UploadRuntime {
+        self.runtime.clone()
     }
 
     pub fn handle(&self) -> queue::Handle {
@@ -215,8 +329,7 @@ struct CoreSecrets(Arc<dyn CoreSecretStore + Send + Sync>);
 
 impl queue::SecretStore for CoreSecrets {
     fn get(&self, dest_id: &str, field: &str) -> Result<Option<Vec<u8>>, queue::SecretError> {
-        let key =
-            SecretKey::new(dest_id, field).map_err(|_| queue::SecretError::Unavailable)?;
+        let key = SecretKey::new(dest_id, field).map_err(|_| queue::SecretError::Unavailable)?;
         match self.0.get(&key) {
             Ok(secret) => Ok(secret.map(|secret| secret.expose().to_vec())),
             Err(_) => Err(queue::SecretError::Unavailable),
@@ -270,6 +383,16 @@ impl From<&queue::UploadSnapshot> for UploadState {
             retry_in_ms,
         }
     }
+}
+
+pub fn retry_policy(retry: Retry) -> queue::RetryPolicy {
+    let retries = match retry {
+        Retry::Never => 0,
+        Retry::Once => 1,
+        Retry::ThreeTimes => 3,
+        Retry::FiveTimes => 5,
+    };
+    queue::RetryPolicy::new(retries)
 }
 
 pub fn run(_action: &ActionId, _services: &Services) -> Result<(), ServiceError> {
@@ -386,6 +509,14 @@ mod tests {
     }
 
     #[test]
+    fn the_settings_retry_count_maps_to_the_queue_policy() {
+        assert_eq!(retry_policy(Retry::Never).max_retries(), 0);
+        assert_eq!(retry_policy(Retry::Once).max_retries(), 1);
+        assert_eq!(retry_policy(Retry::ThreeTimes).max_retries(), 3);
+        assert_eq!(retry_policy(Retry::FiveTimes).max_retries(), 5);
+    }
+
+    #[test]
     fn ping_round_trips() {
         let services = Services::new();
         assert_eq!(
@@ -429,9 +560,7 @@ mod tests {
                 other => panic!("unexpected event: {other:?}"),
             }
         }
-        let UploadResp::State(state) = service
-            .handle(UploadReq::State { id })
-            .expect("state")
+        let UploadResp::State(state) = service.handle(UploadReq::State { id }).expect("state")
         else {
             panic!("unexpected state response");
         };
@@ -474,11 +603,15 @@ mod tests {
         let thread = thread();
         let service = thread.service();
         assert_eq!(
-            service.handle(UploadReq::Cancel { id: 99 }).expect_err("cancel"),
+            service
+                .handle(UploadReq::Cancel { id: 99 })
+                .expect_err("cancel"),
             ServiceError::NotFound
         );
         assert_eq!(
-            service.handle(UploadReq::Retry { id: 99 }).expect_err("retry"),
+            service
+                .handle(UploadReq::Retry { id: 99 })
+                .expect_err("retry"),
             ServiceError::NotFound
         );
         thread.join().expect("join");

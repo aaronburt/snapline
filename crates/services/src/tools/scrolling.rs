@@ -244,10 +244,9 @@ mod tests {
 
     impl Scroller for FakeScroller {
         fn scroll(&self) -> Result<(), ServiceError> {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|_| ServiceError::Internal("The fake scroller was poisoned.".to_owned()))?;
+            let mut state = self.state.lock().map_err(|_| {
+                ServiceError::Internal("The fake scroller was poisoned.".to_owned())
+            })?;
             state.scrolls += 1;
             Ok(())
         }
@@ -255,7 +254,12 @@ mod tests {
         fn cancelled(&self) -> bool {
             self.state
                 .lock()
-                .map(|state| state.esc_after.map(|limit| state.scrolls >= limit).unwrap_or(false))
+                .map(|state| {
+                    state
+                        .esc_after
+                        .map(|limit| state.scrolls >= limit)
+                        .unwrap_or(false)
+                })
                 .unwrap_or(false)
         }
     }
@@ -267,7 +271,10 @@ mod tests {
 
     impl FakeClock {
         fn waits(&self) -> Vec<u32> {
-            self.waits.lock().map(|waits| waits.clone()).unwrap_or_default()
+            self.waits
+                .lock()
+                .map(|waits| waits.clone())
+                .unwrap_or_default()
         }
     }
 
@@ -349,13 +356,8 @@ mod tests {
         let capture = FakeCapture::new(vec![repeated.clone(), repeated.clone()]);
         let scroller = FakeScroller::default();
         let clock = FakeClock::default();
-        let outcome = run(
-            &capture,
-            &scroller,
-            &clock,
-            &config(ScrollLimit::Thirty),
-        )
-        .expect("scroll");
+        let outcome =
+            run(&capture, &scroller, &clock, &config(ScrollLimit::Thirty)).expect("scroll");
         assert_eq!(outcome.stop, ScrollStop::Duplicate);
         assert_eq!(outcome.frames, 1);
         assert_eq!(outcome.image, repeated);
@@ -372,8 +374,7 @@ mod tests {
         let capture = FakeCapture::new(frames);
         let scroller = FakeScroller::default();
         let clock = FakeClock::default();
-        let outcome = run(&capture, &scroller, &clock, &config(ScrollLimit::Ten))
-            .expect("scroll");
+        let outcome = run(&capture, &scroller, &clock, &config(ScrollLimit::Ten)).expect("scroll");
         assert_eq!(outcome.stop, ScrollStop::Limit);
         assert_eq!(outcome.frames, 11);
         assert_eq!(scroller.scrolls(), 10);
@@ -389,13 +390,8 @@ mod tests {
         let capture = FakeCapture::new(frames);
         let scroller = FakeScroller::with_escape_after(2);
         let clock = FakeClock::default();
-        let outcome = run(
-            &capture,
-            &scroller,
-            &clock,
-            &config(ScrollLimit::Unlimited),
-        )
-        .expect("scroll");
+        let outcome =
+            run(&capture, &scroller, &clock, &config(ScrollLimit::Unlimited)).expect("scroll");
         assert_eq!(outcome.stop, ScrollStop::Escape);
         assert_eq!(outcome.frames, 3);
         assert_eq!(scroller.scrolls(), 2);
@@ -413,13 +409,8 @@ mod tests {
         let capture = FakeCapture::new(captures);
         let scroller = FakeScroller::default();
         let clock = FakeClock::default();
-        let outcome = run(
-            &capture,
-            &scroller,
-            &clock,
-            &config(ScrollLimit::Thirty),
-        )
-        .expect("scroll");
+        let outcome =
+            run(&capture, &scroller, &clock, &config(ScrollLimit::Thirty)).expect("scroll");
         assert_eq!(outcome.stop, ScrollStop::Duplicate);
         assert_eq!(outcome.sticky_top, 4);
         assert_eq!(outcome.sticky_bottom, 3);
@@ -452,13 +443,7 @@ mod tests {
             viewport(&source, 20, 40),
         ]);
         let clock = FakeClock::default();
-        run(
-            &capture,
-            &FakeScroller::default(),
-            &clock,
-            &config,
-        )
-        .expect("scroll");
+        run(&capture, &FakeScroller::default(), &clock, &config).expect("scroll");
         assert_eq!(clock.waits(), vec![1_000, 1_000]);
     }
 

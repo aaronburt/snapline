@@ -7,26 +7,20 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
-use snapline_core::ffmpeg_args::{
-    audio_pipe_path, AudioPipe, AudioSource, PcmSampleFormat, AUDIO_PIPE_PREFIX,
-};
+use snapline_core::ffmpeg_args::{audio_pipe_path, AudioPipe, AudioSource, PcmSampleFormat};
 use thiserror::Error;
-use windows::core::{Interface, BOOL, GUID, HSTRING, PCWSTR, PWSTR};
+use windows::core::{Interface, BOOL, GUID, HSTRING, PWSTR};
 use windows::Win32::Foundation::{
-    CloseHandle, GetLastError, HANDLE, PROPERTYKEY, RPC_E_CHANGED_MODE, ERROR_BROKEN_PIPE,
-    ERROR_NO_DATA, ERROR_OPERATION_ABORTED, ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED,
+    CloseHandle, GetLastError, ERROR_BROKEN_PIPE, ERROR_NO_DATA, ERROR_OPERATION_ABORTED,
+    ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED, HANDLE, PROPERTYKEY, RPC_E_CHANGED_MODE,
 };
 use windows::Win32::Media::Audio::{
-    eCapture, eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDevice,
-    IMMDeviceCollection, IMMDeviceEnumerator, AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED,
-    AUDCLNT_STREAMFLAGS_LOOPBACK, DEVICE_STATE_ACTIVE, MMDeviceEnumerator, WAVE_FORMAT_PCM,
+    eCapture, eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDevice, IMMDeviceCollection,
+    IMMDeviceEnumerator, MMDeviceEnumerator, AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED,
+    AUDCLNT_STREAMFLAGS_LOOPBACK, DEVICE_STATE_ACTIVE, WAVE_FORMAT_PCM,
 };
-use windows::Win32::Media::KernelStreaming::{
-    KSDATAFORMAT_SUBTYPE_PCM, WAVE_FORMAT_EXTENSIBLE,
-};
-use windows::Win32::Media::Multimedia::{
-    KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, WAVE_FORMAT_IEEE_FLOAT,
-};
+use windows::Win32::Media::KernelStreaming::{KSDATAFORMAT_SUBTYPE_PCM, WAVE_FORMAT_EXTENSIBLE};
+use windows::Win32::Media::Multimedia::{KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, WAVE_FORMAT_IEEE_FLOAT};
 use windows::Win32::System::Com::StructuredStorage::{
     PropVariantClear, PropVariantToStringAlloc, PROPVARIANT,
 };
@@ -34,9 +28,7 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
     COINIT_MULTITHREADED,
 };
-use windows::Win32::System::Threading::{
-    GetCurrentThreadId, OpenThread, THREAD_TERMINATE,
-};
+use windows::Win32::System::Threading::{GetCurrentThreadId, OpenThread, THREAD_TERMINATE};
 
 const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 const DEFAULT_CHANNELS: u16 = 2;
@@ -46,7 +38,6 @@ const PIPE_REJECT_REMOTE_CLIENTS: u32 = 0x0000_0008;
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const IDLE_SLEEP: Duration = Duration::from_millis(5);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
-const CONTINUOUS_FRAMES_PER_SECOND: u32 = 1_000_000_000;
 
 const PKEY_DEVICE_FRIENDLY_NAME: PROPERTYKEY = PROPERTYKEY {
     fmtid: GUID::from_u128(0xa45c254e_df1c_4efd_8020_67d146a850e0),
@@ -211,16 +202,16 @@ pub enum AudioError {
     UnsupportedMixFormat,
     #[error("the audio pipe {pipe} could not be used: {message}")]
     Pipe { pipe: String, message: String },
-    #[error("the {source:?} audio capture thread could not start: {message}")]
+    #[error("the {audio_source:?} audio capture thread could not start: {message}")]
     Thread {
-        source: AudioSource,
+        audio_source: AudioSource,
         message: String,
     },
     #[error("the audio device enumerator is unavailable")]
     Enumerator,
-    #[error("audio capture for {source:?} failed: {message}")]
+    #[error("audio capture for {audio_source:?} failed: {message}")]
     Capture {
-        source: AudioSource,
+        audio_source: AudioSource,
         message: String,
     },
 }
@@ -240,7 +231,7 @@ impl AudioCapture {
     pub fn start(request: AudioRequest) -> Result<RunningAudio, AudioError> {
         request.validate()?;
         let sources = resolve_sources(&request)?;
-        let mut stop = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
         let mut pipes = Vec::with_capacity(sources.len());
         let mut descriptors = Vec::with_capacity(sources.len());
         for source in &sources {
@@ -262,6 +253,7 @@ impl AudioCapture {
 
         let mut workers = Vec::with_capacity(sources.len());
         for ((source, pipe), descriptor) in sources.into_iter().zip(pipes).zip(&descriptors) {
+            let source_kind = source.source;
             let thread_id = Arc::new(AtomicU32::new(0));
             let thread_id_in = Arc::clone(&thread_id);
             let stop_in = Arc::clone(&stop);
@@ -271,7 +263,7 @@ impl AudioCapture {
             let name = format!("snapline-audio-{}", descriptor.index);
             let spawned = thread::Builder::new().name(name).spawn(move || {
                 capture_thread(
-                    source.source,
+                    source_kind,
                     source.device_id,
                     source.loopback,
                     format,
@@ -291,14 +283,13 @@ impl AudioCapture {
                     stop.store(true, Ordering::SeqCst);
                     join_workers(&mut workers);
                     return Err(AudioError::Thread {
-                        source: source.source,
+                        audio_source: source_kind,
                         message: error.to_string(),
                     });
                 }
             }
         }
 
-        stop = Arc::clone(&stop);
         Ok(RunningAudio {
             pipes: descriptors,
             workers: Mutex::new(workers),
@@ -307,7 +298,6 @@ impl AudioCapture {
     }
 }
 
-#[derive(Debug)]
 pub struct RunningAudio {
     pipes: Vec<AudioPipe>,
     workers: Mutex<Vec<Worker>>,
@@ -365,10 +355,9 @@ fn enumerate(
     flow: windows::Win32::Media::Audio::EDataFlow,
     label: &'static str,
 ) -> Result<Vec<AudioDevice>, AudioError> {
-    let collection: IMMDeviceCollection = unsafe {
-        enumerator.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE)
-    }
-    .map_err(|_| AudioError::Enumerator)?;
+    let collection: IMMDeviceCollection =
+        unsafe { enumerator.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE) }
+            .map_err(|_| AudioError::Enumerator)?;
     let default_id = default_device(enumerator, flow, label)
         .ok()
         .and_then(|device| device_id(&device).ok());
@@ -535,7 +524,8 @@ fn string_from_pwstr(text: PWSTR) -> Option<String> {
 struct DeviceVtable {
     base: windows::core::IUnknown_Vtbl,
     activate: usize,
-    open_property_store: unsafe extern "system" fn(*mut c_void, u32, *mut *mut c_void) -> windows::core::HRESULT,
+    open_property_store:
+        unsafe extern "system" fn(*mut c_void, u32, *mut *mut c_void) -> windows::core::HRESULT,
     get_id: usize,
     get_state: usize,
 }
@@ -600,16 +590,26 @@ fn resolve_sources(request: &AudioRequest) -> Result<Vec<StreamPlan>, AudioError
         });
     }
     if request.microphone {
-        let device = match request.microphone_id.as_deref() {
+        let (device, requested) = match request.microphone_id.as_deref() {
             Some(id) => {
                 let wanted = HSTRING::from(id);
                 // SAFETY: the enumerator is live and the string is a valid null-terminated device id.
-                unsafe { enumerator.GetDevice(&wanted) }.map_err(|_| AudioError::DeviceNotFound {
-                    id: id.to_owned(),
-                })?
+                let device = unsafe { enumerator.GetDevice(&wanted) }
+                    .map_err(|_| AudioError::DeviceNotFound { id: id.to_owned() })?;
+                (device, Some(id.to_owned()))
             }
-            None => default_device(&enumerator, eCapture, "capture")?,
+            None => (default_device(&enumerator, eCapture, "capture")?, None),
         };
+        // SAFETY: the device is live and GetState takes no pointers.
+        let active = unsafe { device.GetState() }
+            .map(|state| state.0 & DEVICE_STATE_ACTIVE.0 != 0)
+            .unwrap_or(true);
+        if !active {
+            return Err(match requested {
+                Some(id) => AudioError::DeviceNotFound { id },
+                None => AudioError::NoDefaultDevice { device: "capture" },
+            });
+        }
         plans.push(StreamPlan {
             source: AudioSource::Microphone,
             device_id: device_id(&device)?,
@@ -728,6 +728,9 @@ fn write_pipe(pipe: &OwnedPipe, mut bytes: &[u8]) -> Result<(), PipeFailure> {
             bytes = &bytes[written as usize..];
         }
         if written_ok.as_bool() {
+            if written == 0 {
+                return Err(PipeFailure::Error(0));
+            }
             continue;
         }
         if written > 0 {
@@ -788,6 +791,7 @@ fn join_workers(workers: &mut Vec<Worker>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn capture_thread(
     source: AudioSource,
     device_id: String,
@@ -803,15 +807,7 @@ fn capture_thread(
     thread_id.store(unsafe { GetCurrentThreadId() }, Ordering::SeqCst);
     let mut stats = Stats::default();
     let result = run_capture(
-        source,
-        &device_id,
-        loopback,
-        format,
-        &pipe,
-        &pipe_path,
-        &stop,
-        &events,
-        &mut stats,
+        source, &device_id, loopback, format, &pipe, &pipe_path, &stop, &events, &mut stats,
     );
     let bytes = stats.frames.saturating_mul(format.frame_size() as u64);
     match result {
@@ -853,7 +849,7 @@ enum Outcome {
 
 fn send_event(events: &Option<Sender<AudioEvent>>, event: AudioEvent) {
     if let Some(events) = events {
-        let _ = events.send(event);
+        let _ = events.try_send(event);
     }
 }
 
@@ -873,9 +869,10 @@ fn run_capture(
     let enumerator = create_enumerator()?;
     let wanted = HSTRING::from(device_id);
     // SAFETY: the enumerator is live and the string is a valid null-terminated device id.
-    let device = unsafe { enumerator.GetDevice(&wanted) }.map_err(|_| AudioError::DeviceNotFound {
-        id: device_id.to_owned(),
-    })?;
+    let device =
+        unsafe { enumerator.GetDevice(&wanted) }.map_err(|_| AudioError::DeviceNotFound {
+            id: device_id.to_owned(),
+        })?;
     // SAFETY: the device is live and returns an owned IAudioClient for the requested class context.
     let client: IAudioClient = unsafe { device.Activate(CLSCTX_ALL, None) }
         .map_err(|error| capture_error(source, &error))?;
@@ -890,10 +887,8 @@ fn run_capture(
         0
     };
     // SAFETY: the client and format are live and the shared-mode periods are the documented zero values.
-    unsafe {
-        client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 0, 0, mix.0, None)
-    }
-    .map_err(|error| capture_error(source, &error))?;
+    unsafe { client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 0, 0, mix.0, None) }
+        .map_err(|error| capture_error(source, &error))?;
     // SAFETY: the initialised client is live and returns an owned capture client service.
     let capture: IAudioCaptureClient =
         unsafe { client.GetService() }.map_err(|error| capture_error(source, &error))?;
@@ -987,12 +982,11 @@ fn capture_loop(
             write_pipe(pipe, &buffer).err()
         };
         // SAFETY: the capture client is live and the number of frames matches the buffer obtained above.
-        unsafe { capture.ReleaseBuffer(frames) }
-            .map_err(|error| capture_error(source, &error))?;
-        if !buffer.is_empty() {
-            stats.frames = stats.frames.saturating_add(
-                (buffer.len() / format.frame_size().max(1)) as u64,
-            );
+        unsafe { capture.ReleaseBuffer(frames) }.map_err(|error| capture_error(source, &error))?;
+        if failure.is_none() && !buffer.is_empty() {
+            stats.frames = stats
+                .frames
+                .saturating_add((buffer.len() / format.frame_size().max(1)) as u64);
         }
         if let Some(failure) = failure {
             if stop.load(Ordering::SeqCst) {
@@ -1001,7 +995,7 @@ fn capture_loop(
             return match failure {
                 PipeFailure::Disconnected => Ok(Outcome::Disconnected),
                 PipeFailure::Error(code) => Err(AudioError::Capture {
-                    source,
+                    audio_source: source,
                     message: format!("the audio pipe write failed ({code})"),
                 }),
             };
@@ -1033,7 +1027,7 @@ fn report_progress(
 
 fn capture_error(source: AudioSource, error: &windows::core::Error) -> AudioError {
     AudioError::Capture {
-        source,
+        audio_source: source,
         message: error.to_string(),
     }
 }
@@ -1069,7 +1063,7 @@ unsafe fn parse_mix_format(
 ) -> Result<DeviceFormat, AudioError> {
     let (tag, bits, channels, sample_rate, block_align, extra) = unsafe {
         (
-            (*format).wFormatTag,
+            u32::from((*format).wFormatTag),
             (*format).wBitsPerSample,
             (*format).nChannels,
             (*format).nSamplesPerSec,
@@ -1096,7 +1090,9 @@ unsafe fn parse_mix_format(
         _ => None,
     }
     .ok_or(AudioError::UnsupportedMixFormat)?;
-    if channels == 0 || sample_rate == 0 || block_align as usize < usize::from(channels) * sample.bytes()
+    if channels == 0
+        || sample_rate == 0
+        || (block_align as usize) < usize::from(channels) * sample.bytes()
     {
         return Err(AudioError::UnsupportedMixFormat);
     }
@@ -1147,7 +1143,7 @@ impl DeviceFormat {
                     let value = i32::from(bytes[0])
                         | (i32::from(bytes[1]) << 8)
                         | (i32::from(bytes[2] as i8) << 16);
-                    f32::from(value as i16) / 32_768.0
+                    value as f32 / 8_388_608.0
                 })
                 .unwrap_or(0.0),
             InputSample::I32 => sample
@@ -1239,7 +1235,9 @@ fn sample_bytes(format: PcmSampleFormat) -> usize {
 fn push_sample(out: &mut Vec<u8>, format: PcmSampleFormat, value: f32) {
     match format {
         PcmSampleFormat::S16Le => {
-            out.extend_from_slice(&((value.clamp(-1.0, 1.0) * 32_767.0).round() as i16).to_le_bytes());
+            out.extend_from_slice(
+                &((value.clamp(-1.0, 1.0) * 32_767.0).round() as i16).to_le_bytes(),
+            );
         }
         PcmSampleFormat::S32Le => {
             out.extend_from_slice(
@@ -1263,6 +1261,7 @@ fn pad_to_frame(bytes: &mut Vec<u8>, format: PcmFormat) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use snapline_core::ffmpeg_args::AUDIO_PIPE_PREFIX;
     use std::collections::HashSet;
 
     fn device_format(channels: u16, sample_rate: u32) -> DeviceFormat {
@@ -1327,7 +1326,10 @@ mod tests {
         let path = audio_pipe_path(first);
         assert!(path.starts_with(AUDIO_PIPE_PREFIX));
         assert_eq!(path, format!("{AUDIO_PIPE_PREFIX}{first}"));
-        assert_eq!(audio_pipe_path(second), format!("{AUDIO_PIPE_PREFIX}{second}"));
+        assert_eq!(
+            audio_pipe_path(second),
+            format!("{AUDIO_PIPE_PREFIX}{second}")
+        );
         let mut seen = HashSet::new();
         for _ in 0..32 {
             assert!(seen.insert(next_pipe_index()));
@@ -1406,20 +1408,26 @@ mod tests {
 
     #[test]
     fn output_sample_formats_convert_from_float() {
-        let mut converter = Converter::new(device_format(1, 48_000), PcmFormat {
-            sample_format: PcmSampleFormat::F32Le,
-            ..PcmFormat::default()
-        });
+        let mut converter = Converter::new(
+            device_format(1, 48_000),
+            PcmFormat {
+                sample_format: PcmSampleFormat::F32Le,
+                ..PcmFormat::default()
+            },
+        );
         let mut out = Vec::new();
         converter.convert(&[0x00, 0x40], &mut out);
         assert_eq!(out.len(), 8);
         let value = f32::from_le_bytes([out[0], out[1], out[2], out[3]]);
         assert!((value - 0.5).abs() < 0.001);
 
-        let mut converter = Converter::new(device_format(1, 48_000), PcmFormat {
-            sample_format: PcmSampleFormat::S32Le,
-            ..PcmFormat::default()
-        });
+        let mut converter = Converter::new(
+            device_format(1, 48_000),
+            PcmFormat {
+                sample_format: PcmSampleFormat::S32Le,
+                ..PcmFormat::default()
+            },
+        );
         let mut out = Vec::new();
         converter.convert(&[0x00, 0x40], &mut out);
         assert_eq!(out.len(), 8);
@@ -1446,7 +1454,10 @@ mod tests {
             compose_name(Some("Microphone"), Some("microphone")),
             Some("Microphone".to_owned())
         );
-        assert_eq!(compose_name(None, Some("Headset")), Some("Headset".to_owned()));
+        assert_eq!(
+            compose_name(None, Some("Headset")),
+            Some("Headset".to_owned())
+        );
         assert_eq!(compose_name(Some(""), Some("")), None);
     }
 
@@ -1466,7 +1477,7 @@ mod tests {
         .to_string()
         .contains("device-7"));
         assert!(AudioError::Capture {
-            source: AudioSource::System,
+            audio_source: AudioSource::System,
             message: "the device was removed".to_owned()
         }
         .to_string()

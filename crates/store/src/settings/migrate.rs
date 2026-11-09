@@ -52,12 +52,10 @@ fn step_for(version: u32) -> Option<Step> {
 
 fn add_default_workflow(mut table: toml::Table) -> Result<toml::Table, MigrationError> {
     let default = default_workflow();
-    let workflow = toml::Value::try_from(&default).map_err(|_| MigrationError::DefaultWorkflow)?;
+    let workflow =
+        toml::Value::try_from(&default).map_err(|_| MigrationError::DefaultWorkflow)?;
     if !table.contains_key("workflows") {
-        table.insert(
-            "workflows".to_owned(),
-            toml::Value::Table(toml::Table::new()),
-        );
+        table.insert("workflows".to_owned(), toml::Value::Table(toml::Table::new()));
     }
     if let Some(toml::Value::Table(workflows)) = table.get_mut("workflows") {
         let empty = match workflows.get("list") {

@@ -1,8 +1,129 @@
+import type { ConvertFormatDto } from './bindings/ConvertFormatDto';
+import type { ConvertProgressDto } from './bindings/ConvertProgressDto';
+import type { ConvertSource } from './bindings/ConvertSource';
+import type { ConvertedDto } from './bindings/ConvertedDto';
 import type { ToolReq } from './bindings/ToolReq';
 import type { ToolResp } from './bindings/ToolResp';
+import type { IpcError } from './core';
 import { call } from './core';
+
+export interface QrMade {
+  svg: string;
+  link: string | null;
+}
+
+export interface QrScanned {
+  text: string;
+  link: string | null;
+  isUrl: boolean;
+}
+
+function unexpected(): IpcError {
+  return {
+    code: 'internal',
+    message: 'Snapline returned an unexpected Tools answer.',
+  };
+}
 
 export function ping(): Promise<ToolResp> {
   const req: ToolReq = { kind: 'ping' };
   return call<ToolReq, ToolResp>('ipc_tool', req);
+}
+
+export async function qrMake(text: string): Promise<QrMade> {
+  const req: ToolReq = { kind: 'qrMake', data: { text } };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind === 'qrMade') {
+    return resp.data;
+  }
+  throw unexpected();
+}
+
+export async function qrScan(captureId: number | null = null): Promise<QrScanned> {
+  const req: ToolReq = { kind: 'qrScan', data: { captureId } };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind === 'qrScanned') {
+    return resp.data;
+  }
+  throw unexpected();
+}
+
+export async function qrCopyText(text: string): Promise<void> {
+  const req: ToolReq = { kind: 'qrCopyText', data: { text } };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind !== 'qrCopied') {
+    throw unexpected();
+  }
+}
+
+export async function qrCopyImage(text: string): Promise<void> {
+  const req: ToolReq = { kind: 'qrCopyImage', data: { text } };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind !== 'qrCopied') {
+    throw unexpected();
+  }
+}
+
+export async function qrSavePng(text: string): Promise<string> {
+  const req: ToolReq = { kind: 'qrSavePng', data: { text } };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind === 'qrSaved') {
+    return resp.data.path;
+  }
+  throw unexpected();
+}
+
+export async function qrOpen(link: string): Promise<void> {
+  const req: ToolReq = { kind: 'qrOpen', data: { link } };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind !== 'qrOpened') {
+    throw unexpected();
+  }
+}
+
+export async function convertPickFile(): Promise<string | null> {
+  const req: ToolReq = { kind: 'convertPickFile' };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind === 'convertFilePicked') {
+    return resp.data.path;
+  }
+  throw unexpected();
+}
+
+export async function convertStart(
+  source: ConvertSource,
+  format: ConvertFormatDto,
+): Promise<number> {
+  const req: ToolReq = { kind: 'convertStart', data: { source, format } };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind === 'convertStarted') {
+    return resp.data.jobId;
+  }
+  throw unexpected();
+}
+
+export async function convertProgress(jobId: number): Promise<ConvertProgressDto> {
+  const req: ToolReq = { kind: 'convertProgress', data: { jobId } };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind === 'convertProgressed') {
+    return resp.data.progress;
+  }
+  throw unexpected();
+}
+
+export async function convertCancel(jobId: number): Promise<void> {
+  const req: ToolReq = { kind: 'convertCancel', data: { jobId } };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind !== 'convertCancelled') {
+    throw unexpected();
+  }
+}
+
+export async function convertResult(jobId: number): Promise<ConvertedDto> {
+  const req: ToolReq = { kind: 'convertResult', data: { jobId } };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind === 'converted') {
+    return resp.data.converted;
+  }
+  throw unexpected();
 }

@@ -1,4 +1,3 @@
-use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -6,6 +5,7 @@ use serde_json::Value;
 
 use crate::error::UploadError;
 use crate::http::{HttpTransport, Method, Multipart, Request};
+use crate::queue::{DeletionLink, SecretStore, UploadFile, Uploaded, Uploader};
 
 pub mod sxcu;
 pub mod template;
@@ -15,91 +15,10 @@ const BASE64_ALPHABET: &[u8; 64] =
 const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
 const MAX_ERROR_CHARS: usize = 400;
 
-#[derive(Clone, PartialEq, Eq)]
-pub struct UploadFile {
-    pub file_name: String,
-    pub content_type: String,
-    pub bytes: Vec<u8>,
-}
-
-impl UploadFile {
-    pub fn new(
-        file_name: impl Into<String>,
-        content_type: impl Into<String>,
-        bytes: impl Into<Vec<u8>>,
-    ) -> Self {
-        Self {
-            file_name: file_name.into(),
-            content_type: content_type.into(),
-            bytes: bytes.into(),
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
-    }
-
-    fn content_type(&self) -> &str {
-        if self.content_type.trim().is_empty() {
-            DEFAULT_CONTENT_TYPE
-        } else {
-            &self.content_type
-        }
-    }
-}
-
-impl fmt::Debug for UploadFile {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("UploadFile")
-            .field("file_name", &self.file_name)
-            .field("content_type", &self.content_type)
-            .field("bytes", &self.bytes.len())
-            .finish()
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Uploaded {
-    pub link: String,
+pub struct CustomUploaded {
+    pub uploaded: Uploaded,
     pub thumbnail_link: Option<String>,
-    pub deletion_link: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeletionLink {
-    pub url: String,
-}
-
-impl DeletionLink {
-    pub fn new(url: impl Into<String>) -> Self {
-        Self { url: url.into() }
-    }
-}
-
-impl From<String> for DeletionLink {
-    fn from(url: String) -> Self {
-        Self::new(url)
-    }
-}
-
-impl From<&str> for DeletionLink {
-    fn from(url: &str) -> Self {
-        Self::new(url)
-    }
-}
-
-pub trait SecretStore: Send + Sync {
-    fn secret(&self, dest_id: &str, field: &str) -> Result<Option<String>, UploadError>;
-}
-
-pub trait Uploader: Send + Sync {
-    fn upload(&self, file: &UploadFile, secrets: &dyn SecretStore) -> Result<Uploaded, UploadError>;
-    fn delete(&self, link: &DeletionLink, secrets: &dyn SecretStore) -> Result<(), UploadError>;
 }
 
 pub fn header_secret_field(name: &str) -> String {
@@ -154,7 +73,8 @@ impl CustomUploader {
         file: &UploadFile,
         secrets: &dyn SecretStore,
     ) -> Result<Uploaded, UploadError> {
-        self.upload(file, secrets)
+        self.upload_custom(file, secrets)
+            .map(|result| result.uploaded)
     }
 
     pub fn export(
@@ -165,15 +85,52 @@ impl CustomUploader {
         let mut values = sxcu::HeaderValues::new();
         if include_header_values {
             for header in &self.config.headers {
-                if let Some(value) = secrets
-                    .secret(&self.dest_id, &header_secret_field(&header.name))?
-                {
+                if let Some(value) = secret_text(secrets, &self.dest_id, &header.name)? {
                     values.insert(header.name.clone(), value);
                 }
             }
         }
         sxcu::export(&self.config, include_header_values, &values)
             .map_err(|error| UploadError::Permanent(error.to_string()))
+    }
+
+    pub fn upload_custom(
+        &self,
+        file: &UploadFile,
+        secrets: &dyn SecretStore,
+    ) -> Result<CustomUploaded, UploadError> {
+        let random = template::random_token();
+        let request = self.build_request(file, secrets, &random)?;
+        let reply = self.transport.execute(request)?;
+        if !reply.is_success() {
+            return Err(response_error(
+                &self.config,
+                &reply,
+                &file.file_name,
+                &random,
+            ));
+        }
+        let text = reply.text()?;
+        let json = serde_json::from_str::<Value>(&text).ok();
+        let context = template::TemplateContext {
+            file_name: &file.file_name,
+            random: &random,
+            response: Some(&text),
+            response_json: json.as_ref(),
+        };
+        let link = expand_link(&self.config.link, &context)?;
+        let thumbnail = expand_optional(self.config.thumbnail.as_deref(), &context)?;
+        let deletion = expand_optional(self.config.deletion.as_deref(), &context)?;
+        let uploaded = match deletion {
+            Some(url) => {
+                Uploaded::new(link).with_deletion_link(DeletionLink::new(self.dest_id.clone(), url))
+            }
+            None => Uploaded::new(link),
+        };
+        Ok(CustomUploaded {
+            uploaded,
+            thumbnail_link: thumbnail,
+        })
     }
 
     fn build_request(
@@ -188,8 +145,8 @@ impl CustomUploader {
             response: None,
             response_json: None,
         };
-        let url = template::expand(&self.config.request_url, &context, true)
-            .map_err(template_error)?;
+        let url =
+            template::expand(&self.config.request_url, &context, true).map_err(template_error)?;
         let url = outgoing_url(&url)?;
         let method = match self.config.method {
             Method::Post => Request::post(url),
@@ -201,16 +158,7 @@ impl CustomUploader {
                 ));
             }
         };
-        let mut request = method;
-        for header in &self.config.headers {
-            if let Some(value) = secrets
-                .secret(&self.dest_id, &header_secret_field(&header.name))?
-            {
-                if !value.is_empty() {
-                    request = request.header(header.name.clone(), value);
-                }
-            }
-        }
+        let request = self.apply_headers(method, secrets)?;
         apply_body(request, &self.config, file)
     }
 
@@ -221,9 +169,7 @@ impl CustomUploader {
     ) -> Result<Request, UploadError> {
         let mut request = request;
         for header in &self.config.headers {
-            if let Some(value) = secrets
-                .secret(&self.dest_id, &header_secret_field(&header.name))?
-            {
+            if let Some(value) = secret_text(secrets, &self.dest_id, &header.name)? {
                 if !value.is_empty() {
                     request = request.header(header.name.clone(), value);
                 }
@@ -234,29 +180,13 @@ impl CustomUploader {
 }
 
 impl Uploader for CustomUploader {
-    fn upload(&self, file: &UploadFile, secrets: &dyn SecretStore) -> Result<Uploaded, UploadError> {
-        let random = template::random_token();
-        let request = self.build_request(file, secrets, &random)?;
-        let reply = self.transport.execute(request)?;
-        if !reply.is_success() {
-            return Err(response_error(&self.config, &reply, &file.file_name, &random));
-        }
-        let text = reply.text()?;
-        let json = serde_json::from_str::<Value>(&text).ok();
-        let context = template::TemplateContext {
-            file_name: &file.file_name,
-            random: &random,
-            response: Some(&text),
-            response_json: json.as_ref(),
-        };
-        let link = expand_link(&self.config.link, &context)?;
-        let thumbnail = expand_optional(self.config.thumbnail.as_deref(), &context)?;
-        let deletion = expand_optional(self.config.deletion.as_deref(), &context)?;
-        Ok(Uploaded {
-            link,
-            thumbnail_link: thumbnail,
-            deletion_link: deletion,
-        })
+    fn upload(
+        &self,
+        file: &UploadFile,
+        secrets: &dyn SecretStore,
+    ) -> Result<Uploaded, UploadError> {
+        self.upload_custom(file, secrets)
+            .map(|result| result.uploaded)
     }
 
     fn delete(&self, link: &DeletionLink, secrets: &dyn SecretStore) -> Result<(), UploadError> {
@@ -339,14 +269,15 @@ fn apply_body(
     } else {
         config.file_form_field.as_str()
     };
+    let content_type = content_type(file);
     match config.body {
         sxcu::BodyType::MultipartFormData => Ok(request.multipart(Multipart::new().file(
             field,
             &file.file_name,
-            file.content_type(),
+            content_type,
             file.bytes.clone(),
         ))),
-        sxcu::BodyType::Binary => Ok(request.body(file.content_type(), file.bytes.clone())),
+        sxcu::BodyType::Binary => Ok(request.body(content_type, file.bytes.clone())),
         sxcu::BodyType::FormUrlEncoded => {
             let encoded = base64_encode(&file.bytes);
             Ok(request.form(&[(field, &encoded)]))
@@ -354,10 +285,32 @@ fn apply_body(
         sxcu::BodyType::Json => {
             let mut object = serde_json::Map::new();
             object.insert(field.to_owned(), Value::String(base64_encode(&file.bytes)));
-            request
-                .json(&Value::Object(object))
-                .map_err(|error| error)
+            request.json(&Value::Object(object))
         }
+    }
+}
+
+fn content_type(file: &UploadFile) -> &str {
+    if file.content_type.trim().is_empty() {
+        DEFAULT_CONTENT_TYPE
+    } else {
+        &file.content_type
+    }
+}
+
+fn secret_text(
+    secrets: &dyn SecretStore,
+    dest_id: &str,
+    header: &str,
+) -> Result<Option<String>, UploadError> {
+    match secrets.get(dest_id, &header_secret_field(header)) {
+        Ok(Some(bytes)) => String::from_utf8(bytes).map(Some).map_err(|_| {
+            UploadError::Permanent("A saved header value is not valid text.".to_owned())
+        }),
+        Ok(None) => Ok(None),
+        Err(_) => Err(UploadError::Permanent(
+            "A saved header value could not be read.".to_owned(),
+        )),
     }
 }
 
@@ -438,7 +391,13 @@ fn response_error(
 fn sanitise_message(message: &str) -> String {
     let cleaned: String = message
         .chars()
-        .map(|character| if character.is_control() { ' ' } else { character })
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
         .collect();
     cleaned.trim().chars().take(MAX_ERROR_CHARS).collect()
 }
@@ -485,6 +444,7 @@ mod tests {
 
     use super::sxcu::{BodyType, CustomUploaderConfig, Header};
     use super::*;
+    use crate::queue::SecretError;
 
     struct FakeTransport {
         requests: Mutex<Vec<Request>>,
@@ -542,7 +502,7 @@ mod tests {
     }
 
     impl SecretStore for FakeSecrets {
-        fn secret(&self, dest_id: &str, field: &str) -> Result<Option<String>, UploadError> {
+        fn get(&self, dest_id: &str, field: &str) -> Result<Option<Vec<u8>>, SecretError> {
             if dest_id != self.dest_id {
                 return Ok(None);
             }
@@ -550,12 +510,17 @@ mod tests {
                 .values
                 .iter()
                 .find(|(name, _)| name == field)
-                .map(|(_, value)| value.clone()))
+                .map(|(_, value)| value.as_bytes().to_vec()))
         }
     }
 
     fn file() -> UploadFile {
-        UploadFile::new("shot.png", "image/png", b"hello".to_vec())
+        UploadFile::new(
+            "C:\\tmp\\shot.png",
+            "shot.png",
+            "image/png",
+            b"hello".to_vec(),
+        )
     }
 
     fn config(body: BodyType) -> CustomUploaderConfig {
@@ -581,7 +546,10 @@ mod tests {
         }
     }
 
-    fn uploader(config: CustomUploaderConfig, replies: Vec<HttpReply>) -> (CustomUploader, Arc<FakeTransport>) {
+    fn uploader(
+        config: CustomUploaderConfig,
+        replies: Vec<HttpReply>,
+    ) -> (CustomUploader, Arc<FakeTransport>) {
         let transport = Arc::new(FakeTransport::new(replies));
         let uploader = CustomUploader::with_transport("custom", config, transport.clone());
         (uploader, transport)
@@ -590,17 +558,21 @@ mod tests {
     #[test]
     fn multipart_upload_sends_the_file_and_a_secret_header() {
         let (uploader, transport) = uploader(config(BodyType::MultipartFormData), vec![success()]);
-        let uploaded = match uploader.upload(&file(), &FakeSecrets::with_authorization()) {
+        let uploaded = match uploader.upload_custom(&file(), &FakeSecrets::with_authorization()) {
             Ok(uploaded) => uploaded,
             Err(error) => panic!("upload failed: {error}"),
         };
-        assert_eq!(uploaded.link, "https://i.example/a.png");
+        assert_eq!(uploaded.uploaded.link, "https://i.example/a.png");
         assert_eq!(
             uploaded.thumbnail_link.as_deref(),
             Some("https://i.example/a_t.png")
         );
         assert_eq!(
-            uploaded.deletion_link.as_deref(),
+            uploaded
+                .uploaded
+                .deletion_link
+                .as_ref()
+                .map(|link| link.url.as_str()),
             Some("https://i.example/d/a")
         );
         let requests = transport.requests();
@@ -608,9 +580,10 @@ mod tests {
         let request = &requests[0];
         assert_eq!(request.method(), Method::Post);
         assert_eq!(request.url(), "https://example.test/upload");
-        assert!(request.headers().iter().any(|(name, value)| {
-            name == "Authorization" && value == "Bearer top-secret"
-        }));
+        assert!(request
+            .headers()
+            .iter()
+            .any(|(name, value)| { name == "Authorization" && value == "Bearer top-secret" }));
         let content_type = request
             .headers()
             .iter()
@@ -628,7 +601,9 @@ mod tests {
         let mut config = config(BodyType::Binary);
         config.method = Method::Put;
         let (uploader, transport) = uploader(config, vec![success()]);
-        assert!(uploader.upload(&file(), &FakeSecrets::with_authorization()).is_ok());
+        assert!(uploader
+            .upload(&file(), &FakeSecrets::with_authorization())
+            .is_ok());
         let requests = transport.requests();
         assert_eq!(requests[0].method(), Method::Put);
         assert_eq!(requests[0].body_bytes(), b"hello");
@@ -642,7 +617,9 @@ mod tests {
         let mut config = config(BodyType::FormUrlEncoded);
         config.method = Method::Patch;
         let (uploader, transport) = uploader(config, vec![success()]);
-        assert!(uploader.upload(&file(), &FakeSecrets::with_authorization()).is_ok());
+        assert!(uploader
+            .upload(&file(), &FakeSecrets::with_authorization())
+            .is_ok());
         let requests = transport.requests();
         assert_eq!(requests[0].method(), Method::Patch);
         let body = String::from_utf8_lossy(requests[0].body_bytes());
@@ -652,7 +629,9 @@ mod tests {
     #[test]
     fn json_upload_sends_a_json_object() {
         let (uploader, transport) = uploader(config(BodyType::Json), vec![success()]);
-        assert!(uploader.upload(&file(), &FakeSecrets::with_authorization()).is_ok());
+        assert!(uploader
+            .upload(&file(), &FakeSecrets::with_authorization())
+            .is_ok());
         let requests = transport.requests();
         let value: Value = match serde_json::from_slice(requests[0].body_bytes()) {
             Ok(value) => value,
@@ -670,7 +649,9 @@ mod tests {
         config.request_url = "https://example.test/{filename}?r={random}".to_owned();
         let transport = Arc::new(FakeTransport::new(vec![success()]));
         let uploader = CustomUploader::with_transport("custom", config, transport.clone());
-        assert!(uploader.upload(&file(), &FakeSecrets::with_authorization()).is_ok());
+        assert!(uploader
+            .upload(&file(), &FakeSecrets::with_authorization())
+            .is_ok());
         let requests = transport.requests();
         let url = requests[0].url();
         let (path, random) = match url.split_once("?r=") {
@@ -690,8 +671,15 @@ mod tests {
         config.request_url = "https://example.test/{filename}".to_owned();
         let transport = Arc::new(FakeTransport::new(vec![success()]));
         let uploader = CustomUploader::with_transport("custom", config, transport.clone());
-        let file = UploadFile::new("shot one.png", "image/png", b"hello".to_vec());
-        assert!(uploader.upload(&file, &FakeSecrets::with_authorization()).is_ok());
+        let file = UploadFile::new(
+            "C:\\tmp\\shot one.png",
+            "shot one.png",
+            "image/png",
+            b"hello".to_vec(),
+        );
+        assert!(uploader
+            .upload(&file, &FakeSecrets::with_authorization())
+            .is_ok());
         assert_eq!(
             transport.requests()[0].url(),
             "https://example.test/shot%20one.png"
@@ -729,10 +717,7 @@ mod tests {
             Ok(_) => panic!("the upload should have failed"),
             Err(error) => error,
         };
-        assert_eq!(
-            error,
-            UploadError::Retryable("Try again later.".to_owned())
-        );
+        assert_eq!(error, UploadError::Retryable("Try again later.".to_owned()));
     }
 
     #[test]
@@ -789,7 +774,7 @@ mod tests {
             body: Vec::new(),
         };
         let (uploader, transport) = uploader(config(BodyType::Binary), vec![reply]);
-        let link = DeletionLink::new("https://i.example/delete/a");
+        let link = DeletionLink::new("custom", "https://i.example/delete/a");
         assert!(uploader
             .delete(&link, &FakeSecrets::with_authorization())
             .is_ok());
@@ -797,9 +782,10 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].method(), Method::Get);
         assert_eq!(requests[0].url(), "https://i.example/delete/a");
-        assert!(requests[0].headers().iter().any(|(name, value)| {
-            name == "Authorization" && value == "Bearer top-secret"
-        }));
+        assert!(requests[0]
+            .headers()
+            .iter()
+            .any(|(name, value)| { name == "Authorization" && value == "Bearer top-secret" }));
     }
 
     #[test]
@@ -834,12 +820,5 @@ mod tests {
         assert_eq!(base64_encode(b"fo"), "Zm8=");
         assert_eq!(base64_encode(b"foo"), "Zm9v");
         assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
-    }
-
-    #[test]
-    fn the_file_debug_does_not_dump_the_bytes() {
-        let debug = format!("{:?}", file());
-        assert!(debug.contains("shot.png"));
-        assert!(!debug.contains("hello"));
     }
 }

@@ -2,64 +2,19 @@ use std::io::Read;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use snapline_core::ports::SecretStore;
-use snapline_core::secret::{Secret, SecretKey};
 use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
 use ureq::{Agent, Proxy};
 
 use crate::error::UploadError;
 use crate::http::{HttpTimeout, ProxySetting, USER_AGENT};
+use crate::queue::{DeletionLink, SecretStore, UploadFile, Uploaded, Uploader};
 
 pub mod sigv4;
 
 pub const ACCESS_KEY_ID_FIELD: &str = "access_key_id";
 pub const SECRET_ACCESS_KEY_FIELD: &str = "secret_access_key";
 pub const SESSION_TOKEN_FIELD: &str = "session_token";
-pub const DEFAULT_PUBLIC_URL_PATTERN: &str =
-    "https://<bucket>.s3.<region>.amazonaws.com/<key>";
-
-pub trait Uploader: Send + Sync {
-    fn upload(
-        &self,
-        file: &UploadFile,
-        secrets: &dyn SecretStore,
-    ) -> Result<Uploaded, UploadError>;
-
-    fn delete(&self, link: &DeletionLink, secrets: &dyn SecretStore) -> Result<(), UploadError>;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UploadFile {
-    pub file_name: String,
-    pub content_type: String,
-    pub bytes: Vec<u8>,
-}
-
-impl UploadFile {
-    pub fn new(
-        file_name: impl Into<String>,
-        content_type: impl Into<String>,
-        bytes: impl Into<Vec<u8>>,
-    ) -> Self {
-        Self {
-            file_name: file_name.into(),
-            content_type: content_type.into(),
-            bytes: bytes.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Uploaded {
-    pub url: String,
-    pub deletion_link: Option<DeletionLink>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeletionLink {
-    pub url: String,
-    pub etag: Option<String>,
-}
+pub const DEFAULT_PUBLIC_URL_PATTERN: &str = "https://<bucket>.s3.<region>.amazonaws.com/<key>";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum S3Method {
@@ -278,9 +233,6 @@ impl S3Uploader {
         let access_key_id = self.required_secret(secrets, ACCESS_KEY_ID_FIELD)?;
         let secret_access_key = self.required_secret(secrets, SECRET_ACCESS_KEY_FIELD)?;
         let session_token = self.optional_secret(secrets, SESSION_TOKEN_FIELD)?;
-        let access_key_id = String::from_utf8(access_key_id.expose().to_vec()).map_err(|_| {
-            UploadError::Permanent("The saved S3 access key ID is not valid text.".to_owned())
-        })?;
         let credentials = sigv4::Credentials::new(access_key_id, secret_access_key);
         Ok(match session_token {
             Some(token) => credentials.with_session_token(token),
@@ -292,7 +244,7 @@ impl S3Uploader {
         &self,
         secrets: &dyn SecretStore,
         field: &str,
-    ) -> Result<Secret, UploadError> {
+    ) -> Result<String, UploadError> {
         self.optional_secret(secrets, field)?.ok_or_else(|| {
             UploadError::Permanent(format!("The S3 destination has no {field} saved."))
         })
@@ -302,13 +254,8 @@ impl S3Uploader {
         &self,
         secrets: &dyn SecretStore,
         field: &str,
-    ) -> Result<Option<Secret>, UploadError> {
-        let key = SecretKey::new(self.config.dest_id.as_str(), field).map_err(|_| {
-            UploadError::Permanent("The S3 destination name is not valid.".to_owned())
-        })?;
-        secrets.get(&key).map_err(|_| {
-            UploadError::Permanent("The saved S3 credentials could not be read.".to_owned())
-        })
+    ) -> Result<Option<String>, UploadError> {
+        secrets.secret(&self.config.dest_id, field)
     }
 
     fn target(&self, key: &str) -> Result<Target, UploadError> {
@@ -352,10 +299,7 @@ impl S3Uploader {
         mut headers: Vec<(String, String)>,
     ) -> Vec<(String, String)> {
         if let Some(token) = credentials.session_token() {
-            headers.push((
-                "x-amz-security-token".to_owned(),
-                String::from_utf8_lossy(token.expose()).into_owned(),
-            ));
+            headers.push(("x-amz-security-token".to_owned(), token.to_owned()));
         }
         headers.push(("x-amz-date".to_owned(), amz_date.to_owned()));
         headers.push(("x-amz-content-sha256".to_owned(), payload_hash.to_owned()));
@@ -421,13 +365,12 @@ impl Uploader for S3Uploader {
             .header("etag")
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty());
-        Ok(Uploaded {
-            url: self.config.public_url(&key),
-            deletion_link: Some(DeletionLink {
-                url: target.url(),
-                etag,
-            }),
-        })
+        let link = DeletionLink::new(self.config.dest_id.as_str(), target.url());
+        let link = match etag {
+            Some(etag) => link.with_token(etag),
+            None => link,
+        };
+        Ok(Uploaded::new(self.config.public_url(&key)).with_deletion_link(link))
     }
 
     fn delete(&self, link: &DeletionLink, secrets: &dyn SecretStore) -> Result<(), UploadError> {
@@ -436,15 +379,19 @@ impl Uploader for S3Uploader {
         let amz_date = sigv4::format_amz_date(now_seconds());
         let mut headers = vec![("host".to_owned(), parsed.host.clone())];
         if let Some(etag) = link
-            .etag
+            .token
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
             headers.push(("if-match".to_owned(), etag.to_owned()));
         }
-        let headers =
-            self.signed_headers(&credentials, &amz_date, sigv4::EMPTY_PAYLOAD_SHA256, headers);
+        let headers = self.signed_headers(
+            &credentials,
+            &amz_date,
+            sigv4::EMPTY_PAYLOAD_SHA256,
+            headers,
+        );
         let pairs: Vec<(&str, &str)> = headers
             .iter()
             .map(|(name, value)| (name.as_str(), value.as_str()))
@@ -613,13 +560,12 @@ pub fn object_key(prefix: &str, file_name: &str) -> String {
 fn sanitise_prefix(prefix: &str) -> String {
     let mut sanitised = String::with_capacity(prefix.len());
     for character in prefix.trim_matches('/').chars() {
-        let character = if character.is_ascii_alphanumeric()
-            || matches!(character, '/' | '.' | '_' | '-')
-        {
-            character
-        } else {
-            '_'
-        };
+        let character =
+            if character.is_ascii_alphanumeric() || matches!(character, '/' | '.' | '_' | '-') {
+                character
+            } else {
+                '_'
+            };
         if character == '/' && sanitised.ends_with('/') {
             continue;
         }
@@ -629,10 +575,7 @@ fn sanitise_prefix(prefix: &str) -> String {
 }
 
 fn sanitise_file_name(file_name: &str) -> String {
-    let base = file_name
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(file_name);
+    let base = file_name.rsplit(['/', '\\']).next().unwrap_or(file_name);
     let mut sanitised = String::with_capacity(base.len());
     for character in base.chars() {
         if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
@@ -653,7 +596,7 @@ mod tests {
     use std::collections::{HashMap, VecDeque};
     use std::sync::Mutex;
 
-    use snapline_core::ports::SecretError;
+    use crate::queue::SecretError;
 
     use super::*;
 
@@ -669,25 +612,18 @@ mod tests {
         }
 
         fn with(mut self, field: &str, value: &str) -> Self {
-            self.values.insert(field.to_owned(), value.as_bytes().to_vec());
+            self.values
+                .insert(field.to_owned(), value.as_bytes().to_vec());
             self
         }
     }
 
     impl SecretStore for FakeSecrets {
-        fn get(&self, key: &SecretKey) -> Result<Option<Secret>, SecretError> {
-            Ok(self
-                .values
-                .get(key.field())
-                .map(|value| Secret::from_bytes(value)))
-        }
-
-        fn put(&self, _key: &SecretKey, _value: &Secret) -> Result<(), SecretError> {
-            Ok(())
-        }
-
-        fn delete(&self, _key: &SecretKey) -> Result<(), SecretError> {
-            Ok(())
+        fn get(&self, dest_id: &str, field: &str) -> Result<Option<Vec<u8>>, SecretError> {
+            if dest_id != "s3" {
+                return Ok(None);
+            }
+            Ok(self.values.get(field).cloned())
         }
     }
 
@@ -740,7 +676,12 @@ mod tests {
     }
 
     fn file() -> UploadFile {
-        UploadFile::new("Screen Shot!.PNG", "image/png", vec![1_u8, 2, 3])
+        UploadFile::new(
+            "C:\\captures\\Screen Shot!.PNG",
+            "Screen Shot!.PNG",
+            "image/png",
+            vec![1_u8, 2, 3],
+        )
     }
 
     fn header(request: &S3Request, name: &str) -> String {
@@ -762,20 +703,22 @@ mod tests {
 
     #[test]
     fn upload_uses_the_virtual_host_style_and_captures_the_etag() {
-        let (uploader, transport) =
-            uploader(config().path_prefix("shots").acl_public_read(true));
+        let (uploader, transport) = uploader(config().path_prefix("shots").acl_public_read(true));
         let uploaded = uploader.upload(&file(), &secrets()).expect("upload");
         assert_eq!(
-            uploaded.url,
+            uploaded.link,
             "https://my-bucket.s3.eu-west-2.amazonaws.com/shots/Screen_Shot_.PNG"
         );
         let link = uploaded.deletion_link.expect("deletion link");
-        assert_eq!(link.etag.as_deref(), Some("\"etag-1\""));
-        assert_eq!(link.url, uploaded.url);
+        assert_eq!(link.token.as_deref(), Some("\"etag-1\""));
+        assert_eq!(link.url, uploaded.link);
         let request = &transport.requests()[0];
         assert_eq!(request.method, S3Method::Put);
-        assert_eq!(request.url, uploaded.url);
-        assert_eq!(header(request, "host"), "my-bucket.s3.eu-west-2.amazonaws.com");
+        assert_eq!(request.url, uploaded.link);
+        assert_eq!(
+            header(request, "host"),
+            "my-bucket.s3.eu-west-2.amazonaws.com"
+        );
         assert_eq!(header(request, "content-type"), "image/png");
         assert_eq!(header(request, "x-amz-acl"), "public-read");
         assert_eq!(
@@ -793,12 +736,12 @@ mod tests {
         let (uploader, transport) = uploader(config().path_style(true));
         let uploaded = uploader.upload(&file(), &secrets()).expect("upload");
         assert_eq!(
-            uploaded.url,
+            uploaded.link,
             "https://s3.eu-west-2.amazonaws.com/my-bucket/Screen_Shot_.PNG"
         );
         let request = &transport.requests()[0];
         assert_eq!(header(request, "host"), "s3.eu-west-2.amazonaws.com");
-        assert_eq!(request.url, uploaded.url);
+        assert_eq!(request.url, uploaded.link);
     }
 
     #[test]
@@ -810,7 +753,7 @@ mod tests {
         );
         let uploaded = uploader.upload(&file(), &secrets()).expect("upload");
         assert_eq!(
-            uploaded.url,
+            uploaded.link,
             "https://s3.example.test:9000/base/my-bucket/Screen_Shot_.PNG"
         );
         let request = &transport.requests()[0];
@@ -819,11 +762,10 @@ mod tests {
 
     #[test]
     fn a_custom_endpoint_supports_virtual_host_style() {
-        let (uploader, transport) =
-            uploader(config().endpoint("https://s3.example.test"));
+        let (uploader, transport) = uploader(config().endpoint("https://s3.example.test"));
         let uploaded = uploader.upload(&file(), &secrets()).expect("upload");
         assert_eq!(
-            uploaded.url,
+            uploaded.link,
             "https://my-bucket.s3.example.test/Screen_Shot_.PNG"
         );
         let request = &transport.requests()[0];
@@ -839,7 +781,7 @@ mod tests {
         );
         let uploaded = uploader.upload(&file(), &secrets()).expect("upload");
         assert_eq!(
-            uploaded.url,
+            uploaded.link,
             "https://cdn.example.test/my-bucket/eu-west-2/shots/Screen_Shot_.PNG"
         );
     }
@@ -861,10 +803,11 @@ mod tests {
             body: Vec::new(),
         }]));
         let uploader = S3Uploader::new(config(), transport.clone());
-        let link = DeletionLink {
-            url: "https://my-bucket.s3.eu-west-2.amazonaws.com/shots/a.png".to_owned(),
-            etag: Some("\"etag-1\"".to_owned()),
-        };
+        let link = DeletionLink::new(
+            "s3",
+            "https://my-bucket.s3.eu-west-2.amazonaws.com/shots/a.png",
+        )
+        .with_token("\"etag-1\"");
         uploader.delete(&link, &secrets()).expect("delete");
         let request = &transport.requests()[0];
         assert_eq!(request.method, S3Method::Delete);
@@ -885,15 +828,17 @@ mod tests {
             body: Vec::new(),
         }]));
         let uploader = S3Uploader::new(config(), transport.clone());
-        let link = DeletionLink {
-            url: "https://my-bucket.s3.eu-west-2.amazonaws.com/shots/a.png?versionId=abc%20123"
-                .to_owned(),
-            etag: None,
-        };
+        let link = DeletionLink::new(
+            "s3",
+            "https://my-bucket.s3.eu-west-2.amazonaws.com/shots/a.png?versionId=abc%20123",
+        );
         uploader.delete(&link, &secrets()).expect("delete");
         let request = &transport.requests()[0];
         assert_eq!(request.url, link.url);
-        assert_eq!(header(request, "host"), "my-bucket.s3.eu-west-2.amazonaws.com");
+        assert_eq!(
+            header(request, "host"),
+            "my-bucket.s3.eu-west-2.amazonaws.com"
+        );
         assert!(header(request, "authorization").starts_with("AWS4-HMAC-SHA256"));
     }
 
@@ -944,7 +889,10 @@ mod tests {
         assert_eq!(object_key("", "shot.png"), "shot.png");
         assert_eq!(object_key("/shots/", "shot.png"), "shots/shot.png");
         assert_eq!(object_key("", "..."), "file");
-        assert_eq!(object_key("bad prefix!", "shot.png"), "bad_prefix_/shot.png");
+        assert_eq!(
+            object_key("bad prefix!", "shot.png"),
+            "bad_prefix_/shot.png"
+        );
     }
 
     #[test]
@@ -954,7 +902,10 @@ mod tests {
         let secrets = secrets().with(SESSION_TOKEN_FIELD, "session-token-value");
         uploader.upload(&file(), &secrets).expect("upload");
         let request = &transport.requests()[0];
-        assert_eq!(header(request, "x-amz-security-token"), "session-token-value");
+        assert_eq!(
+            header(request, "x-amz-security-token"),
+            "session-token-value"
+        );
         assert!(header(request, "authorization").contains("x-amz-security-token"));
         assert!(!format!("{request:?}").contains("top-secret-key"));
     }
@@ -962,7 +913,7 @@ mod tests {
     #[test]
     fn an_empty_content_type_falls_back_to_octet_stream() {
         let (uploader, transport) = uploader(config());
-        let file = UploadFile::new("shot.png", "  ", vec![1_u8]);
+        let file = UploadFile::new("C:\\captures\\shot.png", "shot.png", "  ", vec![1_u8]);
         uploader.upload(&file, &secrets()).expect("upload");
         assert_eq!(
             header(&transport.requests()[0], "content-type"),

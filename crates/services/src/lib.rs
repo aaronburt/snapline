@@ -11,6 +11,8 @@ use ts_rs::TS;
 pub mod actions;
 pub mod app;
 pub mod capture;
+pub mod clipboard_upload;
+pub mod destinations;
 pub mod dto;
 pub mod event;
 pub mod history;
@@ -21,6 +23,7 @@ pub mod saver;
 pub mod settings;
 pub mod thumbs;
 pub mod tools;
+pub mod uninstall;
 pub mod uploads;
 pub mod worker;
 pub mod workflows;
@@ -81,6 +84,7 @@ struct Inner {
     hotkeys: Mutex<hotkeys::HotkeysRuntime>,
     codec: Mutex<Option<Arc<CodecFactory>>>,
     history_host: Mutex<Option<Arc<dyn history::HistoryHost>>>,
+    upload: Mutex<Option<uploads::UploadRuntime>>,
 }
 
 #[derive(Clone)]
@@ -189,6 +193,17 @@ impl Services {
             .and_then(|slot| slot.clone())
     }
 
+    pub fn with_upload_runtime(self, runtime: uploads::UploadRuntime) -> Self {
+        if let Ok(mut slot) = self.inner.upload.lock() {
+            *slot = Some(runtime);
+        }
+        self
+    }
+
+    pub(crate) fn upload_runtime(&self) -> Option<uploads::UploadRuntime> {
+        self.inner.upload.lock().ok().and_then(|slot| slot.clone())
+    }
+
     pub(crate) fn hotkeys_state(
         &self,
     ) -> Result<MutexGuard<'_, hotkeys::HotkeysRuntime>, ServiceError> {
@@ -206,6 +221,7 @@ impl Services {
                 hotkeys: Mutex::new(hotkeys::HotkeysRuntime::default()),
                 codec: Mutex::new(None),
                 history_host: Mutex::new(None),
+                upload: Mutex::new(None),
             }),
         }
     }
@@ -293,7 +309,10 @@ impl Services {
     }
 
     pub fn upload(&self) -> uploads::UploadService {
-        uploads::UploadService::new(self)
+        match self.upload_runtime() {
+            Some(runtime) => uploads::UploadService::with_runtime(self, runtime),
+            None => uploads::UploadService::new(self),
+        }
     }
 
     pub fn workflow(&self) -> workflows::WorkflowService {

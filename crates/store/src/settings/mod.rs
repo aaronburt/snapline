@@ -463,14 +463,8 @@ mod tests {
         assert_eq!(loaded.settings.version, 2);
         assert_eq!(loaded.settings.workflows.list.len(), 1);
         let workflow = &loaded.settings.workflows.list[0];
-        assert_eq!(
-            workflow.id.as_str(),
-            snapline_core::workflow::DEFAULT_WORKFLOW_ID
-        );
-        assert_eq!(
-            workflow.name,
-            snapline_core::workflow::DEFAULT_WORKFLOW_NAME
-        );
+        assert_eq!(workflow.id.as_str(), snapline_core::workflow::DEFAULT_WORKFLOW_ID);
+        assert_eq!(workflow.name, snapline_core::workflow::DEFAULT_WORKFLOW_NAME);
         assert!(workflow.enabled);
         assert_eq!(workflow.hotkey, None);
         assert_eq!(

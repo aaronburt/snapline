@@ -5,6 +5,8 @@ use ts_rs::TS;
 use crate::dto::tool::{ToolReq, ToolResp};
 use crate::{ServiceError, Services};
 
+pub mod combine;
+pub mod convert;
 pub mod ocr;
 pub mod qr;
 pub mod scrolling;
@@ -41,6 +43,11 @@ impl ToolService {
             ToolReq::QrCopyImage { text } => self.qr_copy_image(&text),
             ToolReq::QrSavePng { .. } => Err(ServiceError::NotYet),
             ToolReq::QrOpen { link } => self.qr_open(&link),
+            ToolReq::ConvertPickFile => self.convert_pick_file(),
+            ToolReq::ConvertStart { source, format } => self.convert_start(source, format),
+            ToolReq::ConvertProgress { job_id } => self.convert_progress(job_id),
+            ToolReq::ConvertCancel { job_id } => self.convert_cancel(job_id),
+            ToolReq::ConvertResult { job_id } => self.convert_result(job_id),
         }
     }
 }

@@ -349,10 +349,7 @@ mod tests {
 
     #[test]
     fn window_title_replaces_invalid_characters() {
-        assert_eq!(
-            window_title("a<b>c:d\"e/f\\g|h?i*j"),
-            "a-b-c-d-e-f-g-h-i-j"
-        );
+        assert_eq!(window_title("a<b>c:d\"e/f\\g|h?i*j"), "a-b-c-d-e-f-g-h-i-j");
         assert_eq!(window_title("tab\there\nline"), "tab-here-line");
         assert_eq!(window_title("plain title"), "plain title");
     }

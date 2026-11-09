@@ -48,7 +48,8 @@ impl BodyType {
 
     fn from_sharex(value: &str) -> Option<Self> {
         let value = value.trim();
-        if value.eq_ignore_ascii_case("MultipartFormData") || value.eq_ignore_ascii_case("Multipart")
+        if value.eq_ignore_ascii_case("MultipartFormData")
+            || value.eq_ignore_ascii_case("Multipart")
         {
             Some(Self::MultipartFormData)
         } else if value.eq_ignore_ascii_case("Binary") {
@@ -120,15 +121,12 @@ impl HeaderValues {
     }
 
     pub fn get(&self, name: &str) -> Option<&str> {
-        self.values
-            .get(name)
-            .map(String::as_str)
-            .or_else(|| {
-                self.values
-                    .iter()
-                    .find(|(key, _)| key.eq_ignore_ascii_case(name))
-                    .map(|(_, value)| value.as_str())
-            })
+        self.values.get(name).map(String::as_str).or_else(|| {
+            self.values
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                .map(|(_, value)| value.as_str())
+        })
     }
 
     pub fn is_empty(&self) -> bool {
@@ -319,19 +317,11 @@ pub fn validate_config(config: &CustomUploaderConfig) -> Result<Vec<SxcuWarning>
     if config.request_url.trim().is_empty() {
         return Err(SxcuError::MissingRequestUrl);
     }
-    if config.body == BodyType::MultipartFormData
-        && config.file_form_field.trim().is_empty()
-    {
+    if config.body == BodyType::MultipartFormData && config.file_form_field.trim().is_empty() {
         return Err(SxcuError::MissingFileFormField);
     }
-    if !valid_header_name(&config.file_form_field) && !config.file_form_field.is_empty() {
-        return Err(SxcuError::InvalidHeaderName(
-            config.file_form_field.clone(),
-        ));
-    }
     let mut warnings = Vec::new();
-    if let Some(field_warning) =
-        validate_url(REQUEST_URL_FIELD, &config.request_url, true, false)?
+    if let Some(field_warning) = validate_url(REQUEST_URL_FIELD, &config.request_url, true, false)?
     {
         warnings.push(field_warning);
     }
@@ -641,13 +631,17 @@ mod tests {
 
     #[test]
     fn http_is_a_warning_and_https_is_not() {
-        let secure = import_str(r#"{"Name":"A","RequestURL":"https://example.test/upload","Body":"MultipartFormData","FileFormName":"file","URL":"https://example.test/{json:$.url}"}"#);
+        let secure = import_str(
+            r#"{"Name":"A","RequestURL":"https://example.test/upload","Body":"MultipartFormData","FileFormName":"file","URL":"https://example.test/{json:$.url}"}"#,
+        );
         let secure = match secure {
             Ok(secure) => secure,
             Err(error) => panic!("secure example failed: {error}"),
         };
         assert!(secure.warnings.is_empty());
-        let insecure = import_str(r#"{"Name":"A","RequestURL":"http://example.test/upload","Body":"Binary","URL":"{response}"}"#);
+        let insecure = import_str(
+            r#"{"Name":"A","RequestURL":"http://example.test/upload","Body":"Binary","URL":"{response}"}"#,
+        );
         let insecure = match insecure {
             Ok(insecure) => insecure,
             Err(error) => panic!("insecure example failed: {error}"),
@@ -658,19 +652,29 @@ mod tests {
 
     #[test]
     fn file_and_other_schemes_are_rejected() {
-        let file = import_str(r#"{"Name":"A","RequestURL":"file:///C:/secret.txt","Body":"Binary","URL":"{response}"}"#);
+        let file = import_str(
+            r#"{"Name":"A","RequestURL":"file:///C:/secret.txt","Body":"Binary","URL":"{response}"}"#,
+        );
         assert!(matches!(file, Err(SxcuError::UnsupportedScheme { .. })));
-        let link = import_str(r#"{"Name":"A","RequestURL":"https://example.test/upload","Body":"Binary","URL":"ftp://example.test/file"}"#);
+        let link = import_str(
+            r#"{"Name":"A","RequestURL":"https://example.test/upload","Body":"Binary","URL":"ftp://example.test/file"}"#,
+        );
         assert!(matches!(link, Err(SxcuError::UnsupportedScheme { .. })));
-        let relative = import_str(r#"{"Name":"A","RequestURL":"example.test/upload","Body":"Binary","URL":"{response}"}"#);
+        let relative = import_str(
+            r#"{"Name":"A","RequestURL":"example.test/upload","Body":"Binary","URL":"{response}"}"#,
+        );
         assert!(matches!(relative, Err(SxcuError::InvalidUrl { .. })));
     }
 
     #[test]
     fn unsupported_methods_and_bodies_are_rejected() {
-        let method = import_str(r#"{"Name":"A","RequestMethod":"DELETE","RequestURL":"https://example.test/upload","Body":"Binary","URL":"{response}"}"#);
+        let method = import_str(
+            r#"{"Name":"A","RequestMethod":"DELETE","RequestURL":"https://example.test/upload","Body":"Binary","URL":"{response}"}"#,
+        );
         assert!(matches!(method, Err(SxcuError::UnsupportedMethod(_))));
-        let body = import_str(r#"{"Name":"A","RequestMethod":"POST","RequestURL":"https://example.test/upload","Body":"XML","URL":"{response}"}"#);
+        let body = import_str(
+            r#"{"Name":"A","RequestMethod":"POST","RequestURL":"https://example.test/upload","Body":"XML","URL":"{response}"}"#,
+        );
         assert!(matches!(body, Err(SxcuError::UnsupportedBody(_))));
     }
 
@@ -705,7 +709,9 @@ mod tests {
     #[test]
     fn a_missing_multipart_file_field_is_rejected() {
         assert!(matches!(
-            import_str(r#"{"Name":"A","RequestURL":"https://example.test/upload","Body":"MultipartFormData","URL":"{response}"}"#),
+            import_str(
+                r#"{"Name":"A","RequestURL":"https://example.test/upload","Body":"MultipartFormData","URL":"{response}"}"#
+            ),
             Err(SxcuError::MissingFileFormField)
         ));
     }
@@ -713,14 +719,18 @@ mod tests {
     #[test]
     fn invalid_header_names_are_rejected() {
         assert!(matches!(
-            import_str(r#"{"Name":"A","RequestURL":"https://example.test/upload","Body":"Binary","Headers":{"Bad Header":"x"},"URL":"{response}"}"#),
+            import_str(
+                r#"{"Name":"A","RequestURL":"https://example.test/upload","Body":"Binary","Headers":{"Bad Header":"x"},"URL":"{response}"}"#
+            ),
             Err(SxcuError::InvalidHeaderName(_))
         ));
     }
 
     #[test]
     fn legacy_url_fields_are_migrated() {
-        let imported = import_str(r#"{"Name":"A","RequestURL":"https://example.test/$random$","Body":"Binary","URL":"$json:data.url$"}"#);
+        let imported = import_str(
+            r#"{"Name":"A","RequestURL":"https://example.test/$random$","Body":"Binary","URL":"$json:data.url$"}"#,
+        );
         let imported = match imported {
             Ok(imported) => imported,
             Err(error) => panic!("legacy example failed: {error}"),
@@ -732,14 +742,18 @@ mod tests {
     #[test]
     fn invalid_json_paths_are_rejected() {
         assert!(matches!(
-            import_str(r#"{"Name":"A","RequestURL":"https://example.test/upload","Body":"Binary","URL":"{json:}"}"#),
+            import_str(
+                r#"{"Name":"A","RequestURL":"https://example.test/upload","Body":"Binary","URL":"{json:}"}"#
+            ),
             Err(SxcuError::InvalidTemplate { .. })
         ));
     }
 
     #[test]
     fn the_name_falls_back_to_the_host() {
-        let imported = import_str(r#"{"RequestURL":"https://upload.example.test:8443/put","Body":"Binary","URL":"{response}"}"#);
+        let imported = import_str(
+            r#"{"RequestURL":"https://upload.example.test:8443/put","Body":"Binary","URL":"{response}"}"#,
+        );
         let imported = match imported {
             Ok(imported) => imported,
             Err(error) => panic!("nameless example failed: {error}"),
@@ -749,7 +763,9 @@ mod tests {
 
     #[test]
     fn the_link_falls_back_to_the_response() {
-        let imported = import_str(r#"{"Name":"A","RequestURL":"https://example.test/upload","Body":"Binary"}"#);
+        let imported = import_str(
+            r#"{"Name":"A","RequestURL":"https://example.test/upload","Body":"Binary"}"#,
+        );
         let imported = match imported {
             Ok(imported) => imported,
             Err(error) => panic!("linkless example failed: {error}"),

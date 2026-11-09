@@ -201,7 +201,9 @@ pub const CATALOGUE: &[ActionDef] = &[
 ];
 
 pub fn find(id: &ActionId) -> Option<&'static ActionDef> {
-    CATALOGUE.iter().find(|definition| definition.id == id.as_str())
+    CATALOGUE
+        .iter()
+        .find(|definition| definition.id == id.as_str())
 }
 
 pub fn is_workflow(id: &ActionId) -> bool {

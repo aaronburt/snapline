@@ -8,6 +8,7 @@ mod ipc;
 mod logging;
 mod panel;
 mod protocol;
+mod protocol_combine;
 mod theme;
 mod tray;
 mod webview_tuning;
@@ -17,18 +18,26 @@ use std::sync::Arc;
 
 use cli::{Args, BudgetWindow};
 use snapline_core::chord::Chord;
+use snapline_core::geometry::{Point, Px};
 use snapline_core::hotkey_plan::{Blocked, Owner};
+use snapline_core::ports::OverlayTheme;
+use snapline_services::capture::{CaptureContext, CaptureService, Countdown, LastRegion};
 use snapline_services::hotkeys::{HotkeyInput, PrtscRegistry};
 use snapline_services::saver::{ServicePorts, SystemClock};
 use snapline_services::worker;
 use snapline_services::{CodecFactory, ServiceError, Services};
 use snapline_store::io::Paths;
+use snapline_store::settings::Settings;
+use snapline_win::capture::{CaptureBackend, CaptureOptions};
 use snapline_win::clipboard::Clipboard;
 use snapline_win::input::{InputEvent, InputHandle};
 use snapline_win::ports_impls::{SoundPlayer, ToastNotifier};
 use snapline_win::wic::WicCodec;
 use tauri::{Manager, RunEvent};
 use windows::WindowManager;
+
+use ::windows::Win32::Foundation::POINT;
+use ::windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 struct InputPort(InputHandle);
 
@@ -70,6 +79,56 @@ impl PrtscRegistry for PrtscPort {
 
 struct InputState(InputHandle);
 
+struct AppCaptureContext {
+    services: Services,
+}
+
+impl CaptureContext for AppCaptureContext {
+    fn capture_settings(&self) -> Result<Settings, ServiceError> {
+        self.services.settings_snapshot()
+    }
+
+    fn save_last_region(&self, region: LastRegion) -> Result<(), ServiceError> {
+        <Services as CaptureContext>::save_last_region(&self.services, region)
+    }
+
+    fn foreground_window(&self) -> Option<snapline_core::ids::WindowId> {
+        CaptureBackend::foreground_window()
+    }
+
+    fn window_under_cursor(&self) -> Option<snapline_core::ids::WindowId> {
+        CaptureBackend::window_under_cursor()
+    }
+
+    fn cursor_position(&self) -> Option<Point> {
+        let mut point = POINT::default();
+        // SAFETY: the point pointer is writable and GetCursorPos does not retain it.
+        if unsafe { GetCursorPos(&mut point) }.is_err() {
+            return None;
+        }
+        Some(Point::new(Px(point.x), Px(point.y)))
+    }
+
+    fn overlay_theme(&self) -> OverlayTheme {
+        if snapline_win::theme::is_light() {
+            OverlayTheme::Light
+        } else {
+            OverlayTheme::Dark
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct CountdownAdapter;
+
+impl Countdown for CountdownAdapter {
+    fn run(&self, seconds: u8) -> Result<(), ServiceError> {
+        snapline_win::countdown::Countdown::new()
+            .run(seconds)
+            .map_err(|error| ServiceError::Internal(error.to_string()))
+    }
+}
+
 fn forward_input(app: &tauri::AppHandle, event: InputEvent) {
     match event {
         InputEvent::Action(action) => {
@@ -92,10 +151,14 @@ fn forward_input(app: &tauri::AppHandle, event: InputEvent) {
 }
 
 fn main() -> anyhow::Result<()> {
+    let startup_args = Args::from_env();
+    if startup_args.uninstall_cleanup {
+        std::process::exit(cli::run_uninstall_cleanup());
+    }
+
     crash::install();
     logging::init();
 
-    let startup_args = Args::from_env();
     let services = Services::with_paths(Paths::discover()?)?
         .with_codec_factory(codec_factory())
         .with_history_host(Arc::new(history_host::WindowsHistoryHost::new(Arc::new(
@@ -103,6 +166,18 @@ fn main() -> anyhow::Result<()> {
         ))));
     let startup_services = services.clone();
     let thumb_services = services.clone();
+    let capture_settings = services.settings_snapshot()?;
+    snapline_services::capture::install(CaptureService::new(
+        Arc::new(CaptureBackend::new(CaptureOptions {
+            include_cursor: capture_settings.capture.include_cursor,
+        })),
+        Arc::new(snapline_overlay::OverlayHostImpl::new()),
+        Arc::new(Clipboard::new()),
+        Arc::new(CountdownAdapter),
+        Arc::new(AppCaptureContext {
+            services: services.clone(),
+        }),
+    ))?;
     let worker = worker::Worker::start(services.clone(), || {
         let codec = WicCodec::new()
             .map_err(|error| ServiceError::Internal(error.to_string()))?;
@@ -122,6 +197,9 @@ fn main() -> anyhow::Result<()> {
         .manage(worker_handle)
         .register_uri_scheme_protocol("thumb", move |_context, request| {
             protocol::handle(&thumb_services, request)
+        })
+        .register_uri_scheme_protocol("combine", |_context, request| {
+            protocol_combine::handle(request)
         })
         .invoke_handler(tauri::generate_handler![
             ipc::app::ipc_app,

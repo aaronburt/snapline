@@ -4,6 +4,8 @@
 pub mod actions;
 pub mod annotate;
 pub mod chord;
+pub mod colour;
+pub mod combine;
 pub mod ffmpeg_args;
 pub mod geometry;
 pub mod hotkey_plan;
@@ -15,6 +17,7 @@ pub mod overlay;
 pub mod ports;
 pub mod qr;
 pub mod recording;
+pub mod ruler;
 pub mod secret;
 pub mod stitch;
 pub mod workflow;

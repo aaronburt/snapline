@@ -32,9 +32,7 @@ pub fn run(root: &Path) -> Result<()> {
 }
 
 fn visit(root: &Path, dir: &Path, problems: &mut Vec<String>) -> Result<()> {
-    for entry in
-        fs::read_dir(dir).with_context(|| format!("cannot read {}", dir.display()))?
-    {
+    for entry in fs::read_dir(dir).with_context(|| format!("cannot read {}", dir.display()))? {
         let entry = entry?;
         let path = entry.path();
         let relative = path
@@ -43,7 +41,10 @@ fn visit(root: &Path, dir: &Path, problems: &mut Vec<String>) -> Result<()> {
             .to_string_lossy()
             .replace('\\', "/");
         if path.is_dir() {
-            if SKIP_DIRS.iter().any(|skip| relative == *skip || relative.starts_with(&format!("{skip}/"))) {
+            if SKIP_DIRS
+                .iter()
+                .any(|skip| relative == *skip || relative.starts_with(&format!("{skip}/")))
+            {
                 continue;
             }
             visit(root, &path, problems)?;
@@ -59,8 +60,8 @@ fn visit(root: &Path, dir: &Path, problems: &mut Vec<String>) -> Result<()> {
         if SKIP_DIRS.contains(&relative.as_str()) {
             continue;
         }
-        let source = fs::read_to_string(&path)
-            .with_context(|| format!("cannot read {}", path.display()))?;
+        let source =
+            fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
         scan_file(&relative, extension, &source, problems);
     }
     Ok(())
@@ -394,10 +395,7 @@ mod tests {
 
     #[test]
     fn rejects_safety_not_above_unsafe() {
-        assert_eq!(
-            found("a.rs", "rs", "// SAFETY: nope\nfn f() {}\n").len(),
-            1
-        );
+        assert_eq!(found("a.rs", "rs", "// SAFETY: nope\nfn f() {}\n").len(), 1);
     }
 
     #[test]

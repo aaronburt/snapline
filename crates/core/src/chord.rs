@@ -299,12 +299,11 @@ mod tests {
     use super::*;
 
     const KEYS: &[&str] = &[
-        "PrtSc", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O",
-        "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "0", "1", "2", "3", "4", "5",
-        "6", "7", "8", "9", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11",
-        "F12", "F13", "F14", "F15", "F16", "F17", "F18", "F19", "F20", "F21", "F22", "F23",
-        "F24", "Pause", "Insert", "Delete", "Home", "End", "PageUp", "PageDown", "Up", "Down",
-        "Left", "Right",
+        "PrtSc", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P",
+        "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "0", "1", "2", "3", "4", "5", "6", "7",
+        "8", "9", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "F13",
+        "F14", "F15", "F16", "F17", "F18", "F19", "F20", "F21", "F22", "F23", "F24", "Pause",
+        "Insert", "Delete", "Home", "End", "PageUp", "PageDown", "Up", "Down", "Left", "Right",
     ];
 
     const DEFAULTS: &[&str] = &[
@@ -399,7 +398,9 @@ mod tests {
         for text in ["PrtSc", "Pause", "F1", "F24", "f12"] {
             assert!(Chord::parse(text).is_ok(), "{text}");
         }
-        for text in ["A", "0", "Up", "Insert", "Delete", "Home", "End", "PageUp", "PageDown"] {
+        for text in [
+            "A", "0", "Up", "Insert", "Delete", "Home", "End", "PageUp", "PageDown",
+        ] {
             assert_eq!(
                 Chord::parse(text),
                 Err(ChordError::MissingModifier(chord_key(text)))

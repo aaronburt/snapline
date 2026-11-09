@@ -113,9 +113,7 @@ pub fn stitch(frames: &[Image], options: &StitchOptions) -> Result<Stitched, Sti
         let content = Content::from_image(frame, sticky_top, sticky_bottom);
         let canvas_height = u32::try_from(hashes.len()).unwrap_or(0);
         let content_height = content.height();
-        let max_overlap = content_height
-            .saturating_sub(1)
-            .min(canvas_height);
+        let max_overlap = content_height.saturating_sub(1).min(canvas_height);
         let overlap = find_overlap(
             &rows,
             &hashes,
@@ -180,20 +178,13 @@ pub fn stitch(frames: &[Image], options: &StitchOptions) -> Result<Stitched, Sti
 }
 
 fn sticky_bands(frames: &[Image]) -> (u32, u32) {
-    let min_height = frames
-        .iter()
-        .map(Image::height)
-        .min()
-        .unwrap_or_default();
+    let min_height = frames.iter().map(Image::height).min().unwrap_or_default();
     let mut top = 0_u32;
     while top < min_height {
         let Some(row) = frames[0].row(top) else {
             break;
         };
-        if frames[1..]
-            .iter()
-            .all(|frame| frame.row(top) == Some(row))
-        {
+        if frames[1..].iter().all(|frame| frame.row(top) == Some(row)) {
             top += 1;
         } else {
             break;
@@ -205,10 +196,7 @@ fn sticky_bands(frames: &[Image]) -> (u32, u32) {
         let Some(row) = frames[0].row(y) else {
             break;
         };
-        if frames[1..]
-            .iter()
-            .all(|frame| frame.row(y) == Some(row))
-        {
+        if frames[1..].iter().all(|frame| frame.row(y) == Some(row)) {
             bottom += 1;
         } else {
             break;
@@ -286,16 +274,15 @@ mod tests {
     }
 
     fn band_pixel(y: u32, x: u32) -> [u8; 4] {
-        [u8::try_from(y % 7).unwrap_or(0), 0, u8::try_from(x % 5).unwrap_or(0), 255]
+        [
+            u8::try_from(y % 7).unwrap_or(0),
+            0,
+            u8::try_from(x % 5).unwrap_or(0),
+            255,
+        ]
     }
 
-    fn frame(
-        source: &Image,
-        top: u32,
-        height: u32,
-        header: u32,
-        footer: u32,
-    ) -> Image {
+    fn frame(source: &Image, top: u32, height: u32, header: u32, footer: u32) -> Image {
         let mut image = Image::bgra(source.width(), height).expect("frame");
         for y in 0..height {
             for x in 0..source.width() {
@@ -348,10 +335,7 @@ mod tests {
     #[test]
     fn no_overlap_appends_the_whole_capture() {
         let source = page(8, 160);
-        let frames = vec![
-            viewport(&source, 0, 40),
-            viewport(&source, 80, 40),
-        ];
+        let frames = vec![viewport(&source, 0, 40), viewport(&source, 80, 40)];
         let stitched = no_sticky(frames);
         assert_eq!(stitched.image.height(), 80);
         assert_eq!(stitched.meta.offsets, vec![0, 40]);
@@ -480,10 +464,7 @@ mod tests {
     #[test]
     fn an_overlap_shorter_than_the_minimum_is_not_used() {
         let source = page(8, 100);
-        let frames = vec![
-            viewport(&source, 20, 40),
-            viewport(&source, 56, 40),
-        ];
+        let frames = vec![viewport(&source, 20, 40), viewport(&source, 56, 40)];
         let stitched = stitch(
             &frames,
             &StitchOptions {

@@ -258,10 +258,7 @@ mod tests {
         assert_eq!(
             result.blocked,
             vec![
-                Blocked::internal(
-                    chord("Ctrl+Shift+A"),
-                    vec![owner("a"), owner("b")]
-                ),
+                Blocked::internal(chord("Ctrl+Shift+A"), vec![owner("a"), owner("b")]),
                 Blocked::external(chord("Alt+PrtSc"), owner("c")),
             ]
         );
@@ -292,21 +289,13 @@ mod tests {
             }
         );
         assert_eq!(
-            preview(
-                &entries,
-                &(owner("capture_screen"), chord("PrtSc")),
-                &[]
-            ),
+            preview(&entries, &(owner("capture_screen"), chord("PrtSc")), &[]),
             Preview::Internal {
                 owners: vec![owner("capture_region")]
             }
         );
         assert_eq!(
-            preview(
-                &entries,
-                &(owner("capture_region"), chord("PrtSc")),
-                &[]
-            ),
+            preview(&entries, &(owner("capture_region"), chord("PrtSc")), &[]),
             Preview::Free
         );
         assert_eq!(

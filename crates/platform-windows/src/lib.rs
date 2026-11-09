@@ -1,8 +1,10 @@
 #![doc = "Win32 and WinRT adapters for Snapline's core ports. This crate owns monitor and capture backends, the clipboard, Credential Manager, hotkey input, PrtSc takeover, autostart, toasts, sounds, WIC, shell operations, dialogs, proxy lookup, OCR, scrolling, FFmpeg process control, audio capture and known_hosts. It may use unsafe code, each FFI call wrapped with a SAFETY line."]
 
+pub mod audio;
 pub mod autostart;
 pub mod capture;
 pub mod clipboard;
+pub mod countdown;
 pub mod credentials;
 pub mod dialogs;
 pub mod ffmpeg;
@@ -16,5 +18,8 @@ pub mod prtsc;
 pub mod scroll;
 pub mod shell;
 pub mod sound;
+pub mod task_dialog;
 pub mod theme;
+pub mod uia;
 pub mod wic;
+pub mod windows_enum;

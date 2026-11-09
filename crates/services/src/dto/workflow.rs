@@ -380,7 +380,10 @@ mod tests {
         };
         let workflow = input.into_workflow("annotate", "Annotate and share".to_owned());
         let workflow = workflow.expect("workflow");
-        assert_eq!(workflow.hotkey.map(|chord| chord.to_string()), Some("Ctrl+Shift+A".to_owned()));
+        assert_eq!(
+            workflow.hotkey.map(|chord| chord.to_string()),
+            Some("Ctrl+Shift+A".to_owned())
+        );
     }
 
     #[test]

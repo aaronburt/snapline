@@ -15,6 +15,7 @@
 pub mod d2d;
 pub mod icons;
 pub mod magnifier;
+pub mod port_impl;
 pub mod readout;
 pub mod render;
 pub mod thread;

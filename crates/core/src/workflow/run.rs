@@ -6,9 +6,7 @@ use time::OffsetDateTime;
 use crate::image::Image;
 use crate::ports::{Notice, SoundId};
 
-use super::{
-    Step, UploadId, Violation, Workflow, WorkflowError, WorkflowId, WorkflowPorts,
-};
+use super::{Step, UploadId, Violation, Workflow, WorkflowError, WorkflowId, WorkflowPorts};
 
 pub struct SaveRequest<'a> {
     pub image: Option<&'a Image>,
@@ -125,12 +123,7 @@ pub fn run(
         return Err(RunError {
             kind: RunErrorKind::Disabled,
             report: build_report(
-                workflow,
-                started_at,
-                started_at,
-                outcomes,
-                deferred,
-                context,
+                workflow, started_at, started_at, outcomes, deferred, context,
             ),
         });
     }
@@ -139,12 +132,7 @@ pub fn run(
         return Err(RunError {
             kind: RunErrorKind::Invalid(violations),
             report: build_report(
-                workflow,
-                started_at,
-                started_at,
-                outcomes,
-                deferred,
-                context,
+                workflow, started_at, started_at, outcomes, deferred, context,
             ),
         });
     }
@@ -404,9 +392,10 @@ fn execute_step(
             Ok(StepStatus::Done)
         }
         Step::Notify => {
-            ports
-                .notify
-                .toast(Notice::new("Snapline", format!("{} finished.", workflow.name)));
+            ports.notify.toast(Notice::new(
+                "Snapline",
+                format!("{} finished.", workflow.name),
+            ));
             Ok(StepStatus::Done)
         }
         Step::PlaySound => {
@@ -712,7 +701,10 @@ mod tests {
         assert_eq!(report.outcomes.len(), 3);
         assert!(context.image.is_some());
         assert!(context.copied_image);
-        assert_eq!(fake.capture_calls.borrow().as_slice(), &[CaptureKind::Region]);
+        assert_eq!(
+            fake.capture_calls.borrow().as_slice(),
+            &[CaptureKind::Region]
+        );
         assert_eq!(fake.annotate_calls.get(), 1);
         assert_eq!(fake.clipboard_images.borrow().len(), 1);
         assert!(report.image);
@@ -742,11 +734,7 @@ mod tests {
         fake.capture_mode.set(Mode::NotAvailable);
         let workflow = flow(
             "Scroll",
-            vec![
-                capture(CaptureKind::Scrolling),
-                Step::Save,
-                Step::Notify,
-            ],
+            vec![capture(CaptureKind::Scrolling), Step::Save, Step::Notify],
         );
         let mut context = RunContext::default();
         let error = run(&workflow, &fake.ports(), &mut context).expect_err("not available");
@@ -777,10 +765,7 @@ mod tests {
         );
         let mut context = RunContext::default();
         let error = run(&workflow, &fake.ports(), &mut context).expect_err("not available");
-        assert_eq!(
-            error.kind,
-            RunErrorKind::NotAvailableYet { step: "Record" }
-        );
+        assert_eq!(error.kind, RunErrorKind::NotAvailableYet { step: "Record" });
         assert_eq!(error.to_string(), "Record is not available yet");
         assert_eq!(error.report.outcomes.len(), 1);
         assert!(context.image.is_some());
@@ -882,9 +867,12 @@ mod tests {
         let report = run(&workflow, &fake.ports(), &mut context).expect("run");
         assert_eq!(report.outcomes.len(), 4);
         assert_eq!(report.deferred, vec![2]);
-        assert_eq!(report.outcomes[1].status, StepStatus::HandedOff {
-            upload_id: UploadId::new(7)
-        });
+        assert_eq!(
+            report.outcomes[1].status,
+            StepStatus::HandedOff {
+                upload_id: UploadId::new(7)
+            }
+        );
         assert_eq!(
             fake.upload_calls.borrow().as_slice(),
             &[(Some(DestId::new("imgur")), true)]
