@@ -1464,7 +1464,7 @@ The executing agent must not answer these itself.
 | 3 | Screenshot | Built, not tested | 574495e |
 | 4 | Saving to disk and History | Built, not tested | 574495e |
 | 5 | Annotation | Built, not tested | ad3e7f7 |
-| 6 | Networking and uploads | Not started | |
+| 6 | Networking and uploads | Built, not tested | 1ed0d15 |
 | 7 | Workflows | Built, not tested | |
 | 8 | Recording | Not started | |
 | 9 | Tools | Not started | |

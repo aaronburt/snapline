@@ -1,6 +1,7 @@
 use thiserror::Error;
 
-use super::workflows::default_workflow;
+use snapline_core::presets::initial_workflows;
+use snapline_core::workflow::Workflow;
 
 pub const CURRENT_VERSION: u32 = 2;
 
@@ -51,20 +52,26 @@ fn step_for(version: u32) -> Option<Step> {
 }
 
 fn add_default_workflow(mut table: toml::Table) -> Result<toml::Table, MigrationError> {
-    let default = default_workflow();
-    let workflow =
-        toml::Value::try_from(&default).map_err(|_| MigrationError::DefaultWorkflow)?;
     if !table.contains_key("workflows") {
         table.insert("workflows".to_owned(), toml::Value::Table(toml::Table::new()));
     }
     if let Some(toml::Value::Table(workflows)) = table.get_mut("workflows") {
-        let empty = match workflows.get("list") {
-            None => true,
-            Some(toml::Value::Array(items)) => items.is_empty(),
-            Some(_) => false,
+        let existing: Vec<Workflow> = match workflows.get("list") {
+            Some(toml::Value::Array(items)) if !items.is_empty() => {
+                toml::Value::Array(items.clone())
+                    .try_into()
+                    .unwrap_or_default()
+            }
+            _ => Vec::new(),
         };
-        if empty {
-            workflows.insert("list".to_owned(), toml::Value::Array(vec![workflow]));
+        if existing.is_empty() {
+            let presets = initial_workflows(&existing);
+            let values = presets
+                .iter()
+                .map(toml::Value::try_from)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| MigrationError::DefaultWorkflow)?;
+            workflows.insert("list".to_owned(), toml::Value::Array(values));
         }
     }
     Ok(table)
@@ -97,7 +104,7 @@ mod tests {
         let Some(toml::Value::Array(list)) = workflows.get("list") else {
             panic!("workflow list");
         };
-        assert_eq!(list.len(), 1);
+        assert_eq!(list.len(), 5);
         let Some(toml::Value::Table(workflow)) = list.first() else {
             panic!("default workflow");
         };

@@ -47,6 +47,7 @@ pub struct HotkeysRuntime {
     bindings: Vec<(Owner, Chord)>,
     blocked: Vec<Blocked>,
     external: Vec<Chord>,
+    labels: BTreeMap<String, String>,
     paused: bool,
     applied: bool,
     prtsc_applied: bool,
@@ -62,6 +63,7 @@ impl Default for HotkeysRuntime {
             bindings: Vec::new(),
             blocked: Vec::new(),
             external: Vec::new(),
+            labels: BTreeMap::new(),
             paused: false,
             applied: false,
             prtsc_applied: false,
@@ -152,6 +154,7 @@ impl HotkeysService {
     fn compute(&self, notify: bool) -> Result<(), ServiceError> {
         let settings = self.services.settings_snapshot()?;
         let entries = collect_entries(&settings);
+        let labels = workflow_labels(&settings.workflows);
         let plan = hotkey_plan::plan(&entries);
         let (input, paused) = {
             let runtime = self.runtime()?;
@@ -177,6 +180,7 @@ impl HotkeysService {
             };
             runtime.blocked = full.blocked.clone();
             runtime.external = failures;
+            runtime.labels = labels;
             runtime.applied = true;
         }
         if notify && settings.hotkeys.warn_about_clashes && !full.blocked.is_empty() {
@@ -296,8 +300,26 @@ fn workflow_entries(workflows: &Workflows) -> Vec<(String, bool, String)> {
     workflows.list.iter().filter_map(workflow_entry).collect()
 }
 
-fn workflow_entry(_workflow: &Workflow) -> Option<(String, bool, String)> {
-    None
+fn workflow_entry(workflow: &Workflow) -> Option<(String, bool, String)> {
+    let chord = workflow.hotkey?;
+    Some((
+        workflow.id.as_str().to_owned(),
+        workflow.enabled,
+        chord.to_string(),
+    ))
+}
+
+fn workflow_labels(workflows: &Workflows) -> BTreeMap<String, String> {
+    workflows
+        .list
+        .iter()
+        .map(|workflow| {
+            (
+                format!("{}{}", actions::WORKFLOW_PREFIX, workflow.id.as_str()),
+                workflow.name.clone(),
+            )
+        })
+        .collect()
 }
 
 pub fn label_for(owner: &Owner) -> String {
@@ -309,17 +331,28 @@ pub fn label_for(owner: &Owner) -> String {
         .map_or_else(|| id.to_owned(), |definition| definition.label.to_owned())
 }
 
+fn label_with(owner: &Owner, labels: &BTreeMap<String, String>) -> String {
+    labels
+        .get(owner.as_str())
+        .cloned()
+        .unwrap_or_else(|| label_for(owner))
+}
+
 fn state_response(runtime: &HotkeysRuntime) -> HotkeysResp {
     let bindings = runtime
         .bindings
         .iter()
         .map(|(owner, chord)| BindingDto {
             owner: owner.as_str().to_owned(),
-            label: label_for(owner),
+            label: label_with(owner, &runtime.labels),
             chord: chord.to_string(),
         })
         .collect();
-    let blocked = runtime.blocked.iter().flat_map(blocked_rows).collect();
+    let blocked = runtime
+        .blocked
+        .iter()
+        .flat_map(|blocked| blocked_rows(blocked, &runtime.labels))
+        .collect();
     HotkeysResp::State {
         bindings,
         blocked,
@@ -327,7 +360,7 @@ fn state_response(runtime: &HotkeysRuntime) -> HotkeysResp {
     }
 }
 
-fn blocked_rows(blocked: &Blocked) -> Vec<BlockedDto> {
+fn blocked_rows(blocked: &Blocked, labels: &BTreeMap<String, String>) -> Vec<BlockedDto> {
     let reason = match blocked.reason {
         BlockReason::Internal => BlockedReasonDto::Internal,
         BlockReason::External => BlockedReasonDto::External,
@@ -337,7 +370,7 @@ fn blocked_rows(blocked: &Blocked) -> Vec<BlockedDto> {
         .iter()
         .map(|owner| BlockedDto {
             owner: owner.as_str().to_owned(),
-            label: label_for(owner),
+            label: label_with(owner, labels),
             chord: blocked.chord.to_string(),
             reason,
         })
@@ -500,6 +533,84 @@ mod tests {
                 (Owner::new("capture_region"), chord("PrtSc")),
                 (Owner::new("workflow:annotate"), chord("Ctrl+Alt+R")),
             ]
+        );
+    }
+
+    #[test]
+    fn chord_collection_adds_every_enabled_workflow_chord() {
+        let bindings = BTreeMap::from([("capture_region".to_owned(), "PrtSc".to_owned())]);
+        let workflows = vec![
+            (
+                "annotate-and-share".to_owned(),
+                true,
+                "Ctrl+Shift+A".to_owned(),
+            ),
+            ("bug-report".to_owned(), true, "Ctrl+Alt+R".to_owned()),
+        ];
+        let entries = plan_entries(&bindings, &workflows);
+        assert_eq!(
+            entries,
+            vec![
+                (Owner::new("capture_region"), chord("PrtSc")),
+                (
+                    Owner::new("workflow:annotate-and-share"),
+                    chord("Ctrl+Shift+A")
+                ),
+                (Owner::new("workflow:bug-report"), chord("Ctrl+Alt+R")),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_workflow_without_a_chord_contributes_nothing() {
+        let workflow = snapline_store::settings::workflows::default_workflow();
+        assert_eq!(workflow_entry(&workflow), None);
+        let workflows: Vec<(String, bool, String)> = Vec::new();
+        assert!(plan_entries(&BTreeMap::new(), &workflows).is_empty());
+    }
+
+    #[test]
+    fn an_enabled_workflow_clashing_with_an_action_blocks_both() {
+        let bindings = BTreeMap::from([
+            ("capture_region".to_owned(), "Ctrl+Shift+A".to_owned()),
+            ("capture_window".to_owned(), "Alt+PrtSc".to_owned()),
+        ]);
+        let workflows = vec![(
+            "annotate-and-share".to_owned(),
+            true,
+            "Ctrl+Shift+A".to_owned(),
+        )];
+        let entries = plan_entries(&bindings, &workflows);
+        let plan = hotkey_plan::plan(&entries);
+        assert_eq!(
+            plan.blocked,
+            vec![Blocked::internal(
+                chord("Ctrl+Shift+A"),
+                vec![
+                    Owner::new("capture_region"),
+                    Owner::new("workflow:annotate-and-share"),
+                ]
+            )]
+        );
+        assert_eq!(
+            plan.bind,
+            vec![(Owner::new("capture_window"), chord("Alt+PrtSc"))]
+        );
+    }
+
+    #[test]
+    fn workflow_labels_use_the_saved_name() {
+        let mut workflow =
+            snapline_core::workflow::Workflow::new("annotate-and-share", "Annotate and share");
+        workflow.hotkey = Some(chord("Ctrl+Shift+A"));
+        let workflows = Workflows {
+            list: vec![workflow],
+            extra: toml::Table::new(),
+        };
+        let labels = workflow_labels(&workflows);
+        assert_eq!(
+            labels.get("workflow:annotate-and-share"),
+            Some(&"Annotate and share".to_owned())
         );
     }
 

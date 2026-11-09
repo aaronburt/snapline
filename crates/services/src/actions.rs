@@ -38,6 +38,13 @@ pub fn target(action: &ActionId) -> Option<Target> {
 
 pub fn dispatch(action: &ActionId, services: &Services) -> Result<(), ServiceError> {
     match target(action) {
+        Some(Target::Capture) if action.as_str() == "capture_region" => {
+            match workflows::installed_runner() {
+                Ok(runner) => runner.run_action(action).map(|_| ()),
+                Err(ServiceError::NotYet) => capture::run(action, services),
+                Err(error) => Err(error),
+            }
+        }
         Some(Target::Capture) => capture::run(action, services),
         Some(Target::Recording) => recording::run(action, services),
         Some(Target::Tools) => tools::run(action, services),

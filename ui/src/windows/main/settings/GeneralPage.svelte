@@ -2,22 +2,16 @@
   import { onMount, tick } from 'svelte';
   import Logo from '../../../components/Logo.svelte';
   import Card from '../../../components/Card.svelte';
-  import Icon from '../../../components/Icon.svelte';
-  import Button from '../../../components/Button.svelte';
   import ToggleRow from '../../../components/ToggleRow.svelte';
   import SelectRow from '../../../components/SelectRow.svelte';
   import SegmentedRow from '../../../components/SegmentedRow.svelte';
   import RangeRow from '../../../components/RangeRow.svelte';
   import FieldRow from '../../../components/FieldRow.svelte';
-  import StepList from '../../../components/StepList.svelte';
-  import type { StepItem } from '../../../components/types';
-  import type { IconName } from '../../../lib/icons';
-  import { navigate } from '../../../router';
+  import DefaultWorkflowSection from './DefaultWorkflowSection.svelte';
   import SettingsPage from './SettingsPage.svelte';
   import SettingsSection from './SettingsSection.svelte';
   import {
     IMAGE_FORMAT_OPTIONS,
-    LINK_FORMAT_OPTIONS,
     NAME_TOKENS,
     SUBFOLDER_OPTIONS,
     imageFormatValue,
@@ -26,7 +20,6 @@
     requestPreview,
     settings,
     updateGeneral,
-    updateWorkflow,
   } from './settings';
 
   interface Props {
@@ -61,62 +54,6 @@
       }
     };
   });
-
-  let steps = $state<StepItem[]>([]);
-
-  interface StepMeta {
-    id: string;
-    label: string;
-    icon: IconName;
-    note?: string;
-  }
-
-  const STEP_META: Record<string, StepMeta> = {
-    copy_image: { id: 'copy', label: 'Copy image to clipboard', icon: 'copy' },
-    annotate: { id: 'edit', label: 'Open in editor to annotate', icon: 'edit' },
-    save: { id: 'save', label: 'Save to folder', icon: 'folder' },
-    upload: {
-      id: 'upload',
-      label: 'Upload to default destination',
-      icon: 'upload',
-      note: 'Save locally only',
-    },
-    copy_link: { id: 'link', label: 'Copy link to clipboard', icon: 'link' },
-    play_sound: { id: 'sound', label: 'Play a sound', icon: 'speaker' },
-  };
-
-  const STEP_KINDS: Record<string, string> = {
-    copy: 'copy_image',
-    edit: 'annotate',
-    save: 'save',
-    upload: 'upload',
-    link: 'copy_link',
-    sound: 'play_sound',
-  };
-
-  $effect(() => {
-    steps = $settings.general.defaultWorkflow.map((step, index) => {
-      const meta = STEP_META[step.kind];
-      return {
-        id: meta?.id ?? `step-${index}`,
-        label: meta?.label ?? step.kind,
-        icon: meta?.icon ?? 'gear',
-        checked: step.enabled,
-        note: meta?.note,
-      };
-    });
-  });
-
-  function applySteps(items: StepItem[]): void {
-    updateWorkflow(
-      items.map((item) => ({
-        kind: STEP_KINDS[item.id] ?? item.id,
-        enabled: item.checked ?? false,
-      })),
-    );
-  }
-
-  const workflowCount = 5;
 
   function matches(title: string, description = ''): boolean {
     const needle = filter.trim().toLowerCase();
@@ -166,9 +103,7 @@
   const folderVisible = $derived(
     matches('Save captures to', 'Captures are kept on this PC even after they are uploaded'),
   );
-  const subfoldersVisible = $derived(
-    matches('Subfolders', 'Organise saved files automatically'),
-  );
+  const subfoldersVisible = $derived(matches('Subfolders', 'Organise saved files automatically'));
   const formatVisible = $derived(
     matches('Image format', 'PNG is lossless; the others are smaller'),
   );
@@ -178,30 +113,13 @@
   );
 
   const namingVisible = $derived(
-    matches('File naming', 'Click a token to add it. Tokens are filled in at the moment of capture.') ||
+    matches(
+      'File naming',
+      'Click a token to add it. Tokens are filled in at the moment of capture.',
+    ) ||
       matches('Name pattern') ||
       matches('Preview'),
   );
-
-  const stepsVisible = $derived(
-    matches(
-      'Default workflow · PrtSc',
-      'What happens after a capture. Each hotkey can run its own workflow — this is the one PrtSc and the tray use.',
-    ) ||
-      matches('Copy image to clipboard') ||
-      matches('Open in editor to annotate') ||
-      matches('Save to folder') ||
-      matches('Upload to default destination') ||
-      matches('Copy link to clipboard') ||
-      matches('Play a sound'),
-  );
-  const linkFormatVisible = $derived(
-    matches('Copied link format', 'What gets pasted when you press Ctrl+V'),
-  );
-  const otherWorkflowsVisible = $derived(
-    matches('Other workflows', 'Per-hotkey workflows are edited in the app under Workflows'),
-  );
-  const showWorkflow = $derived(stepsVisible || linkFormatVisible || otherWorkflowsVisible);
 </script>
 
 <SettingsPage title="General">
@@ -338,40 +256,7 @@
     </SettingsSection>
   {/if}
 
-  {#if showWorkflow}
-    <SettingsSection
-      title="Default workflow · PrtSc"
-      description="What happens after a capture. Each hotkey can run its own workflow — this is the one PrtSc and the tray use."
-    >
-      {#if stepsVisible}
-        <StepList bind:items={steps} onchange={applySteps} />
-      {/if}
-      {#if linkFormatVisible}
-        <SelectRow
-          icon="code"
-          title="Copied link format"
-          description="What gets pasted when you press Ctrl+V"
-          options={LINK_FORMAT_OPTIONS}
-          value={rows.copiedLinkFormat}
-          onchange={(value) => updateGeneral('copiedLinkFormat', value)}
-        />
-      {/if}
-      {#if otherWorkflowsVisible}
-        <div class="action-row">
-          <Icon name="gear" size={20} />
-          <div class="action-text">
-            <span class="action-title">Other workflows</span>
-            <span class="action-description"
-              >Per-hotkey workflows are edited in the app under Workflows</span
-            >
-          </div>
-          <Button variant="secondary" height={34} onclick={() => navigate('/workflows')}>
-            {workflowCount} workflows
-          </Button>
-        </div>
-      {/if}
-    </SettingsSection>
-  {/if}
+  <DefaultWorkflowSection {filter} />
 </SettingsPage>
 
 <style>
@@ -465,34 +350,5 @@
     color: var(--text);
     font-family: var(--type-mono);
     word-break: break-all;
-  }
-
-  .action-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 12px 16px;
-    min-height: 68px;
-    padding: 12px 20px;
-    background: var(--card);
-    border: 1px solid var(--stroke);
-    border-radius: 6px;
-  }
-
-  .action-text {
-    display: flex;
-    flex: 1 1 220px;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-
-  .action-title {
-    font-size: 14px;
-  }
-
-  .action-description {
-    font-size: 12px;
-    color: var(--text3);
   }
 </style>

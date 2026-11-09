@@ -1,6 +1,4 @@
 use serde::{Deserialize, Serialize};
-use snapline_core::link_format::LinkFormat;
-use snapline_core::workflow::{Step, DEFAULT_WORKFLOW_ID, DEFAULT_WORKFLOW_NAME};
 
 pub use snapline_core::workflow::Workflow;
 
@@ -14,17 +12,7 @@ pub struct Workflows {
 }
 
 pub fn default_workflow() -> Workflow {
-    let mut workflow = Workflow::new(DEFAULT_WORKFLOW_ID, DEFAULT_WORKFLOW_NAME);
-    workflow.steps = vec![
-        Step::CopyImage,
-        Step::Save,
-        Step::Upload { dest: None },
-        Step::CopyLink {
-            format: LinkFormat::Direct,
-        },
-        Step::PlaySound,
-    ];
-    workflow
+    snapline_core::presets::default_workflow()
 }
 
 #[cfg(test)]

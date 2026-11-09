@@ -12,6 +12,12 @@ use crate::dto::workflow::{
 };
 use crate::{ServiceError, Services};
 
+pub use crate::workflow_runner::{
+    install_runner, installed_runner, CaptureServicePort, HotkeyGate, QueueUploadHandOff,
+    QueueUploadPort, RunOutcome, RunnerPorts, ServiceTextPort, ServiceWorkflowOptions,
+    WorkerSavePort, WorkflowGate, WorkflowResumeSink, WorkflowRunner, WorkflowUploadHandOff,
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(rename = "WorkflowAreaEvent")]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
@@ -33,6 +39,14 @@ impl WorkflowService {
         Self {
             services: services.clone(),
         }
+    }
+
+    pub fn runner(&self) -> Result<WorkflowRunner, ServiceError> {
+        installed_runner()
+    }
+
+    pub fn run(&self, id: &str) -> Result<RunOutcome, ServiceError> {
+        installed_runner()?.run_workflow(id)
     }
 
     pub fn handle(&self, req: WorkflowReq) -> Result<WorkflowResp, ServiceError> {
@@ -277,8 +291,8 @@ fn duplicate_name(name: &str) -> String {
     copy
 }
 
-pub fn run(_action: &ActionId, _services: &Services) -> Result<(), ServiceError> {
-    Err(ServiceError::NotYet)
+pub fn run(action: &ActionId, _services: &Services) -> Result<(), ServiceError> {
+    installed_runner()?.run_action(action).map(|_| ())
 }
 
 #[cfg(test)]
