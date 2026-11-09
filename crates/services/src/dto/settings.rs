@@ -26,18 +26,10 @@ pub enum SettingsReq {
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum SettingsResp {
     Pong,
-    Settings {
-        settings: SettingsDto,
-    },
-    Updated {
-        settings: SettingsDto,
-    },
-    PreviewName {
-        name: String,
-    },
-    BrowseFolder {
-        path: Option<String>,
-    },
+    Settings { settings: SettingsDto },
+    Updated { settings: SettingsDto },
+    PreviewName { name: String },
+    BrowseFolder { path: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -569,7 +561,11 @@ impl From<&store::Uploads> for UploadsDto {
             text_and_code: value.text_and_code.as_str().to_owned(),
             other_files: value.other_files.as_str().to_owned(),
             link_shortener: value.link_shortener.as_str().to_owned(),
-            destinations: value.destinations.iter().map(DestinationDto::from).collect(),
+            destinations: value
+                .destinations
+                .iter()
+                .map(DestinationDto::from)
+                .collect(),
             strip_exif: value.strip_exif,
             ask_before_clipboard_upload: value.ask_before_clipboard_upload,
             retry: RetryDto::from(value.retry),

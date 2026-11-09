@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 pub mod actions;
+pub mod annotate;
 pub mod chord;
 pub mod ffmpeg_args;
 pub mod geometry;
@@ -12,5 +13,8 @@ pub mod link_format;
 pub mod naming;
 pub mod overlay;
 pub mod ports;
+pub mod qr;
 pub mod recording;
 pub mod secret;
+pub mod stitch;
+pub mod workflow;

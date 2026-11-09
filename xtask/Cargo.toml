@@ -8,7 +8,9 @@ license.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 toml.workspace = true
+ureq.workspace = true
 windows.workspace = true
 snapline-services = { path = "../crates/services" }
 

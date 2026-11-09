@@ -39,8 +39,8 @@ impl Drop for Com {
 
 pub fn pick_folder(current: Option<&Path>) -> Result<Option<PathBuf>, DialogError> {
     let _com = Com::start().map_err(DialogError::Open)?;
-    // SAFETY: FileOpenDialog is a registered COM class and the returned interface owns a reference.
     let dialog: IFileOpenDialog =
+        // SAFETY: FileOpenDialog is a registered COM class and the returned interface owns a reference.
         unsafe { CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER) }
             .map_err(DialogError::Open)?;
     // SAFETY: the interface is live for the duration of the call.
@@ -53,9 +53,9 @@ pub fn pick_folder(current: Option<&Path>) -> Result<Option<PathBuf>, DialogErro
     if let Some(current) = current.filter(|path| path.is_dir()) {
         let name = HSTRING::from(current);
         // SAFETY: the shell item is created from a live path string and owns its own reference.
-        if let Ok(folder) = unsafe {
-            SHCreateItemFromParsingName::<_, Option<&IBindCtx>, IShellItem>(&name, None)
-        } {
+        if let Ok(folder) =
+            unsafe { SHCreateItemFromParsingName::<_, Option<&IBindCtx>, IShellItem>(&name, None) }
+        {
             // SAFETY: both interfaces are live for the duration of the call.
             let _ = unsafe { dialog.SetFolder(&folder) };
         }

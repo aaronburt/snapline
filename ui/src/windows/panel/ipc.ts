@@ -1,6 +1,15 @@
 import type { AppReq } from '../../lib/ipc/bindings/AppReq';
 import type { AppResp } from '../../lib/ipc/bindings/AppResp';
+import type { RecentCaptureDto } from '../../lib/ipc/bindings/RecentCaptureDto';
+import type { IpcError } from '../../lib/ipc/core';
 import { call } from '../../lib/ipc/core';
+
+function unexpected(): IpcError {
+  return {
+    code: 'internal',
+    message: 'Snapline returned an unexpected answer.',
+  };
+}
 
 export function panelResize(height: number): Promise<AppResp> {
   const req: AppReq = { kind: 'panelResize', data: { height } };
@@ -30,4 +39,13 @@ export function openMain(route: string): Promise<AppResp> {
 export function openCapture(id: number): Promise<AppResp> {
   const req: AppReq = { kind: 'openCapture', data: { id } };
   return call<AppReq, AppResp>('ipc_app', req);
+}
+
+export async function panelRecent(): Promise<RecentCaptureDto[]> {
+  const req: AppReq = { kind: 'recent' };
+  const resp = await call<AppReq, AppResp>('ipc_app', req);
+  if (resp.kind === 'recent') {
+    return resp.data.captures;
+  }
+  throw unexpected();
 }

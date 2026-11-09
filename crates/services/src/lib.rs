@@ -2,6 +2,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use snapline_core::ports::ImageCodec;
 use snapline_store::io::Paths;
 use snapline_store::settings::{self as store_settings, LoadNotice, Settings};
 use thiserror::Error;
@@ -16,9 +17,12 @@ pub mod history;
 pub mod hotkeys;
 pub mod job;
 pub mod recording;
+pub mod saver;
 pub mod settings;
+pub mod thumbs;
 pub mod tools;
 pub mod uploads;
+pub mod worker;
 pub mod workflows;
 
 pub use event::AppEvent;
@@ -62,6 +66,9 @@ pub trait FolderPicker: Send + Sync {
     fn pick_folder(&self, current: Option<&Path>) -> Result<Option<PathBuf>, ServiceError>;
 }
 
+pub type CodecFactory =
+    dyn Fn() -> Result<Arc<dyn ImageCodec>, ServiceError> + Send + Sync;
+
 struct SettingsState {
     paths: Option<Paths>,
     settings: Settings,
@@ -71,6 +78,9 @@ struct SettingsState {
 struct Inner {
     settings: Mutex<SettingsState>,
     picker: Mutex<Option<Arc<dyn FolderPicker>>>,
+    hotkeys: Mutex<hotkeys::HotkeysRuntime>,
+    codec: Mutex<Option<Arc<CodecFactory>>>,
+    history_host: Mutex<Option<Arc<dyn history::HistoryHost>>>,
 }
 
 #[derive(Clone)]
@@ -122,11 +132,80 @@ impl Services {
         self
     }
 
+    pub fn with_hotkey_input(self, input: Arc<dyn hotkeys::HotkeyInput>) -> Self {
+        if let Ok(mut slot) = self.inner.hotkeys.lock() {
+            slot.input = Some(input);
+        }
+        self
+    }
+
+    pub fn with_prtsc_registry(self, registry: Arc<dyn hotkeys::PrtscRegistry>) -> Self {
+        if let Ok(mut slot) = self.inner.hotkeys.lock() {
+            slot.prtsc = Some(registry);
+        }
+        self
+    }
+
+    pub fn with_notifier(
+        self,
+        notifier: Arc<dyn snapline_core::ports::Notifier + Send + Sync>,
+    ) -> Self {
+        if let Ok(mut slot) = self.inner.hotkeys.lock() {
+            slot.notifier = Some(notifier);
+        }
+        self
+    }
+
+    pub fn with_codec_factory(self, factory: Arc<CodecFactory>) -> Self {
+        if let Ok(mut slot) = self.inner.codec.lock() {
+            *slot = Some(factory);
+        }
+        self
+    }
+
+    pub fn with_history_host(self, host: Arc<dyn history::HistoryHost>) -> Self {
+        if let Ok(mut slot) = self.inner.history_host.lock() {
+            *slot = Some(host);
+        }
+        self
+    }
+
+    pub(crate) fn codec(&self) -> Result<Arc<dyn ImageCodec>, ServiceError> {
+        let factory = self
+            .inner
+            .codec
+            .lock()
+            .map_err(|_| ServiceError::Internal("The image codec is unavailable.".to_owned()))?
+            .clone()
+            .ok_or(ServiceError::NotYet)?;
+        factory()
+    }
+
+    pub(crate) fn history_host(&self) -> Option<Arc<dyn history::HistoryHost>> {
+        self.inner
+            .history_host
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
+    }
+
+    pub(crate) fn hotkeys_state(
+        &self,
+    ) -> Result<MutexGuard<'_, hotkeys::HotkeysRuntime>, ServiceError> {
+        self.inner
+            .hotkeys
+            .lock()
+            .map_err(|_| ServiceError::Internal("Hotkeys are unavailable.".to_owned()))
+    }
+
     fn from_state(state: SettingsState) -> Self {
         Self {
             inner: Arc::new(Inner {
                 settings: Mutex::new(state),
                 picker: Mutex::new(None),
+                hotkeys: Mutex::new(hotkeys::HotkeysRuntime::default()),
+                codec: Mutex::new(None),
+                history_host: Mutex::new(None),
             }),
         }
     }
@@ -140,6 +219,13 @@ impl Services {
 
     pub fn settings_snapshot(&self) -> Result<Settings, ServiceError> {
         Ok(self.lock_settings()?.settings.clone())
+    }
+
+    pub fn paths(&self) -> Result<Paths, ServiceError> {
+        self.lock_settings()?
+            .paths
+            .clone()
+            .ok_or_else(|| ServiceError::Io("Snapline has no data folder.".to_owned()))
     }
 
     pub fn settings_notice(&self) -> Result<Option<LoadNotice>, ServiceError> {
@@ -158,13 +244,15 @@ impl Services {
             ServiceError::Internal(format!("The settings could not be prepared: {error}"))
         })?;
         merge_patch(&mut table, object)?;
-        let mut settings: Settings =
-            serde::Deserialize::deserialize(toml::Value::Table(table)).map_err(|error| {
+        let mut settings: Settings = serde::Deserialize::deserialize(toml::Value::Table(table))
+            .map_err(|error| {
                 ServiceError::Invalid(format!("A settings value was not valid: {error}"))
             })?;
         settings.version = store_settings::CURRENT_VERSION;
         let paths = state.paths.as_ref().ok_or_else(|| {
-            ServiceError::Io("Settings cannot be saved because Snapline has no settings folder.".to_owned())
+            ServiceError::Io(
+                "Settings cannot be saved because Snapline has no settings folder.".to_owned(),
+            )
         })?;
         store_settings::save_to(paths, &settings).map_err(settings_error)?;
         state.settings = settings.clone();
@@ -198,6 +286,10 @@ impl Services {
 
     pub fn history(&self) -> history::HistoryService {
         history::HistoryService::new(self)
+    }
+
+    pub fn thumbs(&self) -> thumbs::ThumbService {
+        thumbs::ThumbService::new(self)
     }
 
     pub fn upload(&self) -> uploads::UploadService {

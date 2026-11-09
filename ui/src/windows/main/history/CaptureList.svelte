@@ -1,17 +1,66 @@
 <script lang="ts">
   import Badge from '../../../components/Badge.svelte';
   import Thumb from '../../../components/Thumb.svelte';
-  import type { Capture } from './data';
-  import { badgeStatus, typeLabel } from './data';
+  import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
+  import {
+    badgeStatus,
+    formatBytes,
+    formatCaptured,
+    formatDuration,
+    typeLabel,
+  } from './data';
 
   interface Props {
-    items: Capture[];
+    items: HistoryCaptureDto[];
     selectedId: number | null;
+    viewportHeight: number;
+    scrollTop?: number;
+    scroller?: HTMLDivElement;
     onselect: (id: number) => void;
     onopen: (id: number) => void;
   }
 
-  let { items, selectedId, onselect, onopen }: Props = $props();
+  let {
+    items,
+    selectedId,
+    viewportHeight,
+    scrollTop = $bindable(0),
+    scroller,
+    onselect,
+    onopen,
+  }: Props = $props();
+
+  const HEADER = 38;
+  const ROW = 52;
+
+  const offset = $derived(Math.max(0, scrollTop - HEADER));
+  const first = $derived(Math.floor(offset / ROW));
+  const overscan = $derived(Math.max(1, Math.ceil(Math.max(viewportHeight, 320) / ROW)));
+  const start = $derived(Math.max(0, first - overscan));
+  const end = $derived(Math.min(items.length, first + overscan * 2));
+  const shown = $derived(items.slice(start, end));
+  const topPad = $derived(start * ROW);
+  const bottomPad = $derived(Math.max(0, (items.length - end) * ROW));
+
+  $effect(() => {
+    const id = selectedId;
+    if (id === null) {
+      return;
+    }
+    const index = items.findIndex((capture) => capture.id === id);
+    if (index === -1) {
+      return;
+    }
+    const rowTop = HEADER + index * ROW;
+    const height = Math.max(viewportHeight, 320);
+    if (rowTop < scrollTop || rowTop + ROW > scrollTop + height) {
+      const target = Math.max(0, rowTop - 12);
+      scrollTop = target;
+      if (scroller) {
+        scroller.scrollTop = target;
+      }
+    }
+  });
 </script>
 
 <div class="tablecard">
@@ -26,10 +75,16 @@
       </tr>
     </thead>
     <tbody>
-      {#each items as capture (capture.id)}
+      {#if topPad > 0}
+        <tr class="spacer" aria-hidden="true">
+          <td colspan="5" style:height="{topPad}px"></td>
+        </tr>
+      {/if}
+      {#each shown as capture (capture.id)}
         <tr
           class:selected={capture.id === selectedId}
           aria-selected={capture.id === selectedId}
+          data-capture-id={capture.id}
           tabindex="0"
           onclick={() => onselect(capture.id)}
           onkeydown={(event) => {
@@ -46,22 +101,32 @@
               <span class="filename">{capture.name}</span>
             </span>
           </td>
-          <td class="muted">{typeLabel(capture.type)}</td>
-          <td class="muted">{capture.size}</td>
-          <td class="muted">{capture.day}, {capture.time}</td>
-          <td><Badge status={badgeStatus(capture.status)} /></td>
+          <td class="muted">{typeLabel(capture.kind, capture.name)}</td>
+          <td class="muted">{formatBytes(capture.bytes)}</td>
+          <td class="muted">
+            {formatCaptured(capture.createdAt)}
+            {#if capture.durationMs !== null}
+              <span class="duration">· {formatDuration(capture.durationMs)}</span>
+            {/if}
+          </td>
+          <td><Badge status={badgeStatus(capture)} /></td>
         </tr>
       {/each}
+      {#if bottomPad > 0}
+        <tr class="spacer" aria-hidden="true">
+          <td colspan="5" style:height="{bottomPad}px"></td>
+        </tr>
+      {/if}
     </tbody>
   </table>
 </div>
 
 <style>
   .tablecard {
-    overflow-x: auto;
     background: var(--card);
     border: 1px solid var(--stroke);
     border-radius: 6px;
+    overflow-x: auto;
   }
 
   table {
@@ -70,9 +135,17 @@
     min-width: 720px;
   }
 
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--card);
+  }
+
   th {
     text-align: left;
-    padding: 10px 16px;
+    height: 38px;
+    padding: 0 16px;
     font-size: 12px;
     font-weight: 400;
     color: var(--text3);
@@ -88,6 +161,12 @@
 
   thead tr:first-child th {
     border-top: none;
+  }
+
+  tbody tr.spacer td {
+    height: auto;
+    padding: 0;
+    border: none;
   }
 
   tbody tr {
@@ -124,5 +203,9 @@
   .muted {
     color: var(--text2);
     white-space: nowrap;
+  }
+
+  .duration {
+    color: var(--text3);
   }
 </style>

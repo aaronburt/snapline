@@ -1,0 +1,38 @@
+---
+source: crates/core/tests/annotate_snapshot.rs
+expression: art(&image)
+---
+64x64 +2
+KKKKKKKKKKKKKKKKKKKK++++++++++++
+KKKKKKKKKKKKKKKKKKK+++++++++++++
+KKKKKKKKKKKKKKKKKK++++++++++++++
+KKKKKKKKKKKKKKKKK+++++++++++++++
+KKKKKKKKKKKKKKKK++++++++++++++++
+KKKKKKKKKKK+++++++++++++++++++++
+KKKKKKKKKKK+++++++++++++++++++++
+KKKKKKKKKKK+++++++++++++++++++++
+KKKKKKKKKKK+++++++++++++++++++++
+KKKKKKKKKKK+++++++++++++++++++++
+KKKKKKKKKKK+++++++++++++++++++++
+KKKKK+++++++++++++++++++++++++++
+KKKKK+++++++++++++++++++++++++++
+KKKKK+++++++++++++++++++++++++++
+KKKKK+++++++++++++++++++++++++++
+KKKKK++++++++++++++++++++++++++b
+KKKK++++++++++++++++++++++++++bb
+KKK++++++++++++++++++++++++++gbb
+KK++++++++++++++++++++++++++ggbb
+K++++++++++++++++++++++++++gggbb
+O++++++++++++++++++++++++++gggbb
++++++++++++++++++++++++++++gggbb
+YG+++++++++++++++++++++++++gggbb
+YGGG+++++++++++++gggggggggggggbb
+YYGGG++++++++++++gggggggggggggbb
+YYGGG++++++++++++gggggggggggggbb
+YYYGG++++++++++++gggggggggggggbb
+YYYGGGGGGGG++++++gggggggggggggbb
+YYYYGGGGGGGGG+++ggggggggggggggbb
+YYYYGGGGGGGGGG+gggggggggggggggbb
+YYYYYGGGGGGGGGgggggggggggggggggb
+YYYYYGGGGGGGGggggggggggggggggggb
+fnv64 ba75981365063f65

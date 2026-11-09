@@ -2,19 +2,91 @@
   import Badge from '../../../components/Badge.svelte';
   import Icon from '../../../components/Icon.svelte';
   import Thumb from '../../../components/Thumb.svelte';
-  import type { Capture } from './data';
-  import { badgeStatus, defaultDestination, typeLabel, typeTag } from './data';
+  import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
+  import {
+    badgeStatus,
+    formatBytes,
+    formatDay,
+    formatDuration,
+    formatTime,
+    timed,
+    typeLabel,
+    typeTag,
+  } from './data';
 
   interface Props {
-    capture: Capture | null;
+    capture: HistoryCaptureDto | null;
+    defaultDestination: string;
+    oncopy: (id: number) => void;
+    onshow: (id: number) => void;
+    onopen: (id: number) => void;
+    onannotate: (id: number) => void;
+    onpin: (id: number) => void;
+    ondelete: (id: number) => void;
+    onupload: (id: number) => void;
   }
 
-  let { capture }: Props = $props();
+  let {
+    capture,
+    defaultDestination,
+    oncopy,
+    onshow,
+    onopen,
+    onannotate,
+    onpin,
+    ondelete,
+    onupload,
+  }: Props = $props();
 
-  const broken = $derived(capture?.status === 'fail');
-  const local = $derived(capture?.status === 'local');
-  const uploaded = $derived(capture?.status === 'up');
-  const timed = $derived(capture !== null && capture.type !== 'image');
+  let copyFailed = $state(false);
+
+  const status = $derived(capture ? badgeStatus(capture) : 'local');
+  const isTimed = $derived(capture !== null && timed(capture));
+  const isImage = $derived(capture !== null && !timed(capture));
+  const uploaded = $derived(status === 'ok');
+  const local = $derived(status === 'local');
+  const failed = $derived(status === 'failed');
+  const uploading = $derived(status === 'uploading');
+  const dimensions = $derived(
+    capture?.width !== null &&
+      capture?.width !== undefined &&
+      capture?.height !== null &&
+      capture?.height !== undefined
+      ? `${capture.width} × ${capture.height}`
+      : '—',
+  );
+  const destination = $derived(
+    capture?.upload ? hostLabel(capture.upload.destId) : '—',
+  );
+  const deletion = $derived.by(() => {
+    const upload = capture?.upload;
+    if (!upload || !uploaded) {
+      return false;
+    }
+    return upload.deletionUrl !== null || upload.destId === 'imgur' || upload.destId === 's3';
+  });
+
+  function hostLabel(id: string): string {
+    if (id === 'imgur') {
+      return 'Imgur';
+    }
+    if (id === 's3') {
+      return 'Amazon S3';
+    }
+    return id;
+  }
+
+  async function copyText(text: string | null | undefined): Promise<void> {
+    if (!text || !navigator.clipboard) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      copyFailed = false;
+    } catch {
+      copyFailed = true;
+    }
+  }
 </script>
 
 <aside aria-label="Capture details">
@@ -24,38 +96,75 @@
     <Thumb
       id={capture.id}
       alt={capture.name}
-      duration={capture.dur}
-      tag={capture.dur ? typeTag(capture.type) : undefined}
+      duration={capture.durationMs === null ? undefined : formatDuration(capture.durationMs)}
+      tag={capture.durationMs === null ? undefined : typeTag(capture.kind, capture.name)}
     />
 
     <div class="identity">
       <div class="filename">{capture.name}</div>
-      <div class="kind">{typeLabel(capture.type)} · {capture.day} at {capture.time}</div>
+      <div class="kind">
+        {typeLabel(capture.kind, capture.name)} · {formatDay(capture.createdAt)} at {formatTime(
+          capture.createdAt,
+        )}
+      </div>
     </div>
 
     <div class="actions">
-      {#if timed}
-        <button type="button" class="hv iconbtn" aria-label="Open" title="Open">
+      {#if isTimed}
+        <button
+          type="button"
+          class="hv iconbtn"
+          aria-label="Open"
+          title="Open"
+          onclick={() => onopen(capture.id)}
+        >
           <Icon name="play" size={14} strokeWidth={1.8} />
         </button>
       {/if}
-      {#if !timed}
-        <button type="button" class="iconbtn accent" aria-label="Annotate" title="Annotate">
+      {#if isImage}
+        <button
+          type="button"
+          class="iconbtn accent"
+          aria-label="Annotate"
+          title="Annotate"
+          onclick={() => onannotate(capture.id)}
+        >
           <Icon name="edit" size={14} strokeWidth={1.8} />
         </button>
       {/if}
-      <button type="button" class="hv iconbtn" aria-label="Copy image" title="Copy image">
+      <button
+        type="button"
+        class="hv iconbtn"
+        aria-label="Copy image"
+        title="Copy image"
+        onclick={() => oncopy(capture.id)}
+      >
         <Icon name="copy" size={14} strokeWidth={1.8} />
       </button>
-      <button type="button" class="hv iconbtn" aria-label="Show in folder">
+      <button
+        type="button"
+        class="hv iconbtn"
+        aria-label="Show in folder"
+        onclick={() => onshow(capture.id)}
+      >
         <Icon name="folder" size={14} strokeWidth={1.8} />
       </button>
-      {#if !timed}
-        <button type="button" class="hv iconbtn" aria-label="Pin to screen">
+      {#if isImage}
+        <button
+          type="button"
+          class="hv iconbtn"
+          aria-label="Pin to screen"
+          onclick={() => onpin(capture.id)}
+        >
           <Icon name="pin" size={14} strokeWidth={1.8} />
         </button>
       {/if}
-      <button type="button" class="hv iconbtn danger" aria-label="Delete">
+      <button
+        type="button"
+        class="hv iconbtn danger"
+        aria-label="Delete"
+        onclick={() => ondelete(capture.id)}
+      >
         <Icon name="trash" size={14} strokeWidth={1.8} />
       </button>
     </div>
@@ -63,45 +172,77 @@
     <section class="sharing" aria-label="Sharing">
       <div class="sharinghead">
         <h2 class="heading">Link</h2>
-        <Badge status={badgeStatus(capture.status)} long />
+        <Badge status={status} long />
       </div>
 
       {#if uploaded}
         <div class="linkrow">
-          <input readonly aria-label="Share link" value={capture.url ?? ''} />
-          <button type="button" class="hv linkbtn" aria-label="Copy link">
+          <input readonly aria-label="Share link" value={capture.upload?.url ?? ''} />
+          <button
+            type="button"
+            class="hv linkbtn"
+            aria-label="Copy link"
+            onclick={() => void copyText(capture.upload?.url)}
+          >
             <Icon name="copy" size={14} strokeWidth={1.8} />
           </button>
           <button type="button" class="hv linkbtn" aria-label="Show QR code">
             <Icon name="qr" size={14} strokeWidth={1.8} />
           </button>
         </div>
-        <div class="deletion">
-          <span>Deletion link saved</span>
-          <button type="button" class="hv textbtn">Copy deletion link</button>
-        </div>
+        {#if deletion}
+          <div class="deletion">
+            {#if capture.upload?.deletionUrl}
+              <span>Deletion link saved</span>
+              <button
+                type="button"
+                class="hv textbtn"
+                onclick={() => void copyText(capture.upload?.deletionUrl)}
+              >
+                Copy deletion link
+              </button>
+            {:else}
+              <span>Delete from {destination}</span>
+            {/if}
+          </div>
+        {/if}
       {:else if local}
         <div class="note">Saved on this PC only. Upload it to get a shareable link.</div>
-        <button type="button" class="upload">Upload to {defaultDestination}</button>
-      {:else if broken}
-        <div class="note">Upload failed: the file is larger than the destination allows (413).</div>
-        <div class="retry">
-          <button type="button" class="upload">Retry</button>
-          <button type="button" class="hv secondary">Upload elsewhere…</button>
+        <button type="button" class="upload" onclick={() => onupload(capture.id)}>
+          Upload to {defaultDestination}
+        </button>
+      {:else if failed}
+        <div class="note">
+          Upload failed: {capture.upload?.error ?? 'the destination did not accept the file.'}
         </div>
+        <div class="retry">
+          <button type="button" class="upload" onclick={() => onupload(capture.id)}>Retry</button>
+          <button type="button" class="hv secondary" onclick={() => onupload(capture.id)}>
+            Upload elsewhere…
+          </button>
+        </div>
+      {:else if uploading}
+        <div class="note">Uploading…</div>
+      {/if}
+      {#if copyFailed}
+        <div class="note" role="status">The link could not be copied.</div>
       {/if}
     </section>
 
     <section class="info" aria-label="File info">
       <h2 class="heading infoheading">Info</h2>
-      <div class="inforow"><span>Dimensions</span><span>{capture.dim}</span></div>
-      {#if capture.dur}
-        <div class="inforow"><span>Duration</span><span>{capture.dur}</span></div>
+      <div class="inforow"><span>Dimensions</span><span>{dimensions}</span></div>
+      {#if isTimed}
+        <div class="inforow">
+          <span>Duration</span><span>{formatDuration(capture.durationMs)}</span>
+        </div>
       {/if}
-      <div class="inforow"><span>File size</span><span>{capture.size}</span></div>
-      <div class="inforow"><span>Captured from</span><span>{capture.app}</span></div>
-      <div class="inforow"><span>Destination</span><span>{capture.dest ?? '—'}</span></div>
-      <div class="inforow"><span>Saved to</span><span>Pictures\Snapline\2026-11</span></div>
+      <div class="inforow"><span>File size</span><span>{formatBytes(capture.bytes)}</span></div>
+      <div class="inforow">
+        <span>Captured from</span><span>{capture.sourceApp ?? 'Desktop'}</span>
+      </div>
+      <div class="inforow"><span>Destination</span><span>{destination}</span></div>
+      <div class="inforow"><span>Saved to</span><span>{capture.folder || '—'}</span></div>
     </section>
   {:else}
     <div class="empty">Select a capture to see its details.</div>

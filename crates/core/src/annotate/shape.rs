@@ -152,7 +152,9 @@ impl Default for Style {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 pub struct ShapeId(pub u64);
 
@@ -265,7 +267,9 @@ impl Shape {
             | Self::Arrow { style, .. }
             | Self::Pen { style, .. }
             | Self::Highlight { style, .. } => Some(*style),
-            Self::Text { colour, .. } | Self::Step { colour, .. } => Some(Style::new(*colour, Weight::Medium)),
+            Self::Text { colour, .. } | Self::Step { colour, .. } => {
+                Some(Style::new(*colour, Weight::Medium))
+            }
             Self::Blur { .. } => None,
         }
     }
@@ -283,7 +287,9 @@ impl Shape {
                 if let Some(point) = curve {
                     bounds = bounds.union(Rect::from_points(*point, *point));
                 }
-                inflate(bounds, half(style.width()))
+                let width = style.width();
+                let head = Px(width.0 + 6 + width.0 / 2);
+                inflate(bounds, half(width).max(head))
             }
             Self::Pen { points, style } | Self::Highlight { points, style } => {
                 points_bounds(points, half(style.width()))
@@ -435,9 +441,7 @@ impl Shape {
 
     pub fn with_text(self, value: impl Into<String>) -> Option<Self> {
         match self {
-            Self::Text {
-                origin, colour, ..
-            } => Some(Self::Text {
+            Self::Text { origin, colour, .. } => Some(Self::Text {
                 origin,
                 text: value.into(),
                 colour,
@@ -525,7 +529,10 @@ pub fn label_rect(origin: Point, text: &str) -> Rect {
 }
 
 pub const fn label_text_origin(origin: Point) -> Point {
-    Point::new(Px(origin.x.0 + LABEL_PAD_X.0), Px(origin.y.0 + LABEL_PAD_Y.0))
+    Point::new(
+        Px(origin.x.0 + LABEL_PAD_X.0),
+        Px(origin.y.0 + LABEL_PAD_Y.0),
+    )
 }
 
 fn scale_x(value: Px, from: Rect, to: Rect) -> Px {

@@ -1072,10 +1072,13 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 - Built: `Modifiers`/`Key`/`Chord` with parsing, normalisation, display, reserved-key refusal, and the exact `Windows uses this shortcut.` message; `Owner`, `Blocked` with internal/external reasons, deterministic `HotkeyPlan`, `with_external`, and `preview`. Tests cover all listed key names, the 7.5 defaults, malformed input, internal/external clashes and two proptest properties. `proptest` added as a core dev-dependency. Aaron confirmed the common Windows-reserved Win+key set implemented.
 
 **2.4 Input thread and hotkeys service.** Needs 2.1, 2.3. Owns: `crates/platform-windows/src/input.rs` (message-only window, `RegisterHotKey`, `WM_HOTKEY`, power and setting-change messages), `crates/platform-windows/src/prtsc.rs`, `crates/services/src/hotkeys.rs`, `crates/services/src/dto/hotkeys.rs`, `ui/src/lib/ipc/hotkeys.ts`. Desktop tests (`#[ignore = "desktop"]`): register and unregister a throwaway chord; detect an externally registered chord.
+- Built: dedicated input thread with a hidden receiver window, `RegisterHotKey`/`MOD_NOREPEAT`, rebind/pause/resume/shutdown and external-clash detection; PrtSc takeover with exact restore; fail-closed hotkey service with internal/external blocks, exact clash notices, preview, pause/resume, resume-from-sleep and settings-change replans; typed Get/Preview/Pause/Resume DTOs and bindings. Input thread, notifier and PrtSc registry wired into main; tray Pause now drives the service. Tests written, not run. Receiver is a hidden top-level window because `HWND_MESSAGE` cannot receive `WM_SETTINGCHANGE`/`WM_POWERBROADCAST`.
 
 **2.5 Hotkeys page live.** Needs 2.2, 2.4. Owns: `ui/src/windows/main/settings/HotkeysPage.svelte` and its test; uses `HotkeyField` from 1.3.
+- Built: every 7.3/7.5 hotkey row bound to real settings and live `Get`, `Preview` calls while capturing, internal/external blocked text with err styling, chord updates, PrtSc sign-out hint on the first enable in a run (in-memory, no browser storage), and the exact intro/toggle text. Tests written, not run.
 
 **2.6 Launch at sign-in.** Owns: `crates/platform-windows/src/autostart.rs`, plus `--autostart` handling in `apps/snapline/src/cli.rs` (shared with 1.9's file: add the flag only).
+- Built: Run key value `Snapline` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` with `"<exe>" --autostart`, safe enable/disable/query wrappers, idempotent writes and a desktop round-trip test. `--autostart` starts in the tray unless "Start minimised to tray" is off, in which case main opens; toggling Launch at sign-in updates the Run key in the IPC settings handler.
 
 **2.7 Credential Manager.** Owns: `crates/platform-windows/src/credentials.rs`, `crates/core/src/secret.rs`. Desktop tests with `SnapLineTest:` targets, cleaned up after.
 - Built: zeroising `Secret` with `***` Debug and constant-time-style equality; validated `SecretKey` with target `SnapLine:<dest-id>:<field>` and user `SnapLine`; Win32 CredWrite/CredRead/CredDelete wrapper with `CRED_TYPE_GENERIC`, `CRED_PERSIST_LOCAL_MACHINE`, idempotent delete, zeroed CredFree guard and no secret in errors. Desktop tests written with RAII cleanup, not run.
@@ -1109,12 +1112,15 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 - Built: `Px`/`Point`/`Size`/`Rect`/`DpiScale`/`MonitorGeometry`; grips, handles, DPI conversions; `Overlay::on` with Hovering/Dragging/Adjusting/Annotating, all effects and inputs; window/control snapping and Tab cycling. 44 tests written including proptest properties, not run. Snap ordering and the active grip for Alt+arrow were the plan's ambiguities.
 
 **3.2 Capture backends.** Owns: `crates/platform-windows/src/capture/` (`mod.rs`, `dxgi.rs`, `gdi.rs`, `wgc.rs`), `crates/platform-windows/src/monitors.rs`. Desktop tests: freeze returns one image per monitor at physical size.
+- Built: monitor enumeration with stable ids/work areas/DPI; DXGI desktop duplication with D3D11 staging copies and cursor option; GDI BitBlt CAPTUREBLT fallback; WGC window capture with shadow/extended-bounds handling and Win11 borderless attempt; RAII for frames, maps, DCs, DIBs and WinRT apartment. Desktop tests written, not run. Open point for Aaron: `GraphicsCaptureAccess`/`RequestAccessAsync(Borderless)` needs the `Security_Authorization_AppCapabilityAccess` windows feature, which is not in the section 5.9/0.1 feature list; without it the Win11 borderless request is attempted through `SetIsBorderRequired(false)` only.
 
 **3.3 Overlay windows and rendering.** Needs 3.1, 3.2, 1.3 (tokens). Owns: `crates/overlay-windows/src/` (`lib.rs`, `thread.rs`, `window.rs`, `d2d.rs`, `render.rs`, `magnifier.rs`, `readout.rs`, `icons.rs`). Implements `OverlayHost`.
+- Built: native per-monitor topmost overlay windows with a DirectComposition/D3D11/D2D swap chain, frozen-image upload, core state-machine input, dim/selection/handles/snap rect, magnifier, size/readouts, exact toolbar and hint pills, SVG icons, edit mode and result channel. Toolbar/DPI/magnifier tests written, not run. No device-loss recovery yet; the overlay API is in the overlay crate pending core-neutral `OverlayHost` types in M3.6.
 
 **3.4 Snapping.** Needs 3.3. Owns: `crates/platform-windows/src/windows_enum.rs`, `crates/platform-windows/src/uia.rs`. Shared: `crates/overlay-windows/src/window.rs` (snap target feed).
 
 **3.5 Clipboard.** Owns: `crates/platform-windows/src/clipboard.rs`. Desktop tests: PNG and DIBV5 decode to the same pixels.
+- Built: one OpenClipboard transaction publishing registered `PNG` and `CF_DIBV5` with alpha plus `CF_UNICODETEXT`, 10×10 ms retry with the exact busy message, PNG via WIC and DIBV5 fallback, HGLOBAL/session RAII, top-down BITMAPV5HEADER, and desktop tests that restore clipboard text. The core `Clipboard` port exists; an impl can be added without changing this module.
 
 **3.6 Capture service.** Needs 3.2, 3.3, 3.5. Owns: `crates/services/src/capture.rs`, `crates/platform-windows/src/countdown.rs`. Wires `capture_region`, `capture_window`, `capture_screen`, `capture_last_region` through the router (fixed behaviour for now: capture then copy; workflows arrive in M7, saving in M4).
 
@@ -1139,6 +1145,7 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **Order:** 4.1, 4.2, 4.3 together. Then 4.4, 4.7. Then 4.5, 4.6.
 
 **4.1 WIC codec.** Owns: `crates/platform-windows/src/wic.rs`. Desktop tests: round trip each format; WebP availability detection.
+- Built: per-thread COM/WIC `WicCodec` with PNG/JPEG/WebP encode and decode through BGRA8, JPEG/WebP quality, WebP availability detection and 320px thumbnail scaling with WebP/JPEG fallback. Desktop round-trip tests written, not run. The codec is per-thread (`!Send`/`!Sync`), so the worker must own it.
 
 **4.2 Naming.** Owns: `crates/core/src/naming.rs`. Tests for every token, invalid characters, collisions, the sample preview in section 7.3.
 - Built: all naming tokens, Windows-invalid and control-character replacement, 80-character window title limit, 4-digit counter/wrap, deterministic random seam, collision suffixes, reserved device-name repair, sanitisation, and the exact sample preview. 19 tests written, not run. Choices reported: unknown braces stay literal, counter wraps at 9999 to 0000, reserved names get `_` appended.
@@ -1147,12 +1154,16 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 - Built: exact 0001 schema, embedded numbered migrations with `PRAGMA user_version`, WAL/FK/busy timeout, read-write and read-only connections; `HistoryRepo` record/page/get/stats/delete/search/set_upload with 60-row keyset pagination, FTS5 prefix search and transactional FTS upkeep, Monday-local week stats and cascade delete. Tests written, not run. `busy_timeout = 5000 ms` is the only value the plan did not specify.
 
 **4.4 Thumbnails and the `thumb` scheme.** Needs 4.1, 4.3. Owns: `crates/services/src/thumbs.rs`, `apps/snapline/src/protocol.rs`. Tests: non-numeric and negative ids return 404; missing thumbnails are regenerated.
+- Built: strict positive-id parsing, existing WebP/JPEG served without rewrite, on-demand 320px regeneration from History, atomic writes, WebP/JPEG MIME and caching headers, 404 with no filesystem read, and scheme registration in main. Tests written, not run. **Architecture issue:** the implementation added `snapline-win` as a services dependency to reach WIC; this must be refactored to the `ImageCodec` port once task 4.7 lands its service ports.
 
 **4.5 History area and page.** Needs 4.3, 4.4. Owns: `crates/services/src/history.rs`, `crates/services/src/dto/history.rs`, `ui/src/lib/ipc/history.ts`, `ui/src/windows/main/history/` (replacing 1.5's placeholder data), `crates/platform-windows/src/shell.rs` (open, show in folder, recycle, open URL).
+- Built: real page/search/get/stats/confirm/delete/copy/show/open requests with read-only repos; native confirm and Recycle Bin deletion; ShellExecute/ShowInFolder; virtual grid/list with paging, selection, keyboard and detail pane. Tests written, not run. The platform shell dependency was later moved behind the `HistoryHost` implemented in the app; services no longer depends on `snapline-win`.
 
 **4.6 Quick panel recents.** Needs 4.5. Owns: the recents and nav count binding in `ui/src/windows/panel/QuickPanel.svelte` and `crates/services/src/app.rs` (`Recent` request).
+- Built: `Recent`/`Stats` app requests reading History; QuickPanel real 3-newest thumbnails, duration badges, uploaded icon, exact relative times, empty state and click-to-open; Nav real stats count with focus refresh. Tests written, not run. Last-link footer remains for 6.8.
 
 **4.7 Save pipeline.** Needs 4.1, 4.2, 4.3. Owns: `crates/services/src/saver.rs`, `crates/services/src/worker.rs`.
+- Built: `ServicePorts` using core traits, worker thread with the only History write connection and idle-blocking queue, fixed M4 pipeline (copy, save, record, thumbnail, toast, event), atomic file write, naming/counter/subfolder/format/quality/collision handling, best-effort thumbnails and reply channels. Tests written, not run. App wiring (ports factory, worker start, event forwarder) is pending the architecture fix.
 
 ### Milestone 5: Annotation
 
@@ -1177,6 +1188,7 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **Order:** 5.1 first. Then 5.2, 5.4 together. Then 5.3, 5.5.
 
 **5.1 Annotation model.** Owns: `crates/core/src/annotate/` (`mod.rs`, `shape.rs`, `command.rs`, `document.rs`, `canvas.rs`, `raster.rs`), snapshot files under `crates/core/tests/snapshots/`.
+- Built: vector shapes with exact sizes/colours, command history with exact undo/redo and step renumbering, crop, frozen-image pixelation, `Canvas` trait with 2/channel tolerance, software BGRA rasteriser with anti-aliasing, Catmull-Rom pen, deterministic PNG encoder, 20 text snapshots and proptest undo/redo tests. Text uses an in-house 5×7 bitmap glyph set, not DirectWrite; this needs approval and will affect the D2D-vs-software text tolerance in M5. Snapshots are ASCII+FNV text rather than binary PNG; `raster.rs`/`shape.rs` exceed the 400-line guideline.
 
 **5.2 Direct2D canvas and toolbar.** Needs 5.1. Owns: `crates/overlay-windows/src/canvas_d2d.rs`, `toolbar.rs`, `hints.rs`. Shared: `window.rs`.
 
@@ -1209,6 +1221,7 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **Order:** 6.1, 6.6 together. Then 6.2, 6.3, 6.4, 6.5 together. Then 6.7, 6.8, 6.9.
 
 **6.1 HTTP stack.** Owns: `crates/upload/src/http.rs`, `crates/upload/src/error.rs`, `crates/platform-windows/src/proxy.rs`. Tests: the stub server with a self-signed certificate is rejected by the production verifier and accepted by a test-only verifier built from a fixture CA (the test-only path is behind `#[cfg(test)]`).
+- Built: blocking `HttpTransport` over ureq with rustls/platform-verifier, system/custom/no proxy, timeouts, Snapline UA, multipart/form/JSON/raw helpers, typed error mapping and Retry-After; IE proxy detection via dynamic WinHTTP loading; fixture-CA TLS server test with a test-only rustls dev-dependency approved by Aaron. Tests written, not run.
 
 **6.2 Queue.** Needs 6.1. Owns: `crates/upload/src/queue.rs`, `crates/services/src/uploads.rs`. Tests: retry decisions per error kind, backoff schedule, cancel.
 
@@ -1246,6 +1259,7 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **Order:** 7.1 first (merge its types early). Then 7.2, 7.4 together. Then 7.3, 7.5. Then 7.6.
 
 **7.1 Workflow model and runner.** Owns: `crates/core/src/workflow/` (`mod.rs`, `step.rs`, `run.rs`). Tests with fake ports for every step and for failure part-way through.
+- Built: `Workflow`/`Step`/validation with typed UI strings, workflow-specific ports for capture/record/annotate/save/upload/text/GIF, `run` and `resume_after_upload`, deferred CopyLink, upload handoff by run id, typed not-available steps, 40 fake-port tests written not run. Validation strings and the default workflow creation are left to 7.2/7.6.
 
 **7.2 Workflows in settings.** Needs 7.1. Owns: `crates/store/src/settings/workflows.rs` and its migration in `migrate.rs` (shared with the integrator for the version number).
 
@@ -1280,6 +1294,7 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **Order:** 8.1, 8.2 any time. Then 8.3, 8.4, 8.5 together. Then 8.6. Then 8.7.
 
 **8.1 Fetch FFmpeg.** Owns: `xtask/src/ffmpeg.rs`, `xtask/ffmpeg.lock`.
+- Built: pinned gyan.dev essentials GPL 9.0.2 (2026-09-19) with SHA-256 `60f46726…2047ba`; download via ureq IPv4-first, hash check, `tar.exe` zip extraction, idempotent install into `third_party/ffmpeg` with `ffmpeg.exe`, `LICENSE`, `SOURCE.txt` and an archive hash stamp. Seven tests written, not run. Fetch succeeded and a second run was a no-op.
 
 **8.2 Recording logic.** Owns: `crates/core/src/recording.rs`, `crates/core/src/ffmpeg_args.rs`. Tests for every state change and every argument set.
 - Built: `RecordingMachine` with Idle/Arming/Recording/Stopping/Encoding/Done/Failed, events, elapsed/target/output/error and a 5 s stop timeout constant; FFmpeg command builders for video (ddagrab, hardware candidates, quality presets, formats/fps, audio pipes and amix), GIF capture/convert, converter, encoder detection and one-frame probe. 54 tests written, not run. Encoder-specific flags and PCM defaults are implementation choices where the plan was silent.
@@ -1318,8 +1333,10 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **Order:** pure maths for 9.2 (stitching), 9.3 (ruler) and 9.7 (combiner layout) can start any time. Then 9.1, 9.4, 9.5, 9.9, 9.10 together. Then 9.2, 9.3, 9.6, 9.7, 9.8.
 
 **9.1 OCR.** Owns: `crates/platform-windows/src/ocr.rs`, `crates/services/src/tools/ocr.rs`.
+- Built: Windows.Media.Ocr engine with installed language packs, BGRA→SoftwareBitmap conversion, `\r\n` line joining, exact no-language message, per-thread WinRT apartment; services tool copies text, returns `Copied <n> line(s) of text`, optionally stores OCR text, and implements the workflow `TextPort`. Tests written, not run. Missing: a `HistoryRepo::set_ocr_text` method and `ipc_tool` OCR variants for the M9 UI.
 
 **9.2 Scrolling capture.** Owns: `crates/core/src/stitch.rs`, `crates/platform-windows/src/scroll.rs`, `crates/services/src/tools/scrolling.rs`. Tests: stitching on synthetic images with and without sticky headers.
+- Built: row-hash overlap stitching with 20-row minimum, sticky top/bottom band removal, duplicate/max-height/limit/Esc stop reasons; SendInput wheel with cursor-centred area and Esc detection; services orchestration with injectable capture/scroller/waiter and settings mapping. Tests written, not run. `DEFAULT_MAX_HEIGHT = 16_384` is the only invented value.
 
 **9.3 Screen ruler.** Owns: `crates/core/src/ruler.rs`, `crates/overlay-windows/src/ruler.rs`, `crates/services/src/tools/ruler.rs`. Shared: `window.rs`.
 
@@ -1422,8 +1439,8 @@ The executing agent must not answer these itself.
 | # | Milestone | Status | Commit |
 |---|-----------|--------|--------|
 | 0 | Foundations | Built, not tested | |
-| 1 | Basic UI shell (includes the webview gate) | Built, not tested | |
-| 2 | Settings and hotkeys | Not started | |
+| 1 | Basic UI shell (includes the webview gate) | Built, not tested | 6ff3546 |
+| 2 | Settings and hotkeys | Built, not tested | |
 | 3 | Screenshot | Not started | |
 | 4 | Saving to disk and History | Not started | |
 | 5 | Annotation | Not started | |

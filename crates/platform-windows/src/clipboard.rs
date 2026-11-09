@@ -5,7 +5,7 @@ use std::time::Duration;
 use snapline_core::image::{Image, ImageFormat};
 use thiserror::Error;
 use windows::core::{w, Error};
-use windows::Win32::Foundation::{GlobalFree, HGLOBAL, HANDLE};
+use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL};
 use windows::Win32::Graphics::Gdi::{BITMAPV5HEADER, BI_BITFIELDS, BI_RGB};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
@@ -153,12 +153,10 @@ impl Clipboard {
         if let Ok(format) = png_format_id() {
             if available(format) {
                 match self.png {
-                    Some(codec) => {
-                        match read_blob(format).and_then(|bytes| codec.decode(&bytes)) {
-                            Ok(image) => return Ok(Some(image)),
-                            Err(error) => png_error = Some(error),
-                        }
-                    }
+                    Some(codec) => match read_blob(format).and_then(|bytes| codec.decode(&bytes)) {
+                        Ok(image) => return Ok(Some(image)),
+                        Err(error) => png_error = Some(error),
+                    },
                     None => png_error = Some(ClipboardError::Unsupported),
                 }
             }
@@ -237,7 +235,8 @@ impl GlobalBuffer {
     fn from_bytes(bytes: &[u8]) -> Result<Self, ClipboardError> {
         let length = bytes.len().max(1);
         // SAFETY: the size is non-zero and the returned handle is owned by the buffer until it is dropped or transferred.
-        let handle = unsafe { GlobalAlloc(GMEM_MOVEABLE, length) }.map_err(ClipboardError::Allocate)?;
+        let handle =
+            unsafe { GlobalAlloc(GMEM_MOVEABLE, length) }.map_err(ClipboardError::Allocate)?;
         let buffer = Self { handle };
         // SAFETY: the handle is live and owned by the buffer, which releases it if this call fails.
         let pointer = unsafe { GlobalLock(buffer.handle) };
@@ -430,12 +429,7 @@ fn image_from_dibv5(bytes: &[u8]) -> Result<Image, ClipboardError> {
             0,
         )
     } else {
-        (
-            DIBV5_RED_MASK,
-            DIBV5_GREEN_MASK,
-            DIBV5_BLUE_MASK,
-            0,
-        )
+        (DIBV5_RED_MASK, DIBV5_GREEN_MASK, DIBV5_BLUE_MASK, 0)
     };
     if compression == BI_BITFIELDS.0
         && (red != DIBV5_RED_MASK || green != DIBV5_GREEN_MASK || blue != DIBV5_BLUE_MASK)
@@ -449,8 +443,8 @@ fn image_from_dibv5(bytes: &[u8]) -> Result<Image, ClipboardError> {
     } else {
         header_size
     };
-    let rows = usize::try_from(i64::from(height).unsigned_abs())
-        .map_err(|_| ClipboardError::Malformed)?;
+    let rows =
+        usize::try_from(i64::from(height).unsigned_abs()).map_err(|_| ClipboardError::Malformed)?;
     let columns = usize::try_from(width).map_err(|_| ClipboardError::Malformed)?;
     let stride = columns.checked_mul(4).ok_or(ClipboardError::Malformed)?;
     let pixel_bytes = stride.checked_mul(rows).ok_or(ClipboardError::Malformed)?;

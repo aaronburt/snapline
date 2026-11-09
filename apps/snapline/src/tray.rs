@@ -164,6 +164,11 @@ fn handle_menu(app: &AppHandle, id: &str) {
             let handle = app.state::<TrayHandle>();
             let paused = !handle.state().paused;
             drop(handle);
+            let services = app.state::<Services>();
+            if let Err(error) = services.hotkeys().set_paused(paused) {
+                tracing::warn!(%error, "could not change hotkey pause");
+                return;
+            }
             set_paused(app, paused);
         }
         "record_system_audio" => toggle_check(app, CheckKind::SystemAudio),
@@ -216,6 +221,11 @@ fn run_action(app: &AppHandle, action: &str) {
         let handle = app.state::<TrayHandle>();
         let paused = !handle.state().paused;
         drop(handle);
+        let services = app.state::<Services>();
+        if let Err(error) = services.hotkeys().set_paused(paused) {
+            tracing::warn!(%error, "could not change hotkey pause");
+            return;
+        }
         set_paused(app, paused);
         return;
     }

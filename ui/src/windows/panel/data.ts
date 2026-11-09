@@ -1,4 +1,5 @@
 import type { IconName } from '../../lib/icons';
+import type { RecentCaptureDto } from '../../lib/ipc/bindings/RecentCaptureDto';
 
 export interface PanelCapture {
   id: string;
@@ -49,26 +50,49 @@ export interface PanelRecent {
   duration?: string;
 }
 
-export const panelRecents: PanelRecent[] = [
-  {
-    id: 1,
-    name: 'Region capture, 2 minutes ago',
-    time: '2 min ago',
-    uploaded: true,
-  },
-  {
-    id: 2,
-    name: 'Screen recording, 18 minutes ago',
-    time: '18 min ago',
-    uploaded: true,
-    duration: '0:42',
-  },
-  {
-    id: 3,
-    name: 'Window capture, 1 hour ago',
-    time: '1 h ago',
-    uploaded: false,
-  },
-];
-
 export const panelLastLink = 'https://i.imgur.com/kq7Ra2P.png';
+
+export function toPanelRecent(capture: RecentCaptureDto, now: number = Date.now()): PanelRecent {
+  return {
+    id: capture.id,
+    name: capture.name,
+    time: relativeTime(capture.createdAt, now),
+    uploaded: capture.status === 'uploaded',
+    duration:
+      capture.kind === 'image' || capture.durationMs === null
+        ? undefined
+        : formatDuration(capture.durationMs),
+  };
+}
+
+export function relativeTime(milliseconds: number, now: number = Date.now()): string {
+  const date = new Date(milliseconds);
+  const current = new Date(now);
+  if (isSameDay(date, current)) {
+    const minutes = Math.floor((now - milliseconds) / 60_000);
+    if (minutes < 60) {
+      return `${Math.max(1, minutes)} min ago`;
+    }
+    return `${Math.floor(minutes / 60)} h ago`;
+  }
+  const yesterday = new Date(current.getFullYear(), current.getMonth(), current.getDate() - 1);
+  if (isSameDay(date, yesterday)) {
+    return 'Yesterday';
+  }
+  return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' }).format(date);
+}
+
+export function formatDuration(milliseconds: number): string {
+  const total = Math.round(milliseconds / 1000);
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+export function isSameDay(left: Date, right: Date): boolean {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}

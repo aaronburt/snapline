@@ -3,7 +3,7 @@
   import Icon from '../../components/Icon.svelte';
   import Logo from '../../components/Logo.svelte';
   import Thumb from '../../components/Thumb.svelte';
-  import { panelCaptures, panelLastLink, panelRecents } from './data';
+  import { panelCaptures, panelLastLink, toPanelRecent } from './data';
   import type { PanelRecent } from './data';
   import {
     openCapture,
@@ -11,17 +11,19 @@
     panelAction,
     panelClose,
     panelCopyLink,
+    panelRecent,
     panelResize,
   } from './ipc';
 
   interface Props {
-    recents?: PanelRecent[];
     lastLink?: string | null;
   }
 
-  let { recents = panelRecents, lastLink = panelLastLink }: Props = $props();
+  let { lastLink = panelLastLink }: Props = $props();
 
   let frame: HTMLElement | undefined = $state();
+  let recents = $state<PanelRecent[]>([]);
+  let recentsLoaded = $state(false);
 
   const link = $derived(lastLink ? withoutScheme(lastLink) : null);
 
@@ -44,8 +46,21 @@
     await panelResize(height).catch(() => undefined);
   }
 
+  async function loadRecent(): Promise<void> {
+    try {
+      const captures = await panelRecent();
+      recents = captures.map((capture) => toPanelRecent(capture));
+    } catch {
+      recents = [];
+    } finally {
+      recentsLoaded = true;
+      await reportHeight();
+    }
+  }
+
   onMount(() => {
     void reportHeight();
+    void loadRecent();
   });
 
   function close(): void {
@@ -126,7 +141,7 @@
         View all
       </button>
     </div>
-    {#if recents.length === 0}
+    {#if recentsLoaded && recents.length === 0}
       <div class="empty">No captures yet</div>
     {:else}
       <div class="recent-grid">

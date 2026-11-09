@@ -1,48 +1,232 @@
 <script lang="ts">
+  import { onMount, untrack } from 'svelte';
   import EmptyState from '../../../components/EmptyState.svelte';
   import Icon from '../../../components/Icon.svelte';
   import Segmented from '../../../components/Segmented.svelte';
+  import type { Cursor } from '../../../lib/ipc/bindings/Cursor';
+  import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
+  import type { HistoryStats } from '../../../lib/ipc/bindings/HistoryStats';
+  import {
+    historyConfirmDelete,
+    historyCopyImage,
+    historyDelete,
+    historyOpenFile,
+    historyPage,
+    historySearch,
+    historyShowInFolder,
+    historyStats,
+  } from '../../../lib/ipc/history';
+  import { get as settingsGet } from '../../../lib/ipc/settings';
   import CaptureGrid from './CaptureGrid.svelte';
   import CaptureList from './CaptureList.svelte';
   import DetailPane from './DetailPane.svelte';
-  import { searchQuery } from './search';
   import {
-    captures,
-    captureCount,
-    diskSize,
-    filterCaptures,
+    filterValue,
+    formatBytes,
     groupCaptures,
     historyFilters,
-    moveSelection,
-    uploadedThisWeek,
   } from './data';
-  import type { HistoryFilter } from './data';
+  import { searchQuery } from './search';
 
-  let filter = $state<HistoryFilter>('All');
+  let filterLabel = $state('All');
   let view = $state<'grid' | 'list'>('grid');
-  let selectedId = $state<number | null>(1);
+  let items = $state<HistoryCaptureDto[]>([]);
+  let next = $state<Cursor | null>(null);
+  let loading = $state(false);
+  let loaded = $state(false);
+  let errorMessage = $state('');
+  let selectedId = $state<number | null>(null);
+  let scroller = $state<HTMLDivElement | undefined>(undefined);
+  let scrollTop = $state(0);
+  let viewportHeight = $state(600);
+  let viewportWidth = $state(800);
+  let defaultDestination = $state('Save locally only');
+  let stats = $state<HistoryStats>({ count: 0, bytes: 0, uploadedThisWeek: 0 });
+  let token = 0;
 
-  const shown = $derived(filterCaptures(captures, filter, $searchQuery));
-  const groups = $derived(groupCaptures(shown));
-  const selected = $derived(shown.find((capture) => capture.id === selectedId) ?? null);
+  const filter = $derived(filterValue(filterLabel));
+  const groups = $derived(groupCaptures(items));
+  const selected = $derived(items.find((capture) => capture.id === selectedId) ?? null);
+  const columns = $derived(Math.max(1, Math.floor((Math.max(viewportWidth, 320) + 12) / 188)));
 
-  function openSelected(id?: number): void {
-    const target = id ?? selectedId;
-    if (target !== null) {
-      selectedId = target;
+  function describe(error: unknown): string {
+    if (
+      error !== null &&
+      typeof error === 'object' &&
+      'message' in error &&
+      typeof (error as { message: unknown }).message === 'string'
+    ) {
+      return (error as { message: string }).message;
+    }
+    return 'The History could not be read.';
+  }
+
+  async function fetchPage(reset: boolean): Promise<void> {
+    const current = ++token;
+    const cursor = reset ? null : next;
+    loading = true;
+    try {
+      const term = $searchQuery.trim();
+      const page = term
+        ? await historySearch(term, filter, cursor)
+        : await historyPage(filter, cursor);
+      if (current !== token) {
+        return;
+      }
+      if (reset) {
+        items = page.items;
+        selectedId = page.items[0]?.id ?? null;
+      } else {
+        const known = new Set(items.map((capture) => capture.id));
+        items = [...items, ...page.items.filter((capture) => !known.has(capture.id))];
+      }
+      next = page.next;
+      loaded = true;
+      errorMessage = '';
+    } catch (error) {
+      if (current !== token) {
+        return;
+      }
+      loaded = true;
+      errorMessage = describe(error);
+    } finally {
+      if (current === token) {
+        loading = false;
+      }
+    }
+  }
+
+  async function refreshStats(): Promise<void> {
+    try {
+      stats = await historyStats();
+    } catch {
+      stats = { count: 0, bytes: 0, uploadedThisWeek: 0 };
+    }
+  }
+
+  function reload(): void {
+    items = [];
+    selectedId = null;
+    next = null;
+    loaded = false;
+    scrollTop = 0;
+    if (scroller) {
+      scroller.scrollTop = 0;
+    }
+    void fetchPage(true);
+    void refreshStats();
+  }
+
+  $effect(() => {
+    const term = $searchQuery;
+    const label = filterLabel;
+    void term;
+    void label;
+    untrack(() => {
+      reload();
+    });
+  });
+
+  onMount(() => {
+    void settingsGet()
+      .then((settings) => {
+        const destination = settings.uploads.images;
+        if (destination) {
+          defaultDestination = destination;
+        }
+      })
+      .catch(() => undefined);
+  });
+
+  function onscroll(event: Event): void {
+    const element = event.currentTarget as HTMLDivElement;
+    scrollTop = element.scrollTop;
+    viewportHeight = element.clientHeight || viewportHeight;
+    viewportWidth = element.clientWidth || viewportWidth;
+    if (next && !loading) {
+      const nearBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 480;
+      if (nearBottom) {
+        void fetchPage(false);
+      }
+    }
+  }
+
+  function select(id: number): void {
+    selectedId = id;
+  }
+
+  function move(delta: number): void {
+    if (items.length === 0) {
+      return;
+    }
+    const index = items.findIndex((capture) => capture.id === selectedId);
+    if (index === -1) {
+      selectedId = items[0].id;
+      return;
+    }
+    const step = view === 'grid' ? delta * columns : delta;
+    const target = Math.min(items.length - 1, Math.max(0, index + step));
+    selectedId = items[target].id;
+  }
+
+  function copyImage(id: number): void {
+    void historyCopyImage(id).catch((error: unknown) => {
+      errorMessage = describe(error);
+    });
+  }
+
+  function showInFolder(id: number): void {
+    void historyShowInFolder(id).catch((error: unknown) => {
+      errorMessage = describe(error);
+    });
+  }
+
+  function openFile(id: number): void {
+    void historyOpenFile(id).catch((error: unknown) => {
+      errorMessage = describe(error);
+    });
+  }
+
+  function annotate(_id: number): void {
+    void _id;
+  }
+
+  function pin(_id: number): void {
+    void _id;
+  }
+
+  function upload(_id: number): void {
+    void _id;
+  }
+
+  async function askDelete(id: number): Promise<void> {
+    try {
+      const confirmed = await historyConfirmDelete(id);
+      if (!confirmed) {
+        return;
+      }
+      await historyDelete(id);
+      const index = items.findIndex((capture) => capture.id === id);
+      items = items.filter((capture) => capture.id !== id);
+      if (selectedId === id) {
+        const target = items[Math.min(index, items.length - 1)];
+        selectedId = target?.id ?? null;
+      }
+      void refreshStats();
+    } catch (error) {
+      errorMessage = describe(error);
+    }
+  }
+
+  function openSelected(): void {
+    if (selectedId !== null) {
+      openFile(selectedId);
     }
   }
 
   function copySelected(): void {
-    void selected;
-  }
-
-  function askDelete(): void {
-    if (!selected) {
-      return;
-    }
-    if (window.confirm(`Delete ${selected.name}? The file goes to the Recycle Bin.`)) {
-      selectedId = null;
+    if (selectedId !== null) {
+      copyImage(selectedId);
     }
   }
 
@@ -51,24 +235,33 @@
     if (target && ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) {
       return;
     }
-    if (
-      target?.closest('button, a, [tabindex]') &&
-      (event.key === 'Enter' || event.key === ' ')
-    ) {
+    const focusable =
+      target && typeof target.closest === 'function'
+        ? target.closest('button, a, [tabindex]')
+        : null;
+    if (focusable && (event.key === 'Enter' || event.key === ' ')) {
       return;
     }
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+    if (event.key === 'ArrowRight') {
       event.preventDefault();
-      selectedId = moveSelection(shown, selectedId, 1);
-    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      move(1);
+    } else if (event.key === 'ArrowLeft') {
       event.preventDefault();
-      selectedId = moveSelection(shown, selectedId, -1);
+      move(-1);
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      move(1);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      move(-1);
     } else if (event.key === 'Enter') {
       event.preventDefault();
       openSelected();
     } else if (event.key === 'Delete') {
       event.preventDefault();
-      askDelete();
+      if (selectedId !== null) {
+        void askDelete(selectedId);
+      }
     } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') {
       event.preventDefault();
       copySelected();
@@ -83,16 +276,17 @@
     <div class="titles">
       <h1>History</h1>
       <div class="sub">
-        {captureCount} captures · {diskSize} on disk · {uploadedThisWeek} uploaded this week
+        {stats.count} captures · {formatBytes(stats.bytes)} on disk · {stats.uploadedThisWeek} uploaded
+        this week
       </div>
     </div>
     <div class="controls">
       <Segmented
         options={historyFilters}
-        value={filter}
+        value={filterLabel}
         label="Filter by type"
         onchange={(value) => {
-          filter = value as HistoryFilter;
+          filterLabel = value;
         }}
       />
       <button
@@ -122,42 +316,74 @@
     </div>
   </div>
 
-  {#if shown.length === 0}
-    <div class="empty">
-      <EmptyState title="No captures yet" text="Press PrtSc to capture a region." />
-    </div>
-  {:else if view === 'grid'}
-    <CaptureGrid
-      {groups}
-      {selectedId}
-      onselect={(id) => {
-        selectedId = id;
-      }}
-      onopen={openSelected}
-    />
-  {:else}
-    <CaptureList
-      items={shown}
-      {selectedId}
-      onselect={(id) => {
-        selectedId = id;
-      }}
-      onopen={openSelected}
-    />
+  {#if errorMessage}
+    <p class="error" role="status">{errorMessage}</p>
   {/if}
+
+  <div
+    class="scroll"
+    bind:this={scroller}
+    bind:clientWidth={viewportWidth}
+    bind:clientHeight={viewportHeight}
+    {onscroll}
+  >
+    {#if loaded && items.length === 0}
+      <div class="empty">
+        <EmptyState title="No captures yet" text="Press PrtSc to capture a region." />
+      </div>
+    {:else if view === 'grid'}
+      <CaptureGrid
+        {groups}
+        {selectedId}
+        {columns}
+        {viewportWidth}
+        {viewportHeight}
+        bind:scrollTop
+        {scroller}
+        onselect={select}
+        onopen={openFile}
+      />
+    {:else}
+      <CaptureList
+        {items}
+        {selectedId}
+        {viewportHeight}
+        bind:scrollTop
+        {scroller}
+        onselect={select}
+        onopen={openFile}
+      />
+    {/if}
+    {#if loading}
+      <div class="loading" aria-hidden="true"></div>
+    {/if}
+  </div>
 </main>
 
-<DetailPane capture={selected} />
+<DetailPane
+  capture={selected}
+  {defaultDestination}
+  oncopy={copyImage}
+  onshow={showInFolder}
+  onopen={openFile}
+  onannotate={annotate}
+  onpin={pin}
+  ondelete={(id) => {
+    void askDelete(id);
+  }}
+  onupload={upload}
+/>
 
 <style>
   .page {
     flex: 999 1 460px;
     min-width: 0;
-    padding: 20px 24px 32px;
+    min-height: 0;
+    padding: 20px 24px 0;
     display: flex;
     flex-direction: column;
-    gap: 20px;
-    overflow-y: auto;
+    gap: 16px;
+    overflow: hidden;
   }
 
   .pagehead {
@@ -166,6 +392,7 @@
     align-items: flex-end;
     justify-content: space-between;
     gap: 12px;
+    flex: none;
   }
 
   .titles {
@@ -210,10 +437,27 @@
     color: var(--text);
   }
 
-  .empty {
+  .scroll {
     flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-bottom: 32px;
+  }
+
+  .empty {
+    height: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
+  }
+
+  .error {
+    margin: 0;
+    font-size: 12px;
+    color: var(--err);
+  }
+
+  .loading {
+    height: 24px;
   }
 </style>

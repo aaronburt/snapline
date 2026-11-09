@@ -1,0 +1,38 @@
+---
+source: crates/core/tests/annotate_snapshot.rs
+expression: art(&image)
+---
+64x64 +2
+KKKKKKKKKKKKKKKKKKKK++++++++++++
+KKKKKKKKKKKKKKKKKKK+++++++++++++
+KKKKKKKKKKKKKKKKKK++++++++++++++
+KKKKKKKKKKKKKKKKK+++++GGGGGG++++
+KKKKKKKBBBBBBBBBBBBBBGGGGGGGGG++
+KKKKKBBBBBBBBBBBBBBBGGGGGGGGGG++
+KKKKKBBgWWWWWWWWWWW+GGGGWWGGGGG+
+KKKKBBgWWRRWWRRRRRRGGGGWWWGGGGG+
+KKKKBBWWWRRWWRRWWRRGGGGGWWGGGGGG
+KKKKBBWWWRRWWRRWWRRGGGGGWWGGGGGG
+KKKKBBWWWRRRRRRWWRRGGGGGWWGGGGGG
+KKKKBBWWWRRWWRRWWRRGGGGGWWGGGGG+
+KKKKBBWWWRRWWRRWWRRwGGGWWWWGGGG+
+KKKKBBWWWRRWWRRRRRRRGGGGGGGGGG++
+KKKKBB+WWWWWWWWWWWWWWgGGGGGGG+++
+KKKKBB+++++++++++++++++++++B+++b
+KKKKBB+++++++++++++++++++++B++bb
+KKK+BB+++++++++++++++++++++B+gbb
+KK++BB++++++++R++++++++++++Bggbb
+K+++BB+++++++RR++++++++++++Bggbb
+O+++BB++++++RRR++++++++++++Bggbb
+++++GBB++++RRR+++++++ggggggBggbb
+YG+++BBBBB+RRBB++++++ggggggBggbb
+YGGG++BBB+RRBBB++++++gggggggggbb
+YYGGG+++RRR++++++++++gggggggggbb
+YYGGGGG+RR+++++++++++gggggggggbb
+YYYGGG+RR++++++++++++gggggggggbb
+YYYGGGRR+GG++++++gggggggggggggbb
+YYYYGGGGGGGGG+++ggggggggggggggbb
+YYYYGGGGGGGGGG+gggggggggggggggbb
+YYYYYGGGGGGGGGgggggggggggggggggb
+YYYYYGGGGGGGGggggggggggggggggggb
+fnv64 3a8441c067c10a1c

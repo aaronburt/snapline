@@ -1,13 +1,18 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import Icon from '../../components/Icon.svelte';
   import NavItem from '../../components/NavItem.svelte';
-  import { captureCount } from './history/data';
+  import type { AppReq } from '../../lib/ipc/bindings/AppReq';
+  import type { AppResp } from '../../lib/ipc/bindings/AppResp';
+  import { call } from '../../lib/ipc/core';
 
   interface Props {
     page: string;
   }
 
   let { page }: Props = $props();
+
+  let count = $state('');
 
   const section = $derived(
     page.startsWith('workflow')
@@ -16,6 +21,23 @@
         ? 'tools'
         : page,
   );
+
+  async function loadCount(): Promise<void> {
+    const req: AppReq = { kind: 'stats' };
+    const response = await call<AppReq, AppResp>('ipc_app', req);
+    if (response.kind === 'stats') {
+      count = String(response.data.count);
+    }
+  }
+
+  onMount(() => {
+    const refresh = (): void => {
+      void loadCount().catch(() => undefined);
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  });
 
   function newCapture(): void {
     void 0;
@@ -32,7 +54,7 @@
   <NavItem
     label="History"
     icon="history"
-    count={captureCount}
+    count={count}
     active={section === 'history'}
     href="#/history"
   />

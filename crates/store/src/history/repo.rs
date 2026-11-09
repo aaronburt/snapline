@@ -159,6 +159,34 @@ impl HistoryRepo {
         })
     }
 
+    pub fn set_ocr_text(&mut self, id: CaptureId, text: &str) -> Result<(), HistoryError> {
+        let transaction = self.conn.transaction()?;
+        let row: Option<(String, Option<String>, Option<String>)> = transaction
+            .query_row(
+                "SELECT path, source_app, ocr_text FROM capture WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((path, source_app, old_text)) = row else {
+            return Ok(());
+        };
+        transaction.execute(
+            "UPDATE capture SET ocr_text = ?1 WHERE id = ?2",
+            params![text, id],
+        )?;
+        transaction.execute(
+            DELETE_FTS,
+            params![id, capture_name(&path), source_app, old_text],
+        )?;
+        transaction.execute(
+            INSERT_FTS,
+            params![id, capture_name(&path), source_app, text],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn delete(&mut self, id: CaptureId) -> Result<Option<DeletedCapture>, HistoryError> {
         let transaction = self.conn.transaction()?;
         let found: Option<(String, String, i64, Option<String>, Option<String>)> = transaction

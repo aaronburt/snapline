@@ -1,0 +1,22 @@
+---
+source: crates/core/tests/annotate_snapshot.rs
+expression: art(&image)
+---
+40x32 +2
+KKKKKKKK++++++++++++
+KKKKKKK+++++++++++++
+KKKKKK++++++++++++++
+KKKKK+++++++++++++++
+KKKK+++BBBBBBBBBB+++
+KKK++BBBBBBBBBBBBB++
+KK+++BB+++++++++BBB+
+K+++BB+++++++++++BB+
+++++BB+++++++++++BB+
+++++BB+++++++++++BB+
+++++BB+++++++++++BB+
+++++BBB++++++++++BB+
++++++BBBBBBBBBBBBBB+
+++++++BBBBBBBBBBBB++
+++++++++++++++++++++
+++++++++++++++++++gg
+fnv64 0c5203977f1c6aed

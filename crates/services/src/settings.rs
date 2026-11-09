@@ -123,17 +123,18 @@ mod tests {
     fn get_returns_the_defaults() {
         let directory = tempfile::tempdir().expect("temp dir");
         let services = services(directory.path());
-        let settings = dto_of(
-            services
-                .settings()
-                .handle(SettingsReq::Get)
-                .expect("get"),
-        );
+        let settings = dto_of(services.settings().handle(SettingsReq::Get).expect("get"));
         assert_eq!(settings.version, 1);
         assert!(settings.general.launch_at_signin);
         assert!(settings.general.start_minimised);
-        assert_eq!(settings.general.save_folder, "%USERPROFILE%\\Pictures\\Snapline");
-        assert_eq!(settings.general.image_format, crate::dto::settings::ImageFormatDto::Png);
+        assert_eq!(
+            settings.general.save_folder,
+            "%USERPROFILE%\\Pictures\\Snapline"
+        );
+        assert_eq!(
+            settings.general.image_format,
+            crate::dto::settings::ImageFormatDto::Png
+        );
         assert_eq!(settings.capture.scroll_delay_ms, 300);
         assert_eq!(settings.uploads.images, "save_locally_only");
         assert!(settings.hotkeys.bindings.contains_key("capture_region"));

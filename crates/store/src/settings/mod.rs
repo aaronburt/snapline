@@ -20,7 +20,7 @@ pub use general::General;
 pub use hotkeys::Hotkeys;
 pub use uploads::Uploads;
 pub use window::Window;
-pub use workflows::Workflows;
+pub use workflows::{default_workflow, Workflows};
 
 pub const CURRENT_VERSION: u32 = migrate::CURRENT_VERSION;
 
@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn defaults_match_the_plan() {
         let settings = Settings::default();
-        assert_eq!(settings.version, 1);
+        assert_eq!(settings.version, 2);
         assert!(settings.general.launch_at_signin);
         assert!(settings.general.start_minimised);
         assert!(settings.general.notifications);
@@ -440,5 +440,84 @@ mod tests {
         let loaded = load(&path).expect("load");
         assert_eq!(loaded.settings, Settings::default());
         assert!(loaded.notice.is_none());
+    }
+
+    #[test]
+    fn a_version_one_file_gains_the_default_workflow() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("settings.toml");
+        std::fs::write(
+            &path,
+            concat!(
+                "version = 1\n",
+                "[general]\n",
+                "notifications = false\n",
+                "[workflows]\n",
+                "unknown_workflows = \"kept\"\n",
+            ),
+        )
+        .expect("write");
+
+        let loaded = load(&path).expect("load");
+        assert!(loaded.notice.is_none());
+        assert_eq!(loaded.settings.version, 2);
+        assert_eq!(loaded.settings.workflows.list.len(), 1);
+        let workflow = &loaded.settings.workflows.list[0];
+        assert_eq!(
+            workflow.id.as_str(),
+            snapline_core::workflow::DEFAULT_WORKFLOW_ID
+        );
+        assert_eq!(
+            workflow.name,
+            snapline_core::workflow::DEFAULT_WORKFLOW_NAME
+        );
+        assert!(workflow.enabled);
+        assert_eq!(workflow.hotkey, None);
+        assert_eq!(
+            workflow.steps,
+            vec![
+                snapline_core::workflow::Step::CopyImage,
+                snapline_core::workflow::Step::Save,
+                snapline_core::workflow::Step::Upload { dest: None },
+                snapline_core::workflow::Step::CopyLink {
+                    format: snapline_core::link_format::LinkFormat::Direct,
+                },
+                snapline_core::workflow::Step::PlaySound,
+            ]
+        );
+        assert_eq!(
+            loaded.settings.workflows.extra.get("unknown_workflows"),
+            Some(&toml::Value::String("kept".to_owned()))
+        );
+    }
+
+    #[test]
+    fn repeated_loads_do_not_duplicate_the_default_workflow() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("settings.toml");
+        std::fs::write(&path, "version = 1\n").expect("write");
+
+        let first = load(&path).expect("first load");
+        let second = load(&path).expect("second load");
+        assert_eq!(first.settings.workflows.list.len(), 1);
+        assert_eq!(second.settings.workflows.list.len(), 1);
+        assert_eq!(first.settings, second.settings);
+
+        save(&path, &first.settings).expect("save");
+        let reloaded = load(&path).expect("reload");
+        assert_eq!(reloaded.settings.workflows.list.len(), 1);
+        assert_eq!(reloaded.settings, first.settings);
+    }
+
+    #[test]
+    fn a_version_two_file_keeps_an_empty_workflow_list() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("settings.toml");
+        std::fs::write(&path, "version = 2\n[workflows]\nlist = []\n").expect("write");
+
+        let loaded = load(&path).expect("load");
+        assert!(loaded.notice.is_none());
+        assert_eq!(loaded.settings.version, 2);
+        assert!(loaded.settings.workflows.list.is_empty());
     }
 }

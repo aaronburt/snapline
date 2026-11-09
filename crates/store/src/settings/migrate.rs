@@ -1,6 +1,8 @@
 use thiserror::Error;
 
-pub const CURRENT_VERSION: u32 = 1;
+use super::workflows::default_workflow;
+
+pub const CURRENT_VERSION: u32 = 2;
 
 type Step = fn(toml::Table) -> Result<toml::Table, MigrationError>;
 
@@ -12,6 +14,8 @@ pub enum MigrationError {
     InvalidVersion,
     #[error("no settings migration exists for version {0}")]
     MissingStep(u32),
+    #[error("could not create the default workflow")]
+    DefaultWorkflow,
 }
 
 pub fn version_of(table: &toml::Table) -> Result<u32, MigrationError> {
@@ -28,7 +32,7 @@ pub fn migrate(mut table: toml::Table, from: u32) -> Result<toml::Table, Migrati
     if from > CURRENT_VERSION {
         return Err(MigrationError::FutureVersion(from));
     }
-    for version in from..=CURRENT_VERSION {
+    for version in (from + 1)..=CURRENT_VERSION {
         let step = step_for(version).ok_or(MigrationError::MissingStep(version))?;
         table = step(table)?;
     }
@@ -41,27 +45,45 @@ pub fn migrate(mut table: toml::Table, from: u32) -> Result<toml::Table, Migrati
 
 fn step_for(version: u32) -> Option<Step> {
     match version {
-        1 => Some(keep_version_one),
+        2 => Some(add_default_workflow),
         _ => None,
     }
 }
 
-fn keep_version_one(table: toml::Table) -> Result<toml::Table, MigrationError> {
+fn add_default_workflow(mut table: toml::Table) -> Result<toml::Table, MigrationError> {
+    let default = default_workflow();
+    let workflow = toml::Value::try_from(&default).map_err(|_| MigrationError::DefaultWorkflow)?;
+    if !table.contains_key("workflows") {
+        table.insert(
+            "workflows".to_owned(),
+            toml::Value::Table(toml::Table::new()),
+        );
+    }
+    if let Some(toml::Value::Table(workflows)) = table.get_mut("workflows") {
+        let empty = match workflows.get("list") {
+            None => true,
+            Some(toml::Value::Array(items)) => items.is_empty(),
+            Some(_) => false,
+        };
+        if empty {
+            workflows.insert("list".to_owned(), toml::Value::Array(vec![workflow]));
+        }
+    }
     Ok(table)
 }
 
 #[cfg(test)]
 mod tests {
+    use serde::Deserialize;
+
     use super::*;
+    use snapline_core::workflow::{Step, DEFAULT_WORKFLOW_ID, DEFAULT_WORKFLOW_NAME};
 
     #[test]
-    fn migration_from_version_one_to_one_keeps_the_table() {
+    fn a_version_one_file_gains_the_default_workflow() {
         let mut table = toml::Table::new();
         table.insert("version".to_owned(), toml::Value::Integer(1));
-        table.insert(
-            "marker".to_owned(),
-            toml::Value::String("kept".to_owned()),
-        );
+        table.insert("marker".to_owned(), toml::Value::String("kept".to_owned()));
         let migrated = migrate(table, 1).expect("migration");
         assert_eq!(
             migrated.get("version"),
@@ -71,6 +93,69 @@ mod tests {
             migrated.get("marker"),
             Some(&toml::Value::String("kept".to_owned()))
         );
+        let Some(toml::Value::Table(workflows)) = migrated.get("workflows") else {
+            panic!("workflows table");
+        };
+        let Some(toml::Value::Array(list)) = workflows.get("list") else {
+            panic!("workflow list");
+        };
+        assert_eq!(list.len(), 1);
+        let Some(toml::Value::Table(workflow)) = list.first() else {
+            panic!("default workflow");
+        };
+        assert_eq!(
+            workflow.get("id"),
+            Some(&toml::Value::String(DEFAULT_WORKFLOW_ID.to_owned()))
+        );
+        assert_eq!(
+            workflow.get("name"),
+            Some(&toml::Value::String(DEFAULT_WORKFLOW_NAME.to_owned()))
+        );
+        assert_eq!(workflow.get("enabled"), Some(&toml::Value::Boolean(true)));
+        assert!(workflow.get("hotkey").is_none());
+        let loaded: crate::settings::Settings =
+            crate::settings::Settings::deserialize(toml::Value::Table(migrated.clone()))
+                .expect("settings");
+        assert_eq!(
+            loaded.workflows.list[0].steps,
+            vec![
+                Step::CopyImage,
+                Step::Save,
+                Step::Upload { dest: None },
+                Step::CopyLink {
+                    format: snapline_core::link_format::LinkFormat::Direct,
+                },
+                Step::PlaySound,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_version_one_file_with_workflows_is_left_alone() {
+        let mut table = toml::Table::new();
+        table.insert("version".to_owned(), toml::Value::Integer(1));
+        let mut workflows = toml::Table::new();
+        workflows.insert(
+            "list".to_owned(),
+            toml::Value::Array(vec![toml::Value::Table(toml::Table::new())]),
+        );
+        table.insert("workflows".to_owned(), toml::Value::Table(workflows));
+        let migrated = migrate(table, 1).expect("migration");
+        let Some(toml::Value::Table(workflows)) = migrated.get("workflows") else {
+            panic!("workflows table");
+        };
+        let Some(toml::Value::Array(list)) = workflows.get("list") else {
+            panic!("workflow list");
+        };
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn a_version_two_file_keeps_an_empty_list() {
+        let mut table = toml::Table::new();
+        table.insert("version".to_owned(), toml::Value::Integer(2));
+        let migrated = migrate(table, 2).expect("migration");
+        assert!(migrated.get("workflows").is_none());
     }
 
     #[test]

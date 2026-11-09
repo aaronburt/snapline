@@ -3,9 +3,14 @@
   import Icon from '../../../components/Icon.svelte';
   import HotkeyField from '../../../components/HotkeyField.svelte';
   import ToggleRow from '../../../components/ToggleRow.svelte';
+  import type { IconName } from '../../../lib/icons';
+  import type { PreviewDto } from '../../../lib/ipc/bindings/PreviewDto';
+  import { get as getHotkeys, preview as previewHotkey } from '../../../lib/ipc/hotkeys';
+  import type { HotkeysState } from '../../../lib/ipc/hotkeys';
   import SettingsPage from './SettingsPage.svelte';
   import SettingsSection from './SettingsSection.svelte';
   import { loadSettings, settings, updateHotkeys } from './settings';
+  import type { HotkeySettings } from './settings';
 
   interface Props {
     filter?: string;
@@ -13,11 +18,341 @@
 
   let { filter = '' }: Props = $props();
 
-  const rows = $derived($settings.hotkeys);
+  type ChordKey = Exclude<keyof HotkeySettings, 'takeOverPrtSc' | 'warnClashes'>;
+
+  interface Row {
+    key: ChordKey;
+    owner: string;
+    label: string;
+    description: string;
+    icon: IconName;
+  }
+
+  interface Group {
+    title: string;
+    rows: Row[];
+  }
+
+  const GROUPS: Group[] = [
+    {
+      title: 'Capture',
+      rows: [
+        {
+          key: 'captureRegion',
+          owner: 'capture_region',
+          label: 'Capture region',
+          description: 'Runs the default workflow',
+          icon: 'region',
+        },
+        {
+          key: 'captureWindow',
+          owner: 'capture_window',
+          label: 'Capture window',
+          description: '',
+          icon: 'window',
+        },
+        {
+          key: 'captureFullScreen',
+          owner: 'capture_screen',
+          label: 'Capture full screen',
+          description: '',
+          icon: 'screen',
+        },
+        {
+          key: 'scrollingCapture',
+          owner: 'capture_scrolling',
+          label: 'Scrolling capture',
+          description: '',
+          icon: 'scroll',
+        },
+        {
+          key: 'lastRegion',
+          owner: 'capture_last_region',
+          label: 'Last region again',
+          description: '',
+          icon: 'stop',
+        },
+      ],
+    },
+    {
+      title: 'Recording',
+      rows: [
+        {
+          key: 'recordVideo',
+          owner: 'record_video',
+          label: 'Record video',
+          description: '',
+          icon: 'film',
+        },
+        {
+          key: 'recordGif',
+          owner: 'record_gif',
+          label: 'Record GIF',
+          description: '',
+          icon: 'gifMark',
+        },
+      ],
+    },
+    {
+      title: 'Tools',
+      rows: [
+        {
+          key: 'textCapture',
+          owner: 'tool_ocr',
+          label: 'Text capture (OCR)',
+          description: '',
+          icon: 'ocr',
+        },
+        {
+          key: 'colourPicker',
+          owner: 'tool_colour',
+          label: 'Colour picker',
+          description: '',
+          icon: 'palette',
+        },
+        {
+          key: 'screenRuler',
+          owner: 'tool_ruler',
+          label: 'Screen ruler',
+          description: '',
+          icon: 'ruler',
+        },
+        {
+          key: 'uploadClipboard',
+          owner: 'upload_clipboard',
+          label: 'Upload from clipboard',
+          description: '',
+          icon: 'clip',
+        },
+      ],
+    },
+  ];
+
+  const OWNER_LABELS: Record<string, string> = Object.fromEntries(
+    GROUPS.flatMap((group) => group.rows.map((row) => [row.owner, row.label] as const)),
+  );
+
+  const EXTERNAL_OFF = 'Off: another app is using this shortcut.';
+  const PRTSC_HINT = 'Sign out and back in for Windows to release the PrtSc key.';
+
+  let live = $state<HotkeysState>({ bindings: [], blocked: [], paused: false });
+  let previews = $state<Record<string, string>>({});
+  let capturing = $state<string | null>(null);
+  let prtscHint = $state(false);
+  let prtscHintShown = false;
+  let request = 0;
+
+  const bound = $derived(
+    new Map(live.bindings.map((binding) => [binding.owner, binding.chord] as const)),
+  );
+
+  const blockedText = $derived.by(() => {
+    const grouped = new Map<string, string[]>();
+    for (const entry of live.blocked) {
+      const owners = grouped.get(entry.chord) ?? [];
+      owners.push(entry.owner);
+      grouped.set(entry.chord, owners);
+    }
+    const text: Record<string, string> = {};
+    for (const entry of live.blocked) {
+      if (entry.reason === 'external') {
+        text[entry.owner] = EXTERNAL_OFF;
+        continue;
+      }
+      const others = (grouped.get(entry.chord) ?? [])
+        .filter((owner) => owner !== entry.owner)
+        .map(ownerLabel);
+      text[entry.owner] = `Off: also used by ${formatOwners(others, entry.label)}.`;
+    }
+    return text;
+  });
 
   onMount(() => {
-    void loadSettings();
+    void initialise();
   });
+
+  async function initialise(): Promise<void> {
+    await loadSettings();
+    await refresh();
+  }
+
+  async function refresh(): Promise<void> {
+    try {
+      live = await getHotkeys();
+    } catch {
+      return;
+    }
+  }
+
+  function ownerLabel(owner: string): string {
+    if (OWNER_LABELS[owner]) {
+      return OWNER_LABELS[owner];
+    }
+    if (owner.startsWith('workflow:')) {
+      return `Workflow ${owner.slice('workflow:'.length)}`;
+    }
+    return owner;
+  }
+
+  function formatOwners(labels: string[], fallback: string): string {
+    if (labels.length === 0) {
+      return fallback;
+    }
+    if (labels.length === 1) {
+      return labels[0];
+    }
+    if (labels.length === 2) {
+      return `${labels[0]} and ${labels[1]}`;
+    }
+    return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+  }
+
+  function previewText(preview: PreviewDto): string {
+    if (preview === 'free') {
+      return '';
+    }
+    if (preview === 'external') {
+      return EXTERNAL_OFF;
+    }
+    const owners = preview.internal.owners.map(ownerLabel);
+    return `Off: also used by ${formatOwners(owners, '')}.`;
+  }
+
+  function chordFor(row: Row): string {
+    return bound.get(row.owner) ?? $settings.hotkeys[row.key];
+  }
+
+  function rowError(row: Row): string {
+    const preview = previews[row.owner];
+    if (preview !== undefined) {
+      return preview;
+    }
+    return blockedText[row.owner] ?? '';
+  }
+
+  function clearPreview(owner: string): void {
+    const next = { ...previews };
+    delete next[owner];
+    previews = next;
+  }
+
+  async function showPreview(owner: string, chord: string): Promise<void> {
+    const mine = ++request;
+    try {
+      const preview = await previewHotkey(owner, chord);
+      if (mine === request) {
+        previews = { ...previews, [owner]: previewText(preview) };
+      }
+    } catch {
+      if (mine === request) {
+        clearPreview(owner);
+      }
+    }
+  }
+
+  function beginCapture(event: MouseEvent): void {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest('button');
+    if (!button || button.textContent?.trim() !== 'Change') {
+      return;
+    }
+    const ownerRow = button.closest('[data-owner]');
+    if (!(ownerRow instanceof HTMLElement) || !ownerRow.dataset.owner) {
+      return;
+    }
+    capturing = ownerRow.dataset.owner;
+    previews = { ...previews, [capturing]: '' };
+  }
+
+  function keyName(key: string): string {
+    if (key === 'PrintScreen') {
+      return 'PrtSc';
+    }
+    if (key === ' ') {
+      return 'Space';
+    }
+    if (key.length === 1) {
+      return key.toUpperCase();
+    }
+    return key;
+  }
+
+  type CaptureResult =
+    | { kind: 'cancel' }
+    | { kind: 'clear' }
+    | { kind: 'chord'; chord: string };
+
+  function captureResult(event: KeyboardEvent): CaptureResult | null {
+    if (event.key === 'Escape') {
+      return { kind: 'cancel' };
+    }
+    if (event.key === 'Backspace') {
+      return { kind: 'clear' };
+    }
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) {
+      return null;
+    }
+    const name = keyName(event.key);
+    const hasModifier = event.ctrlKey || event.altKey || event.shiftKey || event.metaKey;
+    const allowedAlone =
+      name === 'PrtSc' || name === 'Pause' || /^F([1-9]|1[0-9]|2[0-4])$/.test(name);
+    if (!hasModifier && !allowedAlone) {
+      return null;
+    }
+    if (event.metaKey && !event.shiftKey) {
+      return null;
+    }
+    const chord: string[] = [];
+    if (event.ctrlKey) {
+      chord.push('Ctrl');
+    }
+    if (event.altKey) {
+      chord.push('Alt');
+    }
+    if (event.shiftKey) {
+      chord.push('Shift');
+    }
+    if (event.metaKey) {
+      chord.push('Win');
+    }
+    chord.push(name);
+    return { kind: 'chord', chord: chord.join('+') };
+  }
+
+  function handleKeydown(event: KeyboardEvent): void {
+    if (capturing === null) {
+      return;
+    }
+    const result = captureResult(event);
+    if (!result) {
+      return;
+    }
+    const owner = capturing;
+    capturing = null;
+    if (result.kind === 'chord') {
+      void showPreview(owner, result.chord);
+    } else {
+      clearPreview(owner);
+    }
+  }
+
+  async function commit(key: ChordKey, chord: string): Promise<void> {
+    updateHotkeys(key, chord);
+    await loadSettings();
+    await refresh();
+  }
+
+  function changePrtSc(value: boolean): void {
+    updateHotkeys('takeOverPrtSc', value);
+    if (!value) {
+      prtscHint = false;
+      return;
+    }
+    if (!prtscHintShown) {
+      prtscHintShown = true;
+      prtscHint = true;
+    }
+  }
 
   function matches(title: string, description = ''): boolean {
     const needle = filter.trim().toLowerCase();
@@ -28,243 +363,76 @@
     );
   }
 
-  const regionVisible = $derived(matches('Capture region', 'Runs the default workflow'));
-  const windowVisible = $derived(matches('Capture window'));
-  const fullScreenVisible = $derived(matches('Capture full screen'));
-  const scrollingVisible = $derived(matches('Scrolling capture'));
-  const lastRegionVisible = $derived(matches('Last region again'));
-  const showCapture = $derived(
-    matches('Capture') ||
-      regionVisible ||
-      windowVisible ||
-      fullScreenVisible ||
-      scrollingVisible ||
-      lastRegionVisible,
-  );
+  function groupVisible(group: Group): boolean {
+    return (
+      matches(group.title) ||
+      group.rows.some((row) => matches(row.label, row.description))
+    );
+  }
 
-  const videoVisible = $derived(matches('Record video'));
-  const gifVisible = $derived(matches('Record GIF'));
-  const showRecording = $derived(matches('Recording') || videoVisible || gifVisible);
-
-  const textVisible = $derived(matches('Text capture (OCR)'));
-  const colourVisible = $derived(matches('Colour picker'));
-  const rulerVisible = $derived(matches('Screen ruler'));
-  const uploadVisible = $derived(matches('Upload from clipboard'));
-  const showTools = $derived(
-    matches('Tools') || textVisible || colourVisible || rulerVisible || uploadVisible,
-  );
-
-  const overrideVisible = $derived(
+  const takeOverVisible = $derived(
     matches('Take over the PrtSc key', 'Stops Windows opening Snipping Tool when you press PrtSc'),
   );
   const clashVisible = $derived(
     matches('Warn about clashes', 'Tell me when another app already uses a hotkey'),
   );
-  const showBehaviour = $derived(matches('Behaviour') || overrideVisible || clashVisible);
+  const showBehaviour = $derived(matches('Behaviour') || takeOverVisible || clashVisible);
 </script>
+
+<svelte:window onclick={beginCapture} onkeydown={handleKeydown} />
 
 <SettingsPage
   title="Hotkeys"
   intro="If two actions share a chord, or another app owns it, neither is bound and you are told."
 >
-  {#if showCapture}
-    <SettingsSection title="Capture">
-      {#if regionVisible}
-        <div class="row">
-          <Icon name="region" size={20} />
-          <div class="text">
-            <span class="title">Capture region</span>
-            <span class="description">Runs the default workflow</span>
-          </div>
-          <div class="control">
-            <HotkeyField
-              label="Capture region"
-              value={rows.captureRegion}
-              onchange={(value) => updateHotkeys('captureRegion', value)}
-            />
-          </div>
-        </div>
-      {/if}
-      {#if windowVisible}
-        <div class="row">
-          <Icon name="window" size={20} />
-          <div class="text">
-            <span class="title">Capture window</span>
-          </div>
-          <div class="control">
-            <HotkeyField
-              label="Capture window"
-              value={rows.captureWindow}
-              onchange={(value) => updateHotkeys('captureWindow', value)}
-            />
-          </div>
-        </div>
-      {/if}
-      {#if fullScreenVisible}
-        <div class="row">
-          <Icon name="screen" size={20} />
-          <div class="text">
-            <span class="title">Capture full screen</span>
-          </div>
-          <div class="control">
-            <HotkeyField
-              label="Capture full screen"
-              value={rows.captureFullScreen}
-              onchange={(value) => updateHotkeys('captureFullScreen', value)}
-            />
-          </div>
-        </div>
-      {/if}
-      {#if scrollingVisible}
-        <div class="row">
-          <Icon name="scroll" size={20} />
-          <div class="text">
-            <span class="title">Scrolling capture</span>
-          </div>
-          <div class="control">
-            <HotkeyField
-              label="Scrolling capture"
-              value={rows.scrollingCapture}
-              onchange={(value) => updateHotkeys('scrollingCapture', value)}
-            />
-          </div>
-        </div>
-      {/if}
-      {#if lastRegionVisible}
-        <div class="row">
-          <Icon name="stop" size={20} />
-          <div class="text">
-            <span class="title">Last region again</span>
-          </div>
-          <div class="control">
-            <HotkeyField
-              label="Last region again"
-              value={rows.lastRegion}
-              onchange={(value) => updateHotkeys('lastRegion', value)}
-            />
-          </div>
-        </div>
-      {/if}
-    </SettingsSection>
-  {/if}
-
-  {#if showRecording}
-    <SettingsSection title="Recording">
-      {#if videoVisible}
-        <div class="row">
-          <Icon name="film" size={20} />
-          <div class="text">
-            <span class="title">Record video</span>
-          </div>
-          <div class="control">
-            <HotkeyField
-              label="Record video"
-              value={rows.recordVideo}
-              onchange={(value) => updateHotkeys('recordVideo', value)}
-            />
-          </div>
-        </div>
-      {/if}
-      {#if gifVisible}
-        <div class="row">
-          <Icon name="gifMark" size={20} />
-          <div class="text">
-            <span class="title">Record GIF</span>
-          </div>
-          <div class="control">
-            <HotkeyField
-              label="Record GIF"
-              value={rows.recordGif}
-              onchange={(value) => updateHotkeys('recordGif', value)}
-            />
-          </div>
-        </div>
-      {/if}
-    </SettingsSection>
-  {/if}
-
-  {#if showTools}
-    <SettingsSection title="Tools">
-      {#if textVisible}
-        <div class="row">
-          <Icon name="ocr" size={20} />
-          <div class="text">
-            <span class="title">Text capture (OCR)</span>
-          </div>
-          <div class="control">
-            <HotkeyField
-              label="Text capture (OCR)"
-              value={rows.textCapture}
-              onchange={(value) => updateHotkeys('textCapture', value)}
-            />
-          </div>
-        </div>
-      {/if}
-      {#if colourVisible}
-        <div class="row">
-          <Icon name="palette" size={20} />
-          <div class="text">
-            <span class="title">Colour picker</span>
-          </div>
-          <div class="control">
-            <HotkeyField
-              label="Colour picker"
-              value={rows.colourPicker}
-              onchange={(value) => updateHotkeys('colourPicker', value)}
-            />
-          </div>
-        </div>
-      {/if}
-      {#if rulerVisible}
-        <div class="row">
-          <Icon name="ruler" size={20} />
-          <div class="text">
-            <span class="title">Screen ruler</span>
-          </div>
-          <div class="control">
-            <HotkeyField
-              label="Screen ruler"
-              value={rows.screenRuler}
-              onchange={(value) => updateHotkeys('screenRuler', value)}
-            />
-          </div>
-        </div>
-      {/if}
-      {#if uploadVisible}
-        <div class="row">
-          <Icon name="clip" size={20} />
-          <div class="text">
-            <span class="title">Upload from clipboard</span>
-          </div>
-          <div class="control">
-            <HotkeyField
-              label="Upload from clipboard"
-              value={rows.uploadClipboard}
-              onchange={(value) => updateHotkeys('uploadClipboard', value)}
-            />
-          </div>
-        </div>
-      {/if}
-    </SettingsSection>
-  {/if}
+  {#each GROUPS as group (group.title)}
+    {#if groupVisible(group)}
+      <SettingsSection title={group.title}>
+        {#each group.rows as row (row.owner)}
+          {#if matches(row.label, row.description)}
+            <div class="row" class:blocked={rowError(row) !== ''} data-owner={row.owner}>
+              <Icon name={row.icon} size={20} />
+              <div class="text">
+                <span class="title">{row.label}</span>
+                {#if row.description}
+                  <span class="description">{row.description}</span>
+                {/if}
+              </div>
+              <div class="control">
+                <HotkeyField
+                  label={row.label}
+                  value={chordFor(row)}
+                  clash={rowError(row)}
+                  onchange={(value) => void commit(row.key, value)}
+                />
+              </div>
+            </div>
+          {/if}
+        {/each}
+      </SettingsSection>
+    {/if}
+  {/each}
 
   {#if showBehaviour}
     <SettingsSection title="Behaviour">
-      {#if overrideVisible}
+      {#if takeOverVisible}
         <ToggleRow
           icon="shield"
           title="Take over the PrtSc key"
           description="Stops Windows opening Snipping Tool when you press PrtSc"
-          checked={rows.takeOverPrtSc}
-          onchange={(value) => updateHotkeys('takeOverPrtSc', value)}
+          checked={$settings.hotkeys.takeOverPrtSc}
+          onchange={changePrtSc}
         />
+        {#if prtscHint}
+          <p class="hint">{PRTSC_HINT}</p>
+        {/if}
       {/if}
       {#if clashVisible}
         <ToggleRow
           icon="alert"
           title="Warn about clashes"
           description="Tell me when another app already uses a hotkey"
-          checked={rows.warnClashes}
+          checked={$settings.hotkeys.warnClashes}
           onchange={(value) => updateHotkeys('warnClashes', value)}
         />
       {/if}
@@ -283,6 +451,10 @@
     background: var(--card);
     border: 1px solid var(--stroke);
     border-radius: 6px;
+  }
+
+  .row.blocked :global(input) {
+    border-color: var(--err);
   }
 
   .text {
@@ -305,5 +477,12 @@
   .control {
     flex: 1 1 320px;
     max-width: 460px;
+  }
+
+  .hint {
+    margin: 0;
+    padding: 0 20px;
+    font-size: 12px;
+    color: var(--text3);
   }
 </style>
