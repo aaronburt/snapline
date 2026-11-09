@@ -256,6 +256,7 @@ pub struct OverlayResult {
     pub monitor: Option<u32>,
     pub tool: crate::overlay::Tool,
     pub colour: crate::overlay::Rgb,
+    pub image: Option<Image>,
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]

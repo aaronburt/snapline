@@ -12,14 +12,23 @@
     clippy::unused_self
 )]
 
+pub mod canvas_d2d;
 pub mod d2d;
+pub mod hints;
 pub mod icons;
 pub mod magnifier;
+pub mod picker;
+pub mod pin;
 pub mod port_impl;
 pub mod readout;
+#[allow(dead_code)]
 pub mod render;
+pub mod ruler;
+pub mod text_input;
 pub mod thread;
 pub mod tokens;
+pub mod toolbar;
+pub mod tools;
 pub mod window;
 
 use snapline_core::geometry::Rect;
@@ -225,6 +234,7 @@ pub struct OverlayResult {
     pub monitor: Option<u32>,
     pub tool: Tool,
     pub colour: Rgb,
+    pub image: Option<Image>,
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]

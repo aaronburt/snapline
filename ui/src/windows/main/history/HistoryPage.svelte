@@ -17,6 +17,7 @@
     historyStats,
   } from '../../../lib/ipc/history';
   import { get as settingsGet } from '../../../lib/ipc/settings';
+  import { editorOpenHistory } from '../../../lib/ipc/tool';
   import CaptureGrid from './CaptureGrid.svelte';
   import CaptureList from './CaptureList.svelte';
   import DetailPane from './DetailPane.svelte';
@@ -187,8 +188,17 @@
     });
   }
 
-  function annotate(_id: number): void {
-    void _id;
+  function annotate(id: number): void {
+    void editorOpenHistory(id)
+      .then((outcome) => {
+        if (!outcome.cancelled && outcome.captureId !== null) {
+          void fetchPage(true);
+          void refreshStats();
+        }
+      })
+      .catch((error: unknown) => {
+        errorMessage = describe(error);
+      });
   }
 
   function pin(_id: number): void {

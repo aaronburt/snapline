@@ -2,6 +2,7 @@ import type { ConvertFormatDto } from './bindings/ConvertFormatDto';
 import type { ConvertProgressDto } from './bindings/ConvertProgressDto';
 import type { ConvertSource } from './bindings/ConvertSource';
 import type { ConvertedDto } from './bindings/ConvertedDto';
+import type { EditorOutcomeDto } from './bindings/EditorOutcomeDto';
 import type { ToolReq } from './bindings/ToolReq';
 import type { ToolResp } from './bindings/ToolResp';
 import type { IpcError } from './core';
@@ -28,6 +29,42 @@ function unexpected(): IpcError {
 export function ping(): Promise<ToolResp> {
   const req: ToolReq = { kind: 'ping' };
   return call<ToolReq, ToolResp>('ipc_tool', req);
+}
+
+export async function toolAvailable(tool: string): Promise<boolean> {
+  const req: ToolReq = { kind: 'available', data: { tool } };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind === 'available') {
+    return resp.data.available;
+  }
+  throw unexpected();
+}
+
+export async function editorOpenHistory(captureId: number): Promise<EditorOutcomeDto> {
+  const req: ToolReq = { kind: 'editorOpenHistory', data: { captureId } };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind === 'editorOpened') {
+    return resp.data.outcome;
+  }
+  throw unexpected();
+}
+
+export async function editorOpenFile(): Promise<EditorOutcomeDto> {
+  const req: ToolReq = { kind: 'editorOpenFile' };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind === 'editorOpened') {
+    return resp.data.outcome;
+  }
+  throw unexpected();
+}
+
+export async function editorOpenClipboard(): Promise<EditorOutcomeDto> {
+  const req: ToolReq = { kind: 'editorOpenClipboard' };
+  const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
+  if (resp.kind === 'editorOpened') {
+    return resp.data.outcome;
+  }
+  throw unexpected();
 }
 
 export async function qrMake(text: string): Promise<QrMade> {

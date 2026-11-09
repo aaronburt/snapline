@@ -155,7 +155,11 @@ impl CaptureService {
         let frozen = monitor_for(&desktop, result.monitor, result.selection.center())
             .or_else(|| desktop.monitors.first())
             .ok_or_else(no_monitor)?;
-        let (image, rect) = crop_to_monitor(frozen, result.selection)?;
+        let (image, rect) = if let Some(image) = result.image.clone() {
+            (image, result.selection)
+        } else {
+            crop_to_monitor(frozen, result.selection)?
+        };
         self.remember(LastRegion {
             monitor: frozen.monitor.id,
             rect,
@@ -688,6 +692,7 @@ mod tests {
             monitor: Some(monitor),
             tool: Tool::Rect,
             colour: Rgb::default(),
+            image: None,
         })
     }
 

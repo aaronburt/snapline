@@ -1,10 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
+import type { AppEvent } from '../../../lib/ipc/bindings/AppEvent';
 import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
+import type { UploadState } from '../../../lib/ipc/bindings/UploadState';
 import HistoryPage from './HistoryPage.svelte';
 import { formatBytes, formatDuration, groupCaptures } from './data';
 import { searchQuery } from './search';
+
+const uploads = vi.hoisted(() => ({
+  call: vi.fn(),
+  destinations: vi.fn(),
+  copyLink: vi.fn(),
+  onEvent: vi.fn(),
+}));
+
+vi.mock('../../../lib/ipc/core', () => ({ call: uploads.call }));
+vi.mock('../../../lib/ipc/upload', () => ({
+  listDestinations: uploads.destinations,
+  copyLink: uploads.copyLink,
+}));
+vi.mock('../../../lib/events', () => ({ onEvent: uploads.onEvent }));
 
 const mocks = vi.hoisted(() => ({
   page: vi.fn(),
@@ -17,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   open: vi.fn(),
   openUrl: vi.fn(),
   settings: vi.fn(),
+  editor: vi.fn(),
 }));
 
 vi.mock('../../../lib/ipc/history', () => ({
@@ -32,6 +49,7 @@ vi.mock('../../../lib/ipc/history', () => ({
 }));
 
 vi.mock('../../../lib/ipc/settings', () => ({ get: mocks.settings }));
+vi.mock('../../../lib/ipc/tool', () => ({ editorOpenHistory: mocks.editor }));
 
 function capture(id: number, overrides: Partial<HistoryCaptureDto> = {}): HistoryCaptureDto {
   return {
@@ -50,6 +68,36 @@ function capture(id: number, overrides: Partial<HistoryCaptureDto> = {}): Histor
   };
 }
 
+function link(overrides: Partial<NonNullable<HistoryCaptureDto['upload']>> = {}) {
+  return {
+    destId: 'imgur',
+    state: 'done' as const,
+    url: 'https://i.imgur.com/abc123.png',
+    deletionUrl: null,
+    error: null,
+    attempts: 1,
+    updatedAt: 1_760_000_000_000,
+    ...overrides,
+  };
+}
+
+function uploadState(id: number, overrides: Partial<UploadState> = {}): UploadState {
+  return {
+    id,
+    captureId: null,
+    dest: 'Imgur',
+    runId: null,
+    status: 'queued' as const,
+    attempts: 0,
+    link: null,
+    pageLink: null,
+    deletionLink: null,
+    error: null,
+    retryInMs: null,
+    ...overrides,
+  };
+}
+
 async function flush(): Promise<void> {
   await tick();
   await tick();
@@ -63,6 +111,15 @@ function page(items: HistoryCaptureDto[], next: { createdAt: number; id: number 
 
 beforeEach(() => {
   searchQuery.set('');
+  uploads.call.mockReset();
+  uploads.destinations.mockReset();
+  uploads.onEvent.mockReset();
+  uploads.call.mockResolvedValue({ kind: 'accepted', data: { id: 42 } });
+  uploads.destinations.mockResolvedValue([
+    { id: 's3-prod', name: 'Amazon S3', configured: true },
+    { id: 'unfinished', name: 'Unfinished', configured: false },
+  ]);
+  uploads.onEvent.mockResolvedValue(() => undefined);
   mocks.page.mockReset();
   mocks.search.mockReset();
   mocks.stats.mockReset();
@@ -73,6 +130,7 @@ beforeEach(() => {
   mocks.open.mockReset();
   mocks.openUrl.mockReset();
   mocks.settings.mockReset();
+  mocks.editor.mockReset();
   mocks.page.mockResolvedValue(page([capture(1), capture(2), capture(3)]));
   mocks.search.mockResolvedValue(page([capture(7)]));
   mocks.stats.mockResolvedValue({ count: 3, bytes: 3 * 412 * 1024, uploadedThisWeek: 1 });
@@ -83,6 +141,12 @@ beforeEach(() => {
   mocks.open.mockResolvedValue(undefined);
   mocks.openUrl.mockResolvedValue(undefined);
   mocks.settings.mockResolvedValue({ uploads: { images: 'Imgur' } });
+  mocks.editor.mockResolvedValue({
+    action: null,
+    captureId: null,
+    path: null,
+    cancelled: true,
+  });
 });
 
 afterEach(() => {
@@ -182,6 +246,13 @@ describe('History page', () => {
     expect(container.querySelector('aside')?.textContent).toContain('capture-2.png');
   });
 
+  it('opens the selected image in the native editor', async () => {
+    render(HistoryPage);
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Annotate' }));
+    await waitFor(() => expect(mocks.editor).toHaveBeenCalledWith(1));
+  });
+
   it('deletes only after the native confirmation', async () => {
     const { container } = render(HistoryPage);
     await flush();
@@ -231,5 +302,140 @@ describe('History page', () => {
     await fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
     await flush();
     expect(mocks.copy).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('History sharing', () => {
+  beforeEach(() => {
+    uploads.copyLink.mockReset();
+    uploads.copyLink.mockResolvedValue(undefined);
+  });
+
+  it('shows the uploaded link, copies it and offers the deletion link without a QR button', async () => {
+    mocks.page.mockResolvedValue(
+      page([
+        capture(1, {
+          upload: link({ deletionUrl: 'https://imgur.com/delete/abc123' }),
+        }),
+      ]),
+    );
+    render(HistoryPage);
+    await flush();
+    const input = screen.getByLabelText('Share link') as HTMLInputElement;
+    expect(input.value).toBe('https://i.imgur.com/abc123.png');
+    expect(input.readOnly).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Show QR code' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy link' }));
+    await flush();
+    expect(uploads.copyLink).toHaveBeenCalledWith('https://i.imgur.com/abc123.png');
+    expect(screen.getByText('Deletion link saved')).not.toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy deletion link' }));
+    await flush();
+    expect(uploads.copyLink).toHaveBeenCalledWith('https://imgur.com/delete/abc123');
+  });
+
+  it('offers Delete from the host when the host supports API deletion', async () => {
+    mocks.page.mockResolvedValue(
+      page([capture(1, { upload: link({ destId: 's3', url: 'https://cdn.example.com/a.png' }) })]),
+    );
+    render(HistoryPage);
+    await flush();
+    expect(screen.getByText('Delete from Amazon S3')).not.toBeNull();
+  });
+
+  it('uploads a local capture to the default destination and can cancel it', async () => {
+    render(HistoryPage);
+    await flush();
+    expect(
+      screen.getByText('Saved on this PC only. Upload it to get a shareable link.'),
+    ).not.toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Upload to Imgur' }));
+    await flush();
+    expect(uploads.call).toHaveBeenCalledWith('ipc_upload', {
+      kind: 'uploadElsewhere',
+      data: { capture_id: 1, dest: 'Imgur' },
+    });
+    expect(screen.getByRole('progressbar', { name: 'Uploading' })).not.toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await flush();
+    expect(uploads.call).toHaveBeenLastCalledWith('ipc_upload', {
+      kind: 'cancel',
+      data: { id: 42 },
+    });
+  });
+
+  it('retries a failed upload in place', async () => {
+    mocks.page.mockResolvedValue(
+      page([
+        capture(1, {
+          upload: link({
+            state: 'failed',
+            url: null,
+            error: 'The server returned HTTP 500.',
+          }),
+        }),
+      ]),
+    );
+    render(HistoryPage);
+    await flush();
+    expect(screen.getByText('Upload failed: The server returned HTTP 500.')).not.toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await flush();
+    expect(uploads.call).toHaveBeenCalledWith('ipc_upload', {
+      kind: 'uploadElsewhere',
+      data: { capture_id: 1, dest: 'imgur' },
+    });
+  });
+
+  it('lists the configured destinations in Upload elsewhere and sends only the destination id', async () => {
+    mocks.page.mockResolvedValue(
+      page([
+        capture(1, {
+          upload: link({ state: 'failed', url: null, error: 'The upload failed.' }),
+        }),
+      ]),
+    );
+    render(HistoryPage);
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Upload elsewhere…' }));
+    await flush();
+    expect(uploads.destinations).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('menuitem', { name: 'Unfinished' })).toBeNull();
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Amazon S3' }));
+    await flush();
+    expect(uploads.call).toHaveBeenCalledWith('ipc_upload', {
+      kind: 'uploadElsewhere',
+      data: { capture_id: 1, dest: 's3-prod' },
+    });
+  });
+
+  it('retries through the queue once a live upload is known', async () => {
+    let handler: ((event: AppEvent) => void) | undefined;
+    uploads.onEvent.mockImplementation((callback: (event: AppEvent) => void) => {
+      handler = callback;
+      return Promise.resolve(() => undefined);
+    });
+    render(HistoryPage);
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'Upload to Imgur' }));
+    await flush();
+    handler?.({
+      area: 'upload',
+      event: {
+        kind: 'stateChanged',
+        data: uploadState(42, {
+          status: 'failed',
+          error: 'The host refused the file.',
+        }),
+      },
+    });
+    await flush();
+    expect(screen.getByText('Upload failed: The host refused the file.')).not.toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await flush();
+    expect(uploads.call).toHaveBeenLastCalledWith('ipc_upload', {
+      kind: 'retry',
+      data: { id: 42 },
+    });
   });
 });

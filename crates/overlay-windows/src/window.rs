@@ -1,3 +1,7 @@
+use std::sync::Mutex;
+use std::time::Instant;
+
+use snapline_core::annotate::{crop_image, Document, Shape};
 use snapline_core::geometry::{Point, Px, Rect, Size};
 use snapline_core::image::Image;
 use snapline_core::overlay::{
@@ -5,25 +9,33 @@ use snapline_core::overlay::{
 };
 use snapline_core::ports::Monitor;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::Graphics::Direct2D::ID2D1Bitmap1;
-use windows::Win32::Graphics::Dxgi::IDXGISwapChain1;
-use windows::Win32::Graphics::Gdi::{UpdateWindow, ValidateRect};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
+use windows::Win32::Graphics::Direct2D::{
+    ID2D1Bitmap1, ID2D1DeviceContext5, ID2D1Image, ID2D1StrokeStyle, D2D1_ANTIALIAS_MODE_ALIASED,
+};
+use windows::Win32::Graphics::Dxgi::{IDXGISwapChain1, DXGI_PRESENT};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromPoint, UpdateWindow, ValidateRect, HDC, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST,
+};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
-    VIRTUAL_KEY, VK_A, VK_B, VK_C, VK_CONTROL, VK_DOWN, VK_E, VK_ESCAPE, VK_H, VK_I, VK_LEFT,
-    VK_MENU, VK_N, VK_P, VK_R, VK_RETURN, VK_RIGHT, VK_S, VK_SHIFT, VK_T, VK_TAB, VK_UP, VK_V,
+    VIRTUAL_KEY, VK_A, VK_B, VK_C, VK_CONTROL, VK_DELETE, VK_DOWN, VK_E, VK_ESCAPE, VK_H, VK_I,
+    VK_LEFT, VK_MENU, VK_N, VK_P, VK_R, VK_RETURN, VK_RIGHT, VK_S, VK_SHIFT, VK_T, VK_TAB, VK_UP,
+    VK_V, VK_Y, VK_Z,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetForegroundWindow,
-    GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId, KillTimer, LoadCursorW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos,
+    GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId, KillTimer,
+    LoadCursorW,
     PostQuitMessage, RegisterClassExW, SetCursor, SetForegroundWindow, SetTimer, SetWindowLongPtrW,
     ShowWindow, TranslateMessage, UnregisterClassW, GWLP_USERDATA, HTCLIENT, IDC_ARROW, IDC_CROSS,
-    MA_ACTIVATE, MSG, SW_SHOW, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCCREATE, WM_PAINT, WM_RBUTTONDOWN,
-    WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP,
+    MA_ACTIVATE, MSG, SW_SHOW, WM_CLOSE, WM_CTLCOLOREDIT, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCCREATE, WM_PAINT,
+    WM_RBUTTONDOWN, WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
@@ -34,9 +46,16 @@ mod uia;
 #[path = "../../platform-windows/src/windows_enum.rs"]
 mod windows_enum;
 
+use crate::canvas_d2d;
 use crate::d2d::Gpu;
+use crate::hints;
 use crate::icons::IconCache;
-use crate::render::{self, Hit, Layout};
+use crate::magnifier;
+use crate::readout;
+use crate::text_input::{self, TextInput};
+use crate::tokens::Palette;
+use crate::toolbar::{self, ToolbarAction, ToolbarHit, ToolbarState};
+use crate::tools::{self, Session};
 use crate::{
     AnnotationColour, EditRequest, MagnifierSettings, OverlayAction, OverlayError, SelectRequest,
     StrokeSize, Theme,
@@ -44,7 +63,10 @@ use crate::{
 
 pub(crate) const CLASS_NAME: &str = "SnaplineOverlayWindow";
 const SNAP_TIMER_ID: usize = 1;
+const PILL_TIMER_ID: usize = 2;
 const SNAP_DEADLINE_MS: u32 = 30;
+
+static LAST_FLATTENED: Mutex<Option<Image>> = Mutex::new(None);
 
 pub(crate) struct ScreenSource {
     pub monitor: Monitor,
@@ -114,6 +136,9 @@ pub(crate) struct Scene {
     pub colour: AnnotationColour,
     pub stroke: StrokeSize,
     pub pending_action: Option<OverlayAction>,
+    pub document: Option<Document>,
+    pub document_rect: Rect,
+    pub document_scale: f32,
 }
 
 impl Scene {
@@ -141,6 +166,14 @@ pub(crate) enum Outcome {
     Cancel,
 }
 
+#[derive(Default)]
+pub(crate) struct Layout {
+    pub toolbar: Option<toolbar::Toolbar>,
+    pub hint: Option<hints::HintPill>,
+    pub colour: Option<hints::HintPill>,
+    pub keyboard: Option<hints::KeyboardPill>,
+}
+
 pub(crate) struct Context {
     pub windows: Vec<WindowState>,
     pub scene: Scene,
@@ -148,6 +181,7 @@ pub(crate) struct Context {
     pub icons: IconCache,
     pub layout: Layout,
     pub outcome: Option<Outcome>,
+    stroke: Option<ID2D1StrokeStyle>,
     previous_pointer_monitor: usize,
     class_name: Vec<u16>,
     instance: HINSTANCE,
@@ -158,6 +192,18 @@ pub(crate) struct Context {
     snap_pending: Option<u64>,
     snap_timer: Option<HWND>,
     tracking_mouse: bool,
+    tools: Session,
+    text_edit: Option<TextInput>,
+    pill: Option<tools::ColourPill>,
+    pill_timer: Option<HWND>,
+}
+
+pub fn take_flattened() -> Option<Image> {
+    LAST_FLATTENED.lock().ok().and_then(|mut slot| slot.take())
+}
+
+pub fn flattened() -> Option<Image> {
+    LAST_FLATTENED.lock().ok().and_then(|slot| slot.clone())
 }
 
 impl Context {
@@ -200,11 +246,12 @@ impl Context {
             Px(i32::try_from(req.image.width()).unwrap_or(i32::MAX)),
             Px(i32::try_from(req.image.height()).unwrap_or(i32::MAX)),
         );
+        let origin = edit_origin(size);
         let monitor = Monitor {
             id: 0,
             name: String::from("Edit"),
-            bounds: Rect::from_origin_size(Point::ORIGIN, size),
-            work_area: Rect::from_origin_size(Point::ORIGIN, size),
+            bounds: Rect::from_origin_size(origin, size),
+            work_area: Rect::from_origin_size(origin, size),
             dpi: snapline_core::geometry::DpiScale::ONE,
             primary: true,
         };
@@ -212,11 +259,11 @@ impl Context {
             ScreenSource {
                 monitor,
                 scale: 1.0,
-                origin: Point::ORIGIN,
+                origin,
                 size,
                 image: req.image,
             },
-            false,
+            true,
         )];
         Self::build(
             sources,
@@ -258,6 +305,11 @@ impl Context {
         }
         let (overlay, _) = overlay.on(Input::SnapCandidates(snap.set()));
         let tool = overlay.tool;
+        let colour = if tool == Tool::Highlighter {
+            AnnotationColour::Yellow
+        } else {
+            AnnotationColour::Red
+        };
         let scene = Scene {
             overlay,
             annotate,
@@ -268,9 +320,12 @@ impl Context {
             full_screen_crosshair,
             theme,
             tool,
-            colour: AnnotationColour::Yellow,
+            colour,
             stroke: StrokeSize::default(),
             pending_action: None,
+            document: None,
+            document_rect: Rect::ZERO,
+            document_scale: 1.0,
         };
         // SAFETY: returns the module handle of this process without borrowing any memory.
         let instance = unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(None) }
@@ -286,6 +341,7 @@ impl Context {
             icons: IconCache::new(),
             layout: Layout::default(),
             outcome: None,
+            stroke: canvas_d2d::stroke_style(),
             previous_pointer_monitor: 0,
             class_name,
             instance: HINSTANCE(instance.0),
@@ -296,15 +352,28 @@ impl Context {
             snap_pending: None,
             snap_timer: None,
             tracking_mouse: false,
+            tools: Session::default(),
+            text_edit: None,
+            pill: None,
+            pill_timer: None,
         };
         Ok(context)
     }
 
     pub(crate) fn activate(&mut self) -> Result<(), OverlayError> {
+        if let Ok(mut slot) = LAST_FLATTENED.lock() {
+            *slot = None;
+        }
         self.register_class()?;
         self.open()?;
         self.feed_windows();
-        self.layout = render::layout(&self.windows, &self.scene, &mut self.gpu);
+        self.sync_document();
+        self.layout = make_layout(
+            &self.windows,
+            &self.scene,
+            self.pill.as_ref(),
+            &mut self.gpu,
+        );
         self.redraw();
         self.show();
         Ok(())
@@ -461,6 +530,223 @@ impl Context {
         self.windows.iter().position(|window| window.hwnd == hwnd)
     }
 
+    fn sync_document(&mut self) {
+        if self.scene.document.is_some() {
+            return;
+        }
+        let Some(rect) = self.scene.overlay.selected_rect() else {
+            return;
+        };
+        let Some(window) = self
+            .windows
+            .iter()
+            .find(|window| window.source.monitor.bounds.contains(rect.center()))
+        else {
+            return;
+        };
+        let local = local_rect(rect, window.source.origin);
+        let bounds = Rect::new(
+            Px(0),
+            Px(0),
+            Px(window.source.image.width() as i32),
+            Px(window.source.image.height() as i32),
+        );
+        let Some(clipped) = local.intersection(bounds) else {
+            return;
+        };
+        if clipped.is_empty() {
+            return;
+        }
+        let Ok(image) = crop_image(&window.source.image, clipped) else {
+            return;
+        };
+        self.scene.document_rect = Rect::from_origin_size(
+            window.source.origin.offset(clipped.x, clipped.y),
+            clipped.size(),
+        );
+        self.scene.document_scale = window.source.scale;
+        self.scene.document = Some(Document::new(image));
+    }
+
+    fn clear_document(&mut self) {
+        self.scene.document = None;
+        self.scene.document_rect = Rect::ZERO;
+    }
+
+    fn annotating(&self) -> bool {
+        self.scene.document.is_some()
+            && matches!(
+                self.scene.overlay.state,
+                State::Annotating { .. } | State::Adjusting { .. }
+            )
+    }
+
+    fn document_point(&self, point: Point) -> Point {
+        let origin = self.scene.document_rect.origin();
+        Point::new(Px(point.x.0 - origin.x.0), Px(point.y.0 - origin.y.0))
+    }
+
+    fn begin_text(&mut self, origin: Point) {
+        self.commit_text();
+        let monitor = self.windows.iter().find(|window| {
+            window
+                .source
+                .monitor
+                .bounds
+                .contains(self.scene.document_rect.center())
+        });
+        let Some(window) = monitor else {
+            return;
+        };
+        let area = tools::text_box(origin, self.scene.document_scale)
+            .translated(self.scene.document_rect.origin());
+        let area = local_rect(area, window.source.origin);
+        let colour = core_colour(self.scene.colour);
+        self.text_edit =
+            TextInput::create(window.hwnd, area, origin, colour, self.scene.document_scale);
+    }
+
+    fn commit_text(&mut self) {
+        let Some(edit) = self.text_edit.take() else {
+            return;
+        };
+        let text = edit.text();
+        if let Some(document) = self.scene.document.as_mut() {
+            let _ = tools::add_text(
+                document,
+                edit.origin(),
+                text,
+                core_colour(self.scene.colour),
+            );
+        }
+    }
+
+    fn cancel_text(&mut self) {
+        self.text_edit = None;
+    }
+
+    fn copy_colour(&mut self, rgb: snapline_core::overlay::Rgb) {
+        let text = tools::hex(rgb);
+        let _ = tools::copy_text(&text);
+        self.pill = Some(tools::ColourPill::new(rgb, Instant::now()));
+        let hwnd = self
+            .windows
+            .get(self.scene.pointer_monitor)
+            .map(|window| window.hwnd);
+        if let Some(hwnd) = hwnd {
+            if self.pill_timer != Some(hwnd) {
+                self.clear_pill_timer();
+            }
+            // SAFETY: arms a one-shot dismissal timer on a live window owned by this thread.
+            let timer =
+                unsafe { SetTimer(Some(hwnd), PILL_TIMER_ID, tools::PILL_DURATION_MS, None) };
+            self.pill_timer = if timer == 0 { None } else { Some(hwnd) };
+        }
+    }
+
+    fn clear_pill_timer(&mut self) {
+        let Some(hwnd) = self.pill_timer.take() else {
+            return;
+        };
+        // SAFETY: cancels a timer on a live window owned by this thread.
+        let _ = unsafe { KillTimer(Some(hwnd), PILL_TIMER_ID) };
+    }
+
+    fn flatten(&self) -> Option<Image> {
+        if let Some(document) = &self.scene.document {
+            return canvas_d2d::render_document(
+                &self.gpu,
+                document,
+                self.scene.document_scale,
+                self.stroke.as_ref(),
+            )
+            .ok()
+            .or_else(|| document.render().ok());
+        }
+        let selection = self.scene.overlay.selected_rect()?;
+        let window = self
+            .windows
+            .iter()
+            .find(|window| window.source.monitor.bounds.contains(selection.center()))?;
+        let local = local_rect(selection, window.source.origin);
+        let bounds = Rect::new(
+            Px(0),
+            Px(0),
+            Px(window.source.image.width() as i32),
+            Px(window.source.image.height() as i32),
+        );
+        let clipped = local.intersection(bounds)?;
+        crop_image(&window.source.image, clipped).ok()
+    }
+
+    fn store_flattened(&self) {
+        if let Some(image) = self.flatten() {
+            if let Ok(mut slot) = LAST_FLATTENED.lock() {
+                *slot = Some(image);
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn document(&self) -> Option<&Document> {
+        self.scene.document.as_ref()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn document_origin(&self) -> Point {
+        self.scene.document_rect.origin()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn add_shape(&mut self, shape: Shape) -> bool {
+        self.scene
+            .document
+            .as_mut()
+            .is_some_and(|document| document.add(shape).is_ok())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn place_text(&mut self, origin: Point, text: impl Into<String>) -> bool {
+        let colour = core_colour(self.scene.colour);
+        self.add_shape(Shape::text(origin, text, colour))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn crop_to(&mut self, rect: Rect) -> bool {
+        self.scene
+            .document
+            .as_mut()
+            .is_some_and(|document| document.crop_to(rect).is_ok())
+    }
+
+    pub(crate) fn undo(&mut self) -> bool {
+        let changed = self
+            .scene
+            .document
+            .as_mut()
+            .is_some_and(|document| document.undo().unwrap_or(false));
+        if changed {
+            if let Some(document) = &self.scene.document {
+                self.tools.sanitize(document);
+            }
+        }
+        changed
+    }
+
+    pub(crate) fn redo(&mut self) -> bool {
+        let changed = self
+            .scene
+            .document
+            .as_mut()
+            .is_some_and(|document| document.redo().unwrap_or(false));
+        if changed {
+            if let Some(document) = &self.scene.document {
+                self.tools.sanitize(document);
+            }
+        }
+        changed
+    }
+
     pub(crate) fn redraw(&mut self) {
         for index in 0..self.windows.len() {
             self.redraw_window(index);
@@ -471,9 +757,11 @@ impl Context {
         let window = &self.windows[index];
         let scene = &self.scene;
         let layout = &self.layout;
+        let tools = &self.tools;
         let gpu = &mut self.gpu;
         let icons = &mut self.icons;
-        render::draw_window(gpu, icons, window, index, scene, layout);
+        let stroke = self.stroke.as_ref();
+        draw_window(gpu, icons, window, index, scene, layout, tools, stroke);
     }
 
     fn redraw_active(&mut self) {
@@ -497,6 +785,9 @@ impl Context {
         if let Some(hint) = &self.layout.hint {
             mask[hint.monitor] = true;
         }
+        if let Some(colour) = &self.layout.colour {
+            mask[colour.monitor] = true;
+        }
         if let Some(keyboard) = &self.layout.keyboard {
             mask[keyboard.monitor] = true;
         }
@@ -517,7 +808,21 @@ impl Context {
     }
 
     fn refresh(&mut self) {
-        self.layout = render::layout(&self.windows, &self.scene, &mut self.gpu);
+        self.sync_document();
+        if self
+            .pill
+            .as_ref()
+            .is_some_and(|pill| !pill.visible(Instant::now()))
+        {
+            self.pill = None;
+            self.clear_pill_timer();
+        }
+        self.layout = make_layout(
+            &self.windows,
+            &self.scene,
+            self.pill.as_ref(),
+            &mut self.gpu,
+        );
         self.redraw_active();
         self.previous_pointer_monitor = self.scene.pointer_monitor;
     }
@@ -612,6 +917,7 @@ impl Context {
     }
 
     fn finish(&mut self, action: Option<OverlayAction>, selection: Selection) {
+        self.store_flattened();
         let monitor = if self.scene.editing {
             None
         } else {
@@ -627,6 +933,9 @@ impl Context {
     }
 
     fn cancel(&mut self) {
+        if let Ok(mut slot) = LAST_FLATTENED.lock() {
+            *slot = None;
+        }
         self.outcome = Some(Outcome::Cancel);
         // SAFETY: posts a quit message to this thread's queue.
         unsafe { PostQuitMessage(0) };
@@ -667,6 +976,16 @@ impl Context {
         let (overlay, effects) = overlay.on(input);
         self.scene.overlay = overlay;
         let dirty = self.handle_effects(effects);
+        if !self.scene.editing
+            && !matches!(
+                self.scene.overlay.state,
+                State::Annotating { .. } | State::Adjusting { .. }
+            )
+        {
+            self.clear_document();
+            self.tools.reset();
+            self.text_edit = None;
+        }
         dirty || self.outcome.is_some()
     }
 
@@ -677,50 +996,50 @@ impl Context {
         Point::new(Px(x + origin.x.get()), Px(y + origin.y.get()))
     }
 
+    fn local_point(&self, index: usize, point: Point) -> Point {
+        let origin = self.windows[index].source.origin;
+        Point::new(
+            Px(point.x.get() - origin.x.get()),
+            Px(point.y.get() - origin.y.get()),
+        )
+    }
+
     fn on_toolbar(&mut self, point: Point) -> bool {
         let Some(toolbar) = &self.layout.toolbar else {
             return false;
         };
-        if !toolbar.rect.contains(point) {
-            return false;
-        }
-        let Some(hit) = toolbar
-            .buttons
-            .iter()
-            .find(|button| button.rect.contains(point))
-            .map(|button| button.hit)
-        else {
-            return true;
+        let action = match toolbar.hit(point) {
+            ToolbarHit::Outside => return false,
+            ToolbarHit::Padding => return true,
+            ToolbarHit::Action(action) => action,
         };
-        match hit {
-            Hit::Tool(tool) => {
-                self.scene.tool = tool;
-                self.apply(Input::SetTool(tool));
+        match action {
+            ToolbarAction::Tool(tool) => self.set_tool(tool),
+            ToolbarAction::Colour(colour) => self.scene.colour = colour,
+            ToolbarAction::Stroke(stroke) => self.scene.stroke = stroke,
+            ToolbarAction::Undo => {
+                self.undo();
             }
-            Hit::Colour(colour) => {
-                self.scene.colour = colour;
+            ToolbarAction::Redo => {
+                self.redo();
             }
-            Hit::Stroke(stroke) => {
-                self.scene.stroke = stroke;
-            }
-            Hit::Undo | Hit::Redo => {}
-            Hit::Copy => {
+            ToolbarAction::Copy => {
                 self.scene.pending_action = Some(OverlayAction::Copy);
-                self.apply(Input::Copy);
+                self.apply(Input::Upload);
             }
-            Hit::Save => {
+            ToolbarAction::Save => {
                 self.scene.pending_action = Some(OverlayAction::Save);
-                self.apply(Input::Save);
+                self.apply(Input::Upload);
             }
-            Hit::Pin => {
+            ToolbarAction::Pin => {
                 self.scene.pending_action = Some(OverlayAction::Pin);
                 self.apply(Input::Upload);
             }
-            Hit::Upload => {
+            ToolbarAction::Upload => {
                 self.scene.pending_action = Some(OverlayAction::Upload);
                 self.apply(Input::Upload);
             }
-            Hit::Cancel => {
+            ToolbarAction::Cancel => {
                 self.apply(Input::Cancel);
             }
         }
@@ -728,10 +1047,19 @@ impl Context {
     }
 
     fn on_key(&mut self, key: VIRTUAL_KEY) {
-        let annotating = matches!(&self.scene.overlay.state, State::Annotating { .. });
+        let annotating = matches!(
+            &self.scene.overlay.state,
+            State::Annotating { .. } | State::Adjusting { .. }
+        );
         let control = key_down(VK_CONTROL);
         if control {
             match key {
+                VK_Z if annotating => {
+                    self.undo();
+                }
+                VK_Y if annotating => {
+                    self.redo();
+                }
                 VK_C if annotating => {
                     self.scene.pending_action = Some(OverlayAction::Copy);
                     self.apply(Input::Copy);
@@ -748,11 +1076,31 @@ impl Context {
         let alt = key_down(VK_MENU);
         match key {
             VK_ESCAPE => {
+                if self.text_edit.is_some() {
+                    self.cancel_text();
+                    return;
+                }
+                let cancelled = match self.scene.document.as_mut() {
+                    Some(document) => self.tools.cancel(document),
+                    None => false,
+                };
+                if cancelled {
+                    return;
+                }
+                if self.pill.take().is_some() {
+                    self.clear_pill_timer();
+                    return;
+                }
                 // SAFETY: releases any capture held by this thread.
                 unsafe {
                     let _ = ReleaseCapture();
                 }
                 self.apply(Input::Escape);
+            }
+            VK_DELETE if annotating => {
+                if let Some(document) = self.scene.document.as_mut() {
+                    let _ = self.tools.delete(document);
+                }
             }
             VK_RETURN if annotating => {
                 self.scene.pending_action = Some(OverlayAction::Upload);
@@ -790,6 +1138,9 @@ impl Context {
     }
 
     fn set_tool(&mut self, tool: Tool) {
+        if tool == Tool::Highlighter && self.scene.colour == AnnotationColour::Red {
+            self.scene.colour = AnnotationColour::Yellow;
+        }
         self.scene.tool = tool;
         self.apply(Input::SetTool(tool));
     }
@@ -809,6 +1160,23 @@ impl Context {
             self.refresh();
         }
         match message {
+            text_input::COMMIT_MESSAGE => {
+                self.commit_text();
+                self.refresh();
+                return LRESULT(0);
+            }
+            text_input::CANCEL_MESSAGE => {
+                self.cancel_text();
+                self.refresh();
+                return LRESULT(0);
+            }
+            WM_CTLCOLOREDIT => {
+                if let Some(edit) = &self.text_edit {
+                    let hdc = HDC(wparam.0 as *mut std::ffi::c_void);
+                    let brush = edit.paint(hdc);
+                    return LRESULT(brush.0 as isize);
+                }
+            }
             WM_MOUSEACTIVATE => {
                 let _ = index;
                 return LRESULT(MA_ACTIVATE as isize);
@@ -850,6 +1218,14 @@ impl Context {
                 }
                 return LRESULT(0);
             }
+            WM_TIMER if wparam.0 == PILL_TIMER_ID => {
+                self.pill = None;
+                self.pill_timer = None;
+                // SAFETY: cancels the one-shot pill timer on a live window owned by this thread.
+                let _ = unsafe { KillTimer(Some(hwnd), PILL_TIMER_ID) };
+                self.refresh();
+                return LRESULT(0);
+            }
             WM_MOUSELEAVE => {
                 self.tracking_mouse = false;
                 self.clear_snap();
@@ -861,7 +1237,17 @@ impl Context {
                 let point = self.pointer(index, lparam);
                 self.scene.cursor = Some(point);
                 self.scene.pointer_monitor = self.monitor_index(point);
-                if !self.scene.editing {
+                if self.annotating() {
+                    if self.tools.is_active() {
+                        let local = self.document_point(point);
+                        let shift = key_down(VK_SHIFT);
+                        if let Some(document) = self.scene.document.as_mut() {
+                            self.tools.move_to(local, document, shift);
+                        }
+                    } else if matches!(self.scene.overlay.state, State::Adjusting { .. }) {
+                        self.apply(Input::Move(point));
+                    }
+                } else if !self.scene.editing {
                     self.apply(Input::Move(point));
                     self.query_control(hwnd, point);
                 }
@@ -872,11 +1258,60 @@ impl Context {
                 let point = self.pointer(index, lparam);
                 self.scene.cursor = Some(point);
                 self.scene.pointer_monitor = self.monitor_index(point);
+                if self
+                    .text_edit
+                    .as_ref()
+                    .is_some_and(|edit| edit.contains(self.local_point(index, point)))
+                {
+                    return LRESULT(0);
+                }
+                if self.text_edit.is_some() {
+                    self.commit_text();
+                }
                 if self.on_toolbar(point) {
                     self.refresh();
                     return LRESULT(0);
                 }
-                if !self.scene.editing {
+                if self.annotating() {
+                    let tool = self.scene.tool;
+                    let on_selection = tool != Tool::Crop
+                        && self
+                            .scene
+                            .overlay
+                            .selected_rect()
+                            .is_some_and(|rect| rect.grip_at(point).is_some());
+                    if on_selection {
+                        // SAFETY: the window handle is live and owned by this thread.
+                        unsafe {
+                            SetCapture(hwnd);
+                        }
+                        self.apply(Input::Press(point));
+                    } else {
+                        let result = if tool == Tool::Colour {
+                            let local = self.local_point(index, point);
+                            match tools::sample_image(&self.windows[index].source.image, local) {
+                                Some(rgb) => tools::Press::Copied(rgb),
+                                None => tools::Press::Handled,
+                            }
+                        } else {
+                            let local = self.document_point(point);
+                            let style = tools::style(self.scene.colour, self.scene.stroke);
+                            match self.scene.document.as_mut() {
+                                Some(document) => self.tools.press(tool, local, document, style),
+                                None => tools::Press::Handled,
+                            }
+                        };
+                        // SAFETY: the window handle is live and owned by this thread.
+                        unsafe {
+                            SetCapture(hwnd);
+                        }
+                        match result {
+                            tools::Press::Text(origin) => self.begin_text(origin),
+                            tools::Press::Copied(rgb) => self.copy_colour(rgb),
+                            tools::Press::Handled => {}
+                        }
+                    }
+                } else if !self.scene.editing {
                     // SAFETY: the window handle is live and owned by this thread.
                     unsafe {
                         SetCapture(hwnd);
@@ -893,7 +1328,17 @@ impl Context {
                 unsafe {
                     let _ = ReleaseCapture();
                 }
-                if !self.scene.editing {
+                if self.annotating() {
+                    let local = self.document_point(point);
+                    let shift = key_down(VK_SHIFT);
+                    if self.tools.is_active() {
+                        if let Some(document) = self.scene.document.as_mut() {
+                            self.tools.release(local, document, shift);
+                        }
+                    } else if matches!(self.scene.overlay.state, State::Adjusting { .. }) {
+                        self.apply(Input::Release(point));
+                    }
+                } else if !self.scene.editing {
                     self.apply(Input::Release(point));
                 }
                 self.refresh();
@@ -905,6 +1350,14 @@ impl Context {
                 // SAFETY: releases a capture held by this thread.
                 unsafe {
                     let _ = ReleaseCapture();
+                }
+                if self.text_edit.is_some() {
+                    self.commit_text();
+                }
+                if self.tools.is_active() {
+                    if let Some(document) = self.scene.document.as_mut() {
+                        let _ = self.tools.cancel(document);
+                    }
                 }
                 self.apply(Input::RightClick);
                 self.refresh();
@@ -940,6 +1393,8 @@ impl Context {
     }
 
     pub(crate) fn destroy(&mut self) {
+        self.clear_pill_timer();
+        self.text_edit = None;
         for window in self.windows.drain(..) {
             // SAFETY: the window handle is live and owned by this thread.
             unsafe {
@@ -982,6 +1437,29 @@ impl Drop for Context {
     }
 }
 
+fn edit_origin(size: Size) -> Point {
+    let mut cursor = POINT::default();
+    // SAFETY: the point output pointer is valid for the duration of the call.
+    if unsafe { GetCursorPos(&mut cursor) }.is_err() {
+        return Point::ORIGIN;
+    }
+    let mut info = MONITORINFO {
+        cbSize: u32::try_from(std::mem::size_of::<MONITORINFO>()).unwrap_or(0),
+        ..Default::default()
+    };
+    // SAFETY: the point came from GetCursorPos and the nearest monitor exists on a desktop.
+    let monitor = unsafe { MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST) };
+    // SAFETY: the info structure is live with a valid size and the handle came from MonitorFromPoint.
+    if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+        return Point::ORIGIN;
+    }
+    let width = info.rcWork.right - info.rcWork.left;
+    let height = info.rcWork.bottom - info.rcWork.top;
+    let x = info.rcWork.left + (width - size.width.get()).max(0) / 2;
+    let y = info.rcWork.top + (height - size.height.get()).max(0) / 2;
+    Point::new(Px(x), Px(y))
+}
+
 fn key_down(key: VIRTUAL_KEY) -> bool {
     // SAFETY: reads the calling thread's key state.
     unsafe { GetKeyState(key.0 as i32) < 0 }
@@ -1002,6 +1480,439 @@ unsafe extern "system" fn window_proc(
     // SAFETY: the pointer was installed by Context::create_window and remains valid.
     let context = unsafe { &mut *pointer };
     context.handle(hwnd, message, wparam, lparam)
+}
+
+fn core_colour(colour: AnnotationColour) -> snapline_core::annotate::Colour {
+    tools::colour(colour)
+}
+
+fn local_rect(area: Rect, origin: Point) -> Rect {
+    area.translated(Point::new(Px(-origin.x.get()), Px(-origin.y.get())))
+}
+
+fn make_layout(
+    windows: &[WindowState],
+    scene: &Scene,
+    pill: Option<&tools::ColourPill>,
+    gpu: &mut Gpu,
+) -> Layout {
+    let Some(window) = windows.get(scene.pointer_monitor) else {
+        return Layout::default();
+    };
+    let selection = scene.live_rect();
+    let Some(selection) = selection else {
+        let scale = window.source.scale;
+        let width = hints::keyboard_width(gpu, scale, false);
+        return Layout {
+            toolbar: None,
+            hint: None,
+            colour: None,
+            keyboard: Some(hints::KeyboardPill {
+                monitor: scene.pointer_monitor,
+                rect: hints::keyboard_pill(window.source.monitor.bounds, scale, width),
+                annotating: false,
+            }),
+        };
+    };
+    let monitor_index = windows
+        .iter()
+        .position(|candidate| candidate.source.monitor.bounds.contains(selection.center()))
+        .unwrap_or(scene.pointer_monitor);
+    let monitor = &windows[monitor_index].source;
+    let scale = monitor.scale;
+    let show_toolbar = scene.annotate
+        && scene.document.is_some()
+        && matches!(
+            &scene.overlay.state,
+            State::Annotating { .. } | State::Adjusting { .. }
+        );
+    let mut toolbar = None;
+    let mut hint = None;
+    if show_toolbar {
+        let upload_width = readout::measure_upload_label(gpu, scale);
+        toolbar = Some(toolbar::layout(
+            monitor_index,
+            monitor.monitor.bounds,
+            scale,
+            upload_width,
+        ));
+        let next_step = scene
+            .document
+            .as_ref()
+            .map_or(1, |document| document.next_step());
+        let text = hints::hint_text(scene.tool, next_step);
+        let width = hints::hint_width(gpu, scale, &text);
+        hint = Some(hints::HintPill {
+            monitor: monitor_index,
+            rect: hints::hint_pill(monitor.monitor.bounds, scale, width),
+            text,
+        });
+    }
+    let width = hints::keyboard_width(gpu, scale, show_toolbar);
+    let colour = pill.map(|pill| {
+        let width = hints::hint_width(gpu, scale, pill.text());
+        let rect = hints::hint_pill(monitor.monitor.bounds, scale, width)
+            .translated(Point::new(Px(0), Px((40.0 * scale).round() as i32)));
+        hints::HintPill {
+            monitor: monitor_index,
+            rect,
+            text: pill.text().to_string(),
+        }
+    });
+    Layout {
+        toolbar,
+        hint,
+        colour,
+        keyboard: Some(hints::KeyboardPill {
+            monitor: monitor_index,
+            rect: hints::keyboard_pill(monitor.monitor.bounds, scale, width),
+            annotating: show_toolbar,
+        }),
+    }
+}
+
+fn draw_window(
+    gpu: &mut Gpu,
+    icons: &mut IconCache,
+    window: &WindowState,
+    index: usize,
+    scene: &Scene,
+    layout: &Layout,
+    tools: &Session,
+    stroke: Option<&ID2D1StrokeStyle>,
+) {
+    let palette = scene.theme.palette();
+    let origin = window.source.origin;
+    let width = window.source.size.width.get() as f32;
+    let height = window.source.size.height.get() as f32;
+    let scale = window.source.scale;
+    let context = gpu.context.clone();
+    let context = &context;
+
+    // SAFETY: the swap chain target and bitmap belong to this render pass.
+    unsafe {
+        context.SetTarget(&window.target);
+    }
+    gpu.begin();
+    let black = d2d_colour([0.0, 0.0, 0.0, 1.0]);
+    // SAFETY: clears the whole render target before any drawing.
+    unsafe {
+        let _ = context.Clear(Some(&black));
+    }
+    d2d_bitmap(
+        context,
+        &window.frozen,
+        0.0,
+        0.0,
+        width,
+        height,
+        window.source.image.width() as f32,
+        window.source.image.height() as f32,
+    );
+
+    let selection = scene.live_rect();
+
+    if let Some(selection) = selection {
+        let local_selection = local_rect(selection, origin);
+        draw_dim(context, palette, local_selection, width, height);
+        if let Some(document) = &scene.document {
+            let document_origin = local_rect(scene.document_rect, origin).origin();
+            let clip = d2d_rect(
+                local_selection.x.get() as f32,
+                local_selection.y.get() as f32,
+                local_selection.width.get() as f32,
+                local_selection.height.get() as f32,
+            );
+            // SAFETY: the clip is a plain value and is popped below.
+            unsafe {
+                let _ = context.PushAxisAlignedClip(&clip, D2D1_ANTIALIAS_MODE_ALIASED);
+            }
+            canvas_d2d::draw_document(gpu, document, document_origin, scene.document_scale, stroke);
+            if let Some(shape) = tools.preview() {
+                let mut canvas = canvas_d2d::D2dCanvas::new(
+                    context,
+                    document_origin,
+                    scene.document_scale,
+                    stroke,
+                );
+                canvas.draw_shape(&shape, document.image());
+            }
+            if let Some(crop) = tools.crop_preview() {
+                let area = local_rect(crop.translated(scene.document_rect.origin()), origin);
+                d2d_stroke(
+                    context,
+                    area.x.get() as f32 + 0.5,
+                    area.y.get() as f32 + 0.5,
+                    (area.width.get() as f32 - 1.0).max(0.0),
+                    (area.height.get() as f32 - 1.0).max(0.0),
+                    scale.max(1.0) * 2.0,
+                    palette.accent,
+                );
+            }
+            if let Some(id) = tools.selected() {
+                if let Some(annotation) = document.annotation(id) {
+                    let bounds = annotation
+                        .shape
+                        .bounds()
+                        .translated(scene.document_rect.origin());
+                    let local_bounds = local_rect(bounds, origin);
+                    draw_handles(context, palette, local_bounds, scale);
+                }
+            }
+            // SAFETY: balances the clip pushed above.
+            unsafe {
+                let _ = context.PopAxisAlignedClip();
+            }
+        }
+        draw_selection(context, palette, local_selection, scale);
+        if scene.shown_selection().is_some() {
+            draw_handles(context, palette, local_selection, scale);
+        }
+        let pill_local = readout::size_pill_rect(gpu, scale, local_selection);
+        if overlap(
+            pill_local,
+            Rect::new(Px(0), Px(0), Px(width as i32), Px(height as i32)),
+        )
+        .is_some()
+        {
+            readout::draw_size_pill(gpu, palette, scale, pill_local, selection);
+        }
+    } else {
+        if let Some(hovered) = scene.overlay.snap.hovered {
+            let local = local_rect(hovered, origin);
+            if let Some(visible) = overlap(
+                local,
+                Rect::new(Px(0), Px(0), Px(width as i32), Px(height as i32)),
+            ) {
+                d2d_stroke(
+                    context,
+                    visible.x.get() as f32 + 0.5,
+                    visible.y.get() as f32 + 0.5,
+                    (visible.width.get() as f32 - 1.0).max(0.0),
+                    (visible.height.get() as f32 - 1.0).max(0.0),
+                    scale.max(1.0) * 2.0,
+                    palette.accent,
+                );
+            }
+        }
+        if let Some(cursor) = scene.cursor {
+            let cursor_local = Point::new(
+                Px(cursor.x.get() - origin.x.get()),
+                Px(cursor.y.get() - origin.y.get()),
+            );
+            if scene.full_screen_crosshair {
+                if (0..width as i32).contains(&cursor_local.x.get()) {
+                    d2d_fill(
+                        context,
+                        cursor_local.x.get() as f32,
+                        0.0,
+                        1.0,
+                        height,
+                        palette.accent,
+                    );
+                }
+                if (0..height as i32).contains(&cursor_local.y.get()) {
+                    d2d_fill(
+                        context,
+                        0.0,
+                        cursor_local.y.get() as f32,
+                        width,
+                        1.0,
+                        palette.accent,
+                    );
+                }
+            }
+            if scene.magnifier.enabled && !scene.editing {
+                magnifier::draw(
+                    gpu,
+                    window,
+                    palette,
+                    cursor_local,
+                    scene.magnifier.zoom.factor(),
+                );
+            }
+        }
+    }
+
+    if let Some(toolbar) = &layout.toolbar {
+        if toolbar.monitor == index {
+            let state = ToolbarState {
+                tool: scene.tool,
+                colour: scene.colour,
+                stroke: scene.stroke,
+                can_undo: scene
+                    .document
+                    .as_ref()
+                    .is_some_and(|document| document.can_undo()),
+                can_redo: scene
+                    .document
+                    .as_ref()
+                    .is_some_and(|document| document.can_redo()),
+            };
+            toolbar::draw(gpu, icons, palette, scale, origin, toolbar, &state);
+        }
+    }
+    if let Some(hint) = &layout.hint {
+        if hint.monitor == index {
+            let area = local_rect(hint.rect, origin);
+            hints::draw_hint(gpu, palette, scale, area, &hint.text);
+        }
+    }
+    if let Some(colour) = &layout.colour {
+        if colour.monitor == index {
+            let area = local_rect(colour.rect, origin);
+            hints::draw_hint(gpu, palette, scale, area, &colour.text);
+        }
+    }
+    if let Some(keyboard) = &layout.keyboard {
+        if keyboard.monitor == index {
+            let area = local_rect(keyboard.rect, origin);
+            hints::draw_keyboard(gpu, palette, scale, area, keyboard.annotating);
+        }
+    }
+
+    gpu.end();
+    // SAFETY: the render pass is finished and the buffer can be presented.
+    unsafe {
+        let _ = context.SetTarget(None::<&ID2D1Image>);
+    }
+    // SAFETY: the swap chain belongs to the live window.
+    unsafe {
+        let _ = window.swap_chain.Present(1, DXGI_PRESENT(0));
+    }
+}
+
+fn draw_dim(
+    context: &ID2D1DeviceContext5,
+    palette: &Palette,
+    selection: Rect,
+    width: f32,
+    height: f32,
+) {
+    let left = selection.x.get() as f32;
+    let top = selection.y.get() as f32;
+    let right = selection.right().get() as f32;
+    let bottom = selection.bottom().get() as f32;
+    if top > 0.0 {
+        d2d_fill(context, 0.0, 0.0, width, top.min(height), palette.dim);
+    }
+    if bottom < height {
+        d2d_fill(
+            context,
+            0.0,
+            bottom.max(0.0),
+            width,
+            height - bottom.max(0.0),
+            palette.dim,
+        );
+    }
+    let band_top = top.max(0.0);
+    let band_height = (bottom.min(height) - band_top).max(0.0);
+    if left > 0.0 {
+        d2d_fill(
+            context,
+            0.0,
+            band_top,
+            left.min(width),
+            band_height,
+            palette.dim,
+        );
+    }
+    if right < width {
+        d2d_fill(
+            context,
+            right.max(0.0),
+            band_top,
+            width - right.max(0.0),
+            band_height,
+            palette.dim,
+        );
+    }
+}
+
+fn draw_selection(context: &ID2D1DeviceContext5, palette: &Palette, selection: Rect, scale: f32) {
+    d2d_stroke(
+        context,
+        selection.x.get() as f32 + 0.5,
+        selection.y.get() as f32 + 0.5,
+        (selection.width.get() as f32 - 1.0).max(0.0),
+        (selection.height.get() as f32 - 1.0).max(0.0),
+        scale.max(1.0),
+        palette.accent,
+    );
+}
+
+fn draw_handles(context: &ID2D1DeviceContext5, palette: &Palette, selection: Rect, scale: f32) {
+    let size = (9.0 * scale).max(9.0);
+    let border = scale.max(1.0);
+    for handle in selection.handles() {
+        let left = handle.x.get() as f32 - size / 2.0;
+        let top = handle.y.get() as f32 - size / 2.0;
+        d2d_fill(context, left, top, size, size, palette.white);
+        d2d_stroke(
+            context,
+            left + border / 2.0,
+            top + border / 2.0,
+            size - border,
+            size - border,
+            border,
+            palette.accent,
+        );
+    }
+}
+
+fn d2d_colour(rgba: [f32; 4]) -> windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F {
+    crate::d2d::colour(rgba)
+}
+
+fn d2d_rect(x: f32, y: f32, width: f32, height: f32) -> D2D_RECT_F {
+    crate::d2d::rect(x, y, width, height)
+}
+
+fn d2d_fill(
+    context: &ID2D1DeviceContext5,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    rgba: [f32; 4],
+) {
+    crate::d2d::fill_rect(context, d2d_rect(x, y, width, height), rgba);
+}
+
+fn d2d_stroke(
+    context: &ID2D1DeviceContext5,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    stroke: f32,
+    rgba: [f32; 4],
+) {
+    crate::d2d::stroke_rect(context, d2d_rect(x, y, width, height), stroke, rgba);
+}
+
+fn d2d_bitmap(
+    context: &ID2D1DeviceContext5,
+    bitmap: &ID2D1Bitmap1,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    source_width: f32,
+    source_height: f32,
+) {
+    crate::d2d::draw_bitmap(
+        context,
+        bitmap,
+        d2d_rect(x, y, width, height),
+        d2d_rect(0.0, 0.0, source_width, source_height),
+        false,
+    );
+}
+
+fn overlap(area: Rect, bounds: Rect) -> Option<Rect> {
+    area.intersection(bounds)
 }
 
 #[cfg(test)]
@@ -1105,5 +2016,25 @@ mod tests {
         let (next, _) = overlay.on(Input::SnapCandidates(feed.set()));
         overlay = next;
         assert_eq!(overlay.snap.hovered, None);
+    }
+
+    #[test]
+    fn local_rect_removes_the_monitor_origin() {
+        assert_eq!(
+            local_rect(rect(1920, 10, 100, 50), point(1920, 0)),
+            rect(0, 10, 100, 50)
+        );
+    }
+
+    #[test]
+    fn document_origin_is_the_selection_corner() {
+        let Ok(image) = Image::bgra(40, 20) else {
+            return;
+        };
+        let document = Document::new(image);
+        let scene_document_rect =
+            Rect::from_origin_size(point(300, 200), Size::new(Px(40), Px(20)));
+        assert_eq!(scene_document_rect.origin(), point(300, 200));
+        assert_eq!(document.size(), Size::new(Px(40), Px(20)));
     }
 }

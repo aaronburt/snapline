@@ -1193,12 +1193,16 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 - Built: vector shapes with exact sizes/colours, command history with exact undo/redo and step renumbering, crop, frozen-image pixelation, `Canvas` trait with 2/channel tolerance, software BGRA rasteriser with anti-aliasing, Catmull-Rom pen, deterministic PNG encoder, 20 text snapshots and proptest undo/redo tests. Text uses an in-house 5×7 bitmap glyph set, not DirectWrite; this needs approval and will affect the D2D-vs-software text tolerance in M5. Snapshots are ASCII+FNV text rather than binary PNG; `raster.rs`/`shape.rs` exceed the 400-line guideline.
 
 **5.2 Direct2D canvas and toolbar.** Needs 5.1. Owns: `crates/overlay-windows/src/canvas_d2d.rs`, `toolbar.rs`, `hints.rs`. Shared: `window.rs`.
+- Built: Direct2D live/offscreen canvas matching the software rasteriser, 11-tool toolbar with exact metrics and hit testing, tool hints and keyboard pills, annotate/editor document cropping and drawing, and flattened output access. Tests written, not run.
 
 **5.3 Tool interactions.** Needs 5.2. Owns: `crates/overlay-windows/src/tools.rs`, `text_input.rs`. Shared: `window.rs`.
+- Built: every tool interaction on the core document (select/move/resize/delete, rect, ellipse, arrow with curve, pen, highlighter, blur, text via a native borderless EDIT, steps, crop, colour sampling with the 1.5 s pill), shape handles, preview drawing, undo/redo and toolbar state, Copy/Save/Pin/Upload flattened output through `OverlayResult.image`, and a one-shot pill timer. Tests written, not run.
 
 **5.4 Pin window.** Needs 5.1. Owns: `crates/overlay-windows/src/pin.rs`. Shared: `window.rs` only if needed.
+- Built: one top-most borderless DComp pin thread per call with a retained `PinHandle`; 100% image scale, 1 px border and 12 px layered shadow, drag to move, wheel 25–400%, Ctrl+wheel 20–100% opacity, double-click/Esc close, native right-click Copy/Save as…/Zoom to 100%/Close, capture-location or cursor-monitor placement clamped to the work area, and per-pin window classes. Tests written, not run.
 
 **5.5 Editor entry points.** Needs 5.3. Owns: `crates/services/src/editor.rs` (open from History, open from file, open from clipboard). Shared: `window.rs` (editor mode).
+- Built: platform-neutral `EditorService` plus injected host/dialog/clipboard/save/upload/pin ports; opens a saved capture, a PNG/JPEG/WebP/BMP file or a clipboard image/file, runs the non-frozen 100% editor with the whole image selected, routes Copy/Save/Upload/Pin through the existing worker/uploader/clipboard, and cancels cleanly. History Annotate and the Tools Image editor card are wired. Tests written, not run.
 
 ### Milestone 6: Networking and uploads
 
@@ -1242,6 +1246,7 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **6.7 Destinations page.** Needs 6.3, 6.4, 6.5. Owns: `crates/services/src/destinations.rs`, `crates/services/src/dto/upload.rs`, `ui/src/lib/ipc/upload.ts`, `ui/src/windows/main/settings/UploadsPage.svelte`, `ui/src/windows/main/settings/destinations/`.
 
 **6.8 Upload states in History and the quick panel.** Needs 6.2, 6.7. Owns: upload parts of `ui/src/windows/main/history/DetailPane.svelte` and the footer of `QuickPanel.svelte` (coordinate with the integrator: these files were last owned by 4.5 and 4.6, which are finished), `crates/store/migrations/0002_upload_etag.sql` (adds `etag TEXT` to `upload`).
+- Built: real Uploaded/Local/Failed/Uploading branches with Copy link, deletion link, host delete, Retry, Cancel and an accessible Upload elsewhere menu; last-link persistence in `uploads.extra["last_link"]` and no-scheme display with None yet/Copy disabled; migration 0002 adds `etag`; queue states now carry a capture id and the worker persists them into History so failed/queued rows survive and show Retry. Tests written, not run.
 
 **6.9 Upload from clipboard.** Needs 6.2. Owns: `crates/services/src/clipboard_upload.rs`, `crates/platform-windows/src/task_dialog.rs`.
 
@@ -1351,16 +1356,17 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **9.4 Colour picker.** Owns: `crates/core/src/colour.rs`, `crates/overlay-windows/src/picker.rs`, `crates/services/src/tools/colour.rs`. Shared: `window.rs`.
 
 **9.5 QR codes.** Owns: `crates/core/src/qr.rs`, `crates/services/src/tools/qr.rs`, `ui/src/windows/main/tools/QrTool.svelte`.
-- Built: error-correction-M SVG/Image generation, BGRA luma scan with `rqrr`, URL detection; services make/copy/save/scan; Tool DTOs and QrTool Scan/Make tabs with live preview and exact actions. Tests written, not run. Scan/copy-text/save-PNG return `NotYet` until the overlay selection, text clipboard host and save dialog are wired in M9.
+- Built: error-correction-M SVG/Image generation, BGRA luma scan with `rqrr`, URL detection; services make/copy/save/scan; Tool DTOs and QrTool Scan/Make tabs with live preview and exact actions. Tests written, not run. Per Aaron, QR is parked for now; Scan/copy-text/save-PNG remain `NotYet` until the overlay selection and file dialogs are wired.
 
 **9.6 Image editor and pin cards.** Owns: `crates/services/src/tools/editor.rs`, `crates/services/src/tools/pin.rs`. Shared: `window.rs`.
 
 **9.7 Image combiner.** Owns: `crates/core/src/combine.rs`, `crates/services/src/tools/combine.rs`, `ui/src/windows/main/tools/CombinerTool.svelte`, the `combine` scheme in a new file `apps/snapline/src/protocol_combine.rs` (registered by the integrator in `main.rs`).
-- Built: pure side-by-side/stacked layout with spacing/align/background and no upscaling; process-local preview job registry with numeric ids only; `combine` scheme with correct MIME/404; CombinerTool with History picker, file picker, reorder, options, preview and save. Scheme registered in main and CSP updated. Tests written, not run. Tool DTO/host wiring remains.
+- Built: pure side-by-side/stacked layout with spacing/align/background and no upscaling; process-local preview job registry with numeric ids only; `combine` scheme with correct MIME/404; CombinerTool with History picker, file picker, reorder, options, preview and save. Scheme registered in main and CSP updated. Tests written, not run. Per Aaron, the combiner is parked for now.
 
 **9.8 Video converter.** Needs 8.2, 8.3. Owns: `crates/services/src/tools/convert.rs`, `ui/src/windows/main/tools/ConverterTool.svelte`. Shared: new builders in `crates/core/src/ffmpeg_args.rs`.
 
 **9.9 Gist.** Owns: `crates/upload/src/gist.rs`, its form in `ui/src/windows/main/settings/destinations/GistForm.svelte`.
+- Built: GitHub Gist uploader with Bearer token from Credential Manager, public/secret gist, raw/page links, typed error mapping and no token leakage; GistForm with SecretInput/Public/Test/Save/Remove. Tests written, not run. Destinations registry/UploadsPage wiring is reported for integration.
 
 **9.10 SFTP.** Owns: `crates/upload/src/sftp.rs`, `crates/platform-windows/src/known_hosts.rs`, `ui/src/windows/main/settings/destinations/SftpForm.svelte`.
 
@@ -1452,11 +1458,11 @@ The executing agent must not answer these itself.
 | 0 | Foundations | Built, not tested | |
 | 1 | Basic UI shell (includes the webview gate) | Built, not tested | 6ff3546 |
 | 2 | Settings and hotkeys | Built, not tested | e92db22 |
-| 3 | Screenshot | Built, not tested | |
-| 4 | Saving to disk and History | Built, not tested | |
+| 3 | Screenshot | Built, not tested | 574495e |
+| 4 | Saving to disk and History | Built, not tested | 574495e |
 | 5 | Annotation | Not started | |
 | 6 | Networking and uploads | Not started | |
-| 7 | Workflows | Not started | |
+| 7 | Workflows | Built, not tested | |
 | 8 | Recording | Not started | |
 | 9 | Tools | Not started | |
 | 10 | Release | Not started | |

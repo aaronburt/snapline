@@ -40,6 +40,7 @@ impl core_ports::OverlayHost for OverlayHostImpl {
             monitor: result.monitor,
             tool: result.tool,
             colour: result.colour,
+            image: result.image,
         })
     }
 }

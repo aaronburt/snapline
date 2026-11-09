@@ -14,6 +14,7 @@ pub mod capture;
 pub mod clipboard_upload;
 pub mod destinations;
 pub mod dto;
+pub mod editor;
 pub mod event;
 pub mod history;
 pub mod hotkeys;
@@ -26,6 +27,7 @@ pub mod tools;
 pub mod uninstall;
 pub mod uploads;
 pub mod worker;
+pub mod workflow_runner;
 pub mod workflows;
 
 pub use event::AppEvent;

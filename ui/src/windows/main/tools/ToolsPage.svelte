@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import Icon from '../../../components/Icon.svelte';
   import type { IconName } from '../../../lib/icons';
+  import { editorOpenFile, toolAvailable } from '../../../lib/ipc/tool';
 
   interface Tool {
     name: string;
@@ -18,6 +20,41 @@
     { name: 'Image combiner', icon: 'width', chord: '—' },
     { name: 'Video converter', icon: 'film', chord: '—' },
   ];
+
+  let editorAvailable = $state(false);
+  let editorError = $state('');
+
+  onMount(() => {
+    void toolAvailable('tool_editor')
+      .then((available) => {
+        editorAvailable = available;
+      })
+      .catch(() => {
+        editorAvailable = false;
+      });
+  });
+
+  function describe(error: unknown): string {
+    if (
+      error !== null &&
+      typeof error === 'object' &&
+      'message' in error &&
+      typeof (error as { message: unknown }).message === 'string'
+    ) {
+      return (error as { message: string }).message;
+    }
+    return 'The image editor could not be opened.';
+  }
+
+  function openEditor(): void {
+    if (!editorAvailable) {
+      return;
+    }
+    editorError = '';
+    void editorOpenFile().catch((error: unknown) => {
+      editorError = describe(error);
+    });
+  }
 </script>
 
 <main class="page">
@@ -28,16 +65,33 @@
     </div>
   </div>
 
+  {#if editorError}
+    <p class="error" role="status">{editorError}</p>
+  {/if}
+
   <div class="grid">
     {#each tools as tool (tool.name)}
-      <button type="button" class="card" disabled>
-        <span class="tile" aria-hidden="true">
-          <Icon name={tool.icon} size={20} />
-        </span>
-        <span class="name">{tool.name}</span>
-        <span class="desc">Coming in a later version</span>
-        <span class="chord">{tool.chord}</span>
-      </button>
+      {#if tool.name === 'Image editor'}
+        <button type="button" class="card" disabled={!editorAvailable} onclick={openEditor}>
+          <span class="tile" aria-hidden="true">
+            <Icon name={tool.icon} size={20} />
+          </span>
+          <span class="name">{tool.name}</span>
+          <span class="desc">
+            {editorAvailable ? 'Open any image to annotate, crop or blur.' : 'Coming in a later version'}
+          </span>
+          <span class="chord">{tool.chord}</span>
+        </button>
+      {:else}
+        <button type="button" class="card" disabled>
+          <span class="tile" aria-hidden="true">
+            <Icon name={tool.icon} size={20} />
+          </span>
+          <span class="name">{tool.name}</span>
+          <span class="desc">Coming in a later version</span>
+          <span class="chord">{tool.chord}</span>
+        </button>
+      {/if}
     {/each}
   </div>
 </main>
@@ -77,6 +131,12 @@
   .sub {
     font-size: 12px;
     color: var(--text3);
+  }
+
+  .error {
+    margin: 0;
+    font-size: 12px;
+    color: var(--err);
   }
 
   .grid {

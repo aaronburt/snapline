@@ -15,6 +15,7 @@ pub mod link_format;
 pub mod naming;
 pub mod overlay;
 pub mod ports;
+pub mod presets;
 pub mod qr;
 pub mod recording;
 pub mod ruler;

@@ -44,6 +44,7 @@ fn execute(
     let outcome = context.outcome.take();
     let tool = context.scene.tool;
     let colour = context.scene.colour.rgb();
+    let image = crate::window::take_flattened();
     context.destroy();
     drop(context);
     match outcome {
@@ -57,6 +58,7 @@ fn execute(
             monitor,
             tool,
             colour,
+            image,
         }),
         Some(Outcome::Cancel) | None => Err(OverlayError::Cancelled),
     }
