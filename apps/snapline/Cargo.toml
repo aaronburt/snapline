@@ -1,0 +1,31 @@
+[package]
+name = "snapline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+snapline-core = { path = "../../crates/core" }
+snapline-store = { path = "../../crates/store" }
+snapline-upload = { path = "../../crates/upload" }
+snapline-win = { path = "../../crates/platform-windows" }
+snapline-overlay = { path = "../../crates/overlay-windows" }
+snapline-services = { path = "../../crates/services" }
+tauri.workspace = true
+tauri-plugin-single-instance.workspace = true
+webview2-com.workspace = true
+windows.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+time.workspace = true
+
+[lints]
+workspace = true

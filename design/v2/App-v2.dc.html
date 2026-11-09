@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Snapline v2</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:inherit;text-decoration:none}a:hover{color:inherit}
+.hv{cursor:pointer}
+.hv:hover{box-shadow:inset 0 0 0 999px var(--subtle)}
+button,input,select{font-family:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--text);outline-offset:1px}
+.tg{appearance:none;-webkit-appearance:none;width:40px;height:20px;border-radius:10px;border:1px solid var(--text3);background:transparent;position:relative;margin:0;cursor:pointer;flex:none}
+.tg::after{content:"";position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;background:var(--text2);transition:left .15s}
+.tg:checked{background:var(--accent);border-color:var(--accent)}
+.tg:checked::after{left:23px;background:var(--onAccent)}
+</style>
+</helmet>
+<div style="{{vars}}; min-height: 100vh; display: flex; flex-direction: column; background: var(--mica); font-family: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, sans-serif; color: var(--text); font-size: 13px">
+
+  <!-- Title bar -->
+  <div style="height: 44px; display: flex; align-items: center; gap: 12px; padding-left: 16px; flex: none">
+    <svg width="16" height="16" viewBox="0 0 32 32" aria-hidden="true" style="flex: none"><rect width="32" height="32" rx="8" fill="var(--accent)"></rect><path d="M9 13V9h4M19 9h4v4M23 19v4h-4M13 23H9v-4" fill="none" stroke="var(--onAccent)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    <span style="font-size: 12px; flex: none">Snapline</span>
+    <div style="flex: 1; min-width: 0; display: flex; justify-content: center">
+      <label style="width: 100%; max-width: 420px; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; box-sizing: border-box; background: var(--card); border: 1px solid var(--stroke); border-bottom-color: var(--strokeHi); border-radius: 4px; color: var(--text3)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="flex: none"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4"></path></svg>
+        <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Search captures</span>
+        <input type="search" placeholder="Search by name, app, text in image…" style="flex: 1; min-width: 0; border: none; background: transparent; color: var(--text); font-size: 13px; outline: none">
+      </label>
+    </div>
+    <div style="display: flex; flex: none">
+      <button class="hv" aria-label="Minimise" style="width: 46px; height: 44px; border: none; background: transparent; color: var(--text); display: flex; align-items: center; justify-content: center"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" stroke-width="1"></path></svg></button>
+      <button class="hv" aria-label="Maximise" style="width: 46px; height: 44px; border: none; background: transparent; color: var(--text); display: flex; align-items: center; justify-content: center"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1"></rect></svg></button>
+      <button class="hv" aria-label="Close" style="width: 46px; height: 44px; border: none; background: transparent; color: var(--text); display: flex; align-items: center; justify-content: center"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1"></path></svg></button>
+    </div>
+  </div>
+
+  <div style="flex: 1; display: flex; flex-wrap: wrap; align-items: stretch">
+
+    <!-- Navigation -->
+    <nav aria-label="Main" style="flex: 1 1 220px; max-width: 100%; padding: 4px 8px 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px">
+      <button style="height: 40px; margin: 0 4px 10px; border: 1px solid var(--accent); background: var(--accent); color: var(--onAccent); border-radius: 6px; display: flex; align-items: center; gap: 10px; padding: 0 12px; font-size: 13px; font-weight: 600; cursor: pointer">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M9 9h6v6H9z"></path></svg>
+        <span style="flex: 1; text-align: left">New capture</span>
+        <span style="font-size: 11px; font-weight: 500; opacity: 0.85">PrtSc</span>
+      </button>
+      <sc-for list="{{nav}}" as="n" hint-placeholder-count="6">
+        <button onClick="{{n.pick}}" class="hv" aria-current="{{n.current}}" style="{{n.bg}}; position: relative; height: 38px; width: 100%; border: none; border-radius: 4px; display: flex; align-items: center; gap: 12px; padding: 0 12px 0 16px; color: var(--text); font-size: 13px; text-align: left">
+          <sc-if value="{{n.active}}" hint-placeholder-val="{{false}}">
+            <span aria-hidden="true" style="position: absolute; left: 4px; top: 11px; width: 3px; height: 16px; border-radius: 2px; background: var(--accent)"></span>
+          </sc-if>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{n.d}}"></path></svg>
+          <span style="flex: 1">{{n.label}}</span>
+          <span style="font-size: 12px; color: var(--text3)">{{n.count}}</span>
+        </button>
+      </sc-for>
+      <div style="flex: 1; min-height: 24px"></div>
+      <a href="Settings-Uploads-v2.dc.html" class="hv" aria-label="Default destination: Imgur. Change in settings" style="margin: 0 4px 8px; min-height: 44px; padding: 0 12px; border-radius: 6px; background: var(--subtle); border: 1px solid var(--stroke); display: flex; align-items: center; gap: 10px; color: var(--text); font-size: 13px; font-weight: 500"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.5-7.97A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z"></path></svg>Imgur</a>
+      <a href="Settings-General-v2.dc.html" class="hv" style="height: 38px; border-radius: 4px; display: flex; align-items: center; gap: 12px; padding: 0 12px 0 16px; color: var(--text)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12h2M3 12h2M12 3v2M12 19v2M17 7l1.4-1.4M5.6 18.4L7 17M17 17l1.4 1.4M5.6 5.6L7 7"></path></svg>
+        Settings
+      </a>
+    </nav>
+
+    <!-- Content layer -->
+    <div style="flex: 999 1 560px; min-width: 0; background: var(--layer); border: 1px solid var(--stroke); border-right: none; border-bottom: none; border-top-left-radius: 8px; display: flex; flex-wrap: wrap; align-items: stretch">
+
+      <main style="flex: 999 1 460px; min-width: 0; padding: 20px 24px 32px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px">
+
+        <div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px">
+          <div style="display: flex; flex-direction: column; gap: 4px">
+            <h1 style="margin: 0; font-size: 28px; line-height: 36px; font-weight: 600">{{pageTitle}}</h1>
+            <div style="font-size: 12px; color: var(--text3)">{{pageSub}}</div>
+          </div>
+          <sc-if value="{{headerAction}}" hint-placeholder-val="{{false}}">
+            <button style="height: 34px; padding: 0 14px; border: 1px solid var(--accent); background: var(--accent); color: var(--onAccent); border-radius: 4px; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; cursor: pointer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>{{headerAction}}</button>
+          </sc-if>
+          <sc-if value="{{showFilters}}" hint-placeholder-val="{{true}}">
+          <div style="display: flex; align-items: center; gap: 8px">
+            <div role="radiogroup" aria-label="Filter by type" style="display: flex; padding: 2px; background: var(--subtle); border: 1px solid var(--stroke); border-radius: 6px">
+              <sc-for list="{{filters}}" as="f" hint-placeholder-count="6">
+                <button role="radio" aria-checked="{{f.checked}}" onClick="{{f.pick}}" style="{{f.style}}; height: 30px; padding: 0 12px; border: none; border-radius: 4px; font-size: 12px; cursor: pointer">{{f.label}}</button>
+              </sc-for>
+            </div>
+            <button class="hv" aria-label="Grid view" aria-pressed="true" style="width: 34px; height: 34px; border: 1px solid var(--stroke); background: var(--card); color: var(--text); border-radius: 4px; display: flex; align-items: center; justify-content: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"></path></svg></button>
+            <button class="hv" aria-label="List view" aria-pressed="false" style="width: 34px; height: 34px; border: 1px solid transparent; background: transparent; color: var(--text2); border-radius: 4px; display: flex; align-items: center; justify-content: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"></path></svg></button>
+          </div>
+          </sc-if>
+        </div>
+
+        <sc-if value="{{showGrid}}" hint-placeholder-val="{{true}}">
+        <sc-for list="{{groups}}" as="g" hint-placeholder-count="2">
+          <section aria-label="{{g.label}}" style="display: flex; flex-direction: column; gap: 10px">
+            <h2 style="margin: 0; font-size: 14px; font-weight: 600">{{g.label}} <span style="font-weight: 400; color: var(--text3)">· {{g.count}}</span></h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 12px">
+              <sc-for list="{{g.items}}" as="c" hint-placeholder-count="4">
+                <button onClick="{{c.pick}}" aria-pressed="{{c.pressed}}" class="hv" style="{{c.ring}}; background: var(--card); color: var(--text); border-radius: 6px; padding: 6px 6px 10px; display: flex; flex-direction: column; gap: 8px; text-align: left; min-width: 0">
+                  <div style="position: relative; width: 100%; aspect-ratio: 16 / 10; background: {{c.p.bg}}; border-radius: 4px; overflow: hidden">
+                    <div style="position: absolute; left: 8%; top: 12%; width: 84%; height: 88%; background: {{c.p.win}}; border-radius: 3px 3px 0 0"></div>
+                    <div style="position: absolute; left: 8%; top: 12%; width: 84%; height: 8%; background: {{c.p.bar}}; border-radius: 3px 3px 0 0"></div>
+                    <div style="position: absolute; left: 12%; top: 26%; width: 18%; height: 70%; background: {{c.p.side}}"></div>
+                    <div style="position: absolute; left: 34%; top: 27%; width: 36%; height: 7%; background: {{c.p.a}}; border-radius: 1px"></div>
+                    <div style="position: absolute; left: 34%; top: 39%; width: 54%; height: 26%; background: {{c.p.b}}; border-radius: 1px"></div>
+                    <div style="position: absolute; left: 34%; top: 71%; width: 50%; height: 5%; background: {{c.p.line}}"></div>
+                    <div style="position: absolute; left: 34%; top: 81%; width: 40%; height: 5%; background: {{c.p.line}}"></div>
+                    <sc-if value="{{c.timed}}" hint-placeholder-val="{{false}}">
+                      <span style="position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,0.72); color: #fff; font-size: 11px; padding: 1px 5px; border-radius: 3px">{{c.typeTag}} · {{c.dur}}</span>
+                    </sc-if>
+                  </div>
+                  <div style="padding: 0 4px; display: flex; flex-direction: column; gap: 4px; min-width: 0">
+                    <div style="font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{c.name}}</div>
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; color: var(--text3)">
+                      <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{c.time}} · {{c.size}}</span>
+                      <span style="{{c.badge}}; display: flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 10px; flex: none">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{c.badgeIcon}}"></path></svg>
+                        {{c.statusLabel}}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+              </sc-for>
+            </div>
+          </section>
+        </sc-for>
+        </sc-if>
+
+        <!-- Uploads view -->
+        <sc-if value="{{isUploads}}" hint-placeholder-val="{{false}}">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px">
+            <sc-for list="{{upStats}}" as="us" hint-placeholder-count="3">
+              <div style="padding: 14px 16px; background: var(--card); border: 1px solid var(--stroke); border-radius: 6px; display: flex; flex-direction: column; gap: 4px">
+                <span style="font-size: 12px; color: var(--text3)">{{us.label}}</span>
+                <span style="font-size: 22px; font-weight: 600">{{us.value}}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="overflow-x: auto; background: var(--card); border: 1px solid var(--stroke); border-radius: 6px">
+            <div style="min-width: 820px">
+              <div style="display: grid; grid-template-columns: minmax(200px, 2fr) 110px minmax(200px, 2fr) 120px 110px 108px; gap: 12px; align-items: center; padding: 10px 16px; font-size: 12px; color: var(--text3); border-bottom: 1px solid var(--stroke)">
+                <span>File</span><span>Destination</span><span>Link</span><span>Uploaded</span><span>Status</span><span style="text-align: right">Actions</span>
+              </div>
+              <sc-for list="{{uploads}}" as="u" hint-placeholder-count="6">
+                <div style="{{u.border}}; display: grid; grid-template-columns: minmax(200px, 2fr) 110px minmax(200px, 2fr) 120px 110px 108px; gap: 12px; align-items: center; min-height: 52px; padding: 0 16px; font-size: 12px">
+                  <span style="display: flex; align-items: center; gap: 10px; min-width: 0">
+                    <span aria-hidden="true" style="width: 40px; height: 26px; border-radius: 3px; background: {{u.p.bg}}; flex: none; position: relative; overflow: hidden"><span style="position: absolute; left: 6px; top: 5px; right: 6px; bottom: 0; background: {{u.p.win}}; border-radius: 2px 2px 0 0"></span></span>
+                    <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{u.name}}</span>
+                  </span>
+                  <span style="color: var(--text2)">{{u.destLabel}}</span>
+                  <span style="color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: 'Cascadia Code', Consolas, ui-monospace, monospace">{{u.short}}</span>
+                  <span style="color: var(--text2)">{{u.day}}, {{u.time}}</span>
+                  <span><span style="{{u.badge}}; display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 10px; font-size: 11px">{{u.statusLong}}</span></span>
+                  <span style="display: flex; justify-content: flex-end; gap: 2px">
+                    <button class="hv" aria-label="Copy link" style="width: 32px; height: 32px; border: none; background: transparent; color: var(--text); border-radius: 4px; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9zM5 15H4V4h11v1"></path></svg></button>
+                    <button class="hv" aria-label="Open in browser" style="width: 32px; height: 32px; border: none; background: transparent; color: var(--text); border-radius: 4px; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></button>
+                    <button class="hv" aria-label="Delete from host" style="width: 32px; height: 32px; border: none; background: transparent; color: var(--err); border-radius: 4px; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"></path></svg></button>
+                  </span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- Text & OCR view -->
+        <sc-if value="{{isText}}" hint-placeholder-val="{{false}}">
+          <sc-for list="{{ocr}}" as="o" hint-placeholder-count="3">
+            <article style="display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; background: var(--card); border: 1px solid var(--stroke); border-radius: 6px">
+              <div aria-hidden="true" style="width: 120px; aspect-ratio: 16 / 10; border-radius: 4px; background: {{o.p.bg}}; position: relative; overflow: hidden; flex: none">
+                <div style="position: absolute; left: 10%; top: 15%; right: 10%; bottom: 0; background: {{o.p.win}}; border-radius: 3px 3px 0 0"></div>
+                <div style="position: absolute; left: 18%; top: 40%; width: 64%; height: 22%; border: 2px dashed var(--accent); border-radius: 2px"></div>
+              </div>
+              <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 8px">
+                <div style="font-size: 12px; color: var(--text3)">{{o.src}} · {{o.when}} · {{o.lang}}</div>
+                <div style="font-size: 13px; line-height: 20px; white-space: pre-wrap; padding: 10px 12px; background: var(--layer); border: 1px solid var(--stroke); border-radius: 4px; font-family: 'Cascadia Code', Consolas, ui-monospace, monospace">{{o.text}}</div>
+                <div style="display: flex; gap: 6px; flex-wrap: wrap">
+                  <button class="hv" style="height: 32px; padding: 0 12px; border: 1px solid var(--stroke); border-bottom-color: var(--strokeHi); background: var(--layer); color: var(--text); border-radius: 4px; font-size: 12px">Copy text</button>
+                  <button class="hv" style="height: 32px; padding: 0 12px; border: 1px solid var(--stroke); border-bottom-color: var(--strokeHi); background: var(--layer); color: var(--text); border-radius: 4px; font-size: 12px">Search the web</button>
+                  <button class="hv" style="height: 32px; padding: 0 12px; border: 1px solid var(--stroke); border-bottom-color: var(--strokeHi); background: var(--layer); color: var(--text); border-radius: 4px; font-size: 12px">Open capture</button>
+                </div>
+              </div>
+            </article>
+          </sc-for>
+        </sc-if>
+
+        <!-- Workflows view -->
+        <sc-if value="{{isFlows}}" hint-placeholder-val="{{false}}">
+          <sc-for list="{{flows}}" as="w" hint-placeholder-count="5">
+            <article style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 16px 20px; background: var(--card); border: 1px solid var(--stroke); border-radius: 6px">
+              <div style="flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 10px">
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
+                  <span style="{{w.nameStyle}}; font-size: 14px; font-weight: 600">{{w.name}}</span>
+                  <span style="font-size: 11px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--strokeHi); color: var(--text2); font-family: 'Cascadia Code', Consolas, ui-monospace, monospace">{{w.key}}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap">
+                  <sc-for list="{{w.steps}}" as="st" hint-placeholder-count="4">
+                    <sc-if value="{{st.arrow}}" hint-placeholder-val="{{false}}">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+                    </sc-if>
+                    <span style="font-size: 12px; padding: 4px 10px; border-radius: 12px; background: var(--subtle); color: var(--text)">{{st.label}}</span>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px">
+                <button class="hv" style="height: 32px; padding: 0 12px; border: 1px solid var(--stroke); border-bottom-color: var(--strokeHi); background: var(--layer); color: var(--text); border-radius: 4px; font-size: 12px">Edit</button>
+                <label style="display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 4px; cursor: pointer; font-size: 13px; color: var(--text2)">{{w.onLabel}}<input type="checkbox" class="tg" aria-label="Enable {{w.name}}" checked="{{w.on}}" onChange="{{w.flip}}"></label>
+              </div>
+            </article>
+          </sc-for>
+        </sc-if>
+
+        <!-- Tools view -->
+        <sc-if value="{{isTools}}" hint-placeholder-val="{{false}}">
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px">
+            <sc-for list="{{toolCards}}" as="tc" hint-placeholder-count="8">
+              <button class="hv" style="padding: 16px; background: var(--card); border: 1px solid var(--stroke); border-radius: 6px; color: var(--text); text-align: left; display: flex; flex-direction: column; gap: 10px; min-height: 140px">
+                <span aria-hidden="true" style="width: 40px; height: 40px; border-radius: 8px; background: var(--accentSoft); color: var(--accent); display: flex; align-items: center; justify-content: center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="{{tc.d}}"></path></svg></span>
+                <span style="font-size: 14px; font-weight: 600">{{tc.name}}</span>
+                <span style="font-size: 12px; line-height: 18px; color: var(--text3); flex: 1">{{tc.desc}}</span>
+                <span style="font-size: 11px; color: var(--text2); font-family: 'Cascadia Code', Consolas, ui-monospace, monospace">{{tc.key}}</span>
+              </button>
+            </sc-for>
+          </div>
+        </sc-if>
+      </main>
+
+      <!-- Detail pane -->
+      <sc-if value="{{showDetail}}" hint-placeholder-val="{{true}}">
+      <aside aria-label="Capture details" style="flex: 1 0 320px; min-width: 280px; max-width: 360px; border-left: 1px solid var(--stroke); padding: 20px; box-sizing: border-box; display: flex; flex-direction: column; gap: 18px; background: var(--layer); align-self: stretch">
+        <h2 style="margin: 0; font-size: 14px; font-weight: 600">Details</h2>
+        <div style="position: relative; width: 100%; aspect-ratio: 16 / 10; background: {{s.p.bg}}; border-radius: 6px; overflow: hidden; border: 1px solid var(--stroke); box-sizing: border-box">
+          <div style="position: absolute; left: 8%; top: 12%; width: 84%; height: 88%; background: {{s.p.win}}; border-radius: 3px 3px 0 0"></div>
+          <div style="position: absolute; left: 8%; top: 12%; width: 84%; height: 8%; background: {{s.p.bar}}; border-radius: 3px 3px 0 0"></div>
+          <div style="position: absolute; left: 12%; top: 26%; width: 18%; height: 70%; background: {{s.p.side}}"></div>
+          <div style="position: absolute; left: 34%; top: 27%; width: 36%; height: 7%; background: {{s.p.a}}; border-radius: 1px"></div>
+          <div style="position: absolute; left: 34%; top: 39%; width: 54%; height: 26%; background: {{s.p.b}}; border-radius: 1px"></div>
+          <div style="position: absolute; left: 34%; top: 71%; width: 50%; height: 5%; background: {{s.p.line}}"></div>
+          <div style="position: absolute; left: 34%; top: 81%; width: 40%; height: 5%; background: {{s.p.line}}"></div>
+          <sc-if value="{{s.timed}}" hint-placeholder-val="{{false}}">
+            <span style="position: absolute; right: 8px; bottom: 8px; background: rgba(0,0,0,0.72); color: #fff; font-size: 12px; padding: 2px 6px; border-radius: 3px">{{s.typeTag}} · {{s.dur}}</span>
+          </sc-if>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0">
+          <div style="font-size: 15px; font-weight: 600; word-break: break-all">{{s.name}}</div>
+          <div style="font-size: 12px; color: var(--text3)">{{s.kind}} · {{s.day}} at {{s.time}}</div>
+        </div>
+
+        <div style="display: flex; gap: 6px; flex-wrap: wrap">
+          <button aria-label="Annotate" title="Annotate" style="width: 34px; height: 34px; padding: 0; border: 1px solid var(--accent); background: var(--accent); color: var(--onAccent); border-radius: 4px; display: flex; align-items: center; justify-content: center; cursor: pointer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM13 7l4 4"></path></svg></button>
+          <button class="hv" aria-label="Copy image" title="Copy image" style="width: 34px; height: 34px; padding: 0; border: 1px solid var(--stroke); border-bottom-color: var(--strokeHi); background: var(--card); color: var(--text); border-radius: 4px; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9zM5 15H4V4h11v1"></path></svg></button>
+          <button class="hv" aria-label="Show in folder" style="width: 34px; height: 34px; border: 1px solid var(--stroke); border-bottom-color: var(--strokeHi); background: var(--card); color: var(--text); border-radius: 4px; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg></button>
+          <button class="hv" aria-label="Pin to screen" style="width: 34px; height: 34px; border: 1px solid var(--stroke); border-bottom-color: var(--strokeHi); background: var(--card); color: var(--text); border-radius: 4px; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v8"></path></svg></button>
+          <button class="hv" aria-label="Delete" style="width: 34px; height: 34px; border: 1px solid var(--stroke); border-bottom-color: var(--strokeHi); background: var(--card); color: var(--err); border-radius: 4px; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"></path></svg></button>
+        </div>
+
+        <section aria-label="Sharing" style="display: flex; flex-direction: column; gap: 10px; padding-top: 16px; border-top: 1px solid var(--stroke)">
+          <div style="display: flex; align-items: center; justify-content: space-between">
+            <h2 style="margin: 0; font-size: 13px; font-weight: 600">Link</h2>
+            <span style="{{s.badge}}; display: flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 10px; font-size: 11px">{{s.statusLong}}</span>
+          </div>
+          <sc-if value="{{s.isUploaded}}" hint-placeholder-val="{{true}}">
+            <div style="display: flex; gap: 6px">
+              <input readonly aria-label="Share link" value="{{s.url}}" style="flex: 1; min-width: 0; height: 32px; padding: 0 10px; border: 1px solid var(--stroke); border-bottom-color: var(--strokeHi); border-radius: 4px; background: var(--layer); color: var(--text); font-size: 12px; font-family: 'Cascadia Code', Consolas, ui-monospace, monospace">
+              <button class="hv" aria-label="Copy link" style="width: 32px; height: 32px; border: 1px solid var(--stroke); background: var(--layer); color: var(--text); border-radius: 4px; display: flex; align-items: center; justify-content: center; flex: none"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9zM5 15H4V4h11v1"></path></svg></button>
+              <button class="hv" aria-label="Show QR code" style="width: 32px; height: 32px; border: 1px solid var(--stroke); background: var(--layer); color: var(--text); border-radius: 4px; display: flex; align-items: center; justify-content: center; flex: none"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM18 14h2M14 18h2"></path></svg></button>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text3)">
+              <span>Deletion link saved</span>
+              <button class="hv" style="height: 28px; padding: 0 8px; border: none; background: transparent; color: var(--accent); border-radius: 4px; font-size: 12px">Copy deletion link</button>
+            </div>
+          </sc-if>
+          <sc-if value="{{s.isLocal}}" hint-placeholder-val="{{false}}">
+            <div style="font-size: 12px; color: var(--text2)">Saved on this PC only. Upload it to get a shareable link.</div>
+            <button style="height: 32px; align-self: flex-start; padding: 0 12px; border: 1px solid var(--accent); background: var(--accent); color: var(--onAccent); border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer">Upload to Imgur</button>
+          </sc-if>
+          <sc-if value="{{s.isFailed}}" hint-placeholder-val="{{false}}">
+            <div style="font-size: 12px; color: var(--text2)">Upload failed: the file is larger than the destination allows (413).</div>
+            <div style="display: flex; gap: 6px; flex-wrap: wrap">
+              <button style="height: 32px; padding: 0 12px; border: 1px solid var(--accent); background: var(--accent); color: var(--onAccent); border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer">Retry</button>
+              <button class="hv" style="height: 32px; padding: 0 12px; border: 1px solid var(--stroke); background: var(--layer); color: var(--text); border-radius: 4px; font-size: 12px">Upload elsewhere…</button>
+            </div>
+          </sc-if>
+        </section>
+
+        <section aria-label="File info" style="display: flex; flex-direction: column; gap: 0">
+          <h2 style="margin: 0 0 6px; font-size: 13px; font-weight: 600">Info</h2>
+          <sc-for list="{{s.info}}" as="row" hint-placeholder-count="5">
+            <div style="display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--stroke); font-size: 12px">
+              <span style="color: var(--text3); flex: none">{{row.k}}</span>
+              <span style="color: var(--text); text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{row.v}}</span>
+            </div>
+          </sc-for>
+        </section>
+      </aside>
+      </sc-if>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":true,"section":"Theme"},"view":{"editor":"enum","default":"history","options":["history","workflows","tools"],"section":"Screen"},"$preview":{"width":1280,"height":880}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { sel: 1, filter: 'all', view: null, flows: {} };
+  }
+  tokens(dark) {
+    return dark ? {
+      bg: '#202020', mica: '#1c1c1c', layer: '#272727', card: '#2d2d2d', cardAlt: '#343434',
+      stroke: 'rgba(255,255,255,0.08)', strokeHi: 'rgba(255,255,255,0.16)',
+      text: '#ffffff', text2: '#d0d0d0', text3: '#a8a8a8',
+      accent: '#60cdff', onAccent: '#002a40', accentSoft: 'rgba(96,205,255,0.15)',
+      subtle: 'rgba(255,255,255,0.06)', ok: '#6ccb5f', okSoft: 'rgba(108,203,95,0.15)',
+      err: '#ff99a4', errSoft: 'rgba(255,153,164,0.14)', shadow: 'rgba(0,0,0,0.5)'
+    } : {
+      bg: '#f3f3f3', mica: '#eeeeee', layer: '#f9f9f9', card: '#ffffff', cardAlt: '#f5f5f5',
+      stroke: 'rgba(0,0,0,0.09)', strokeHi: 'rgba(0,0,0,0.18)',
+      text: '#1a1a1a', text2: '#3b3b3b', text3: '#5f5f5f',
+      accent: '#005fb8', onAccent: '#ffffff', accentSoft: 'rgba(0,95,184,0.10)',
+      subtle: 'rgba(0,0,0,0.045)', ok: '#0f7b0f', okSoft: 'rgba(15,123,15,0.10)',
+      err: '#c42b1c', errSoft: 'rgba(196,43,28,0.10)', shadow: 'rgba(0,0,0,0.18)'
+    };
+  }
+  renderVals() {
+    const dark = this.props.dark ?? true;
+    const t = this.tokens(dark);
+    const vars = Object.keys(t).map((k) => '--' + k + ':' + t[k]).join(';') + ';color-scheme:' + (dark ? 'dark' : 'light');
+    const P = [
+      { bg: '#2c4a66', win: '#f4f6f8', bar: '#dfe5ea', side: '#e6ebf0', a: '#3a6ea5', b: '#c9d9ea', line: '#cfd6dd' },
+      { bg: '#3d3550', win: '#1e1e24', bar: '#2c2c34', side: '#26262e', a: '#c586c0', b: '#2f3d4f', line: '#4e5a68' },
+      { bg: '#2f5a4e', win: '#fbfaf7', bar: '#e9e5dc', side: '#efece5', a: '#2f7a5e', b: '#dfe9e2', line: '#d8d3c8' },
+      { bg: '#6a4b2e', win: '#ffffff', bar: '#ece7e1', side: '#f3efe9', a: '#c26b1e', b: '#f2dcc4', line: '#ddd6cd' },
+      { bg: '#404852', win: '#24292f', bar: '#30363d', side: '#2a3038', a: '#58a6ff', b: '#33404f', line: '#4b5563' },
+      { bg: '#5c3646', win: '#faf7f8', bar: '#eadfe3', side: '#f1e9ec', a: '#b5476e', b: '#f0d6df', line: '#ddd0d5' }
+    ];
+    const data = [
+      { id: 1, day: 'Today', name: 'Region_2026-11-08_14-31-07.png', type: 'image', time: '14:31', dim: '1280 × 720', size: '412 KB', status: 'up', p: P[0], app: 'chrome.exe', url: 'https://i.imgur.com/kq7Ra2P.png', dest: 'Imgur' },
+      { id: 2, day: 'Today', name: 'Recording_2026-11-08_14-14-52.mp4', type: 'video', time: '14:14', dim: '1920 × 1080', size: '18.4 MB', status: 'up', p: P[1], dur: '0:42', app: 'Code.exe', url: 'https://files.example.com/r/8hQ2xT.mp4', dest: 'Amazon S3' },
+      { id: 3, day: 'Today', name: 'Window_2026-11-08_13-40-11.png', type: 'image', time: '13:40', dim: '1102 × 764', size: '236 KB', status: 'local', p: P[2], app: 'explorer.exe' },
+      { id: 4, day: 'Today', name: 'Scroll_2026-11-08_12-02-33.png', type: 'image', time: '12:02', dim: '1280 × 4820', size: '2.1 MB', status: 'up', p: P[3], app: 'firefox.exe', url: 'https://i.imgur.com/Vb31QeL.png', dest: 'Imgur' },
+      { id: 5, day: 'Today', name: 'Region_2026-11-08_11-47-09.gif', type: 'gif', time: '11:47', dim: '800 × 450', size: '3.6 MB', status: 'fail', p: P[4], dur: '0:08', app: 'Discord.exe' },
+      { id: 6, day: 'Today', name: 'Region_2026-11-08_10-15-40.png', type: 'image', time: '10:15', dim: '640 × 360', size: '98 KB', status: 'up', p: P[5], app: 'Figma.exe', url: 'https://i.imgur.com/p2mZr8a.png', dest: 'Imgur' },
+      { id: 7, day: 'Yesterday', name: 'Screen_2026-11-07_18-22-05.png', type: 'image', time: '18:22', dim: '3840 × 1080', size: '1.4 MB', status: 'up', p: P[3], app: 'Desktop', url: 'https://i.imgur.com/Hc7Wn0d.png', dest: 'Imgur' },
+      { id: 8, day: 'Yesterday', name: 'Region_2026-11-07_16-09-44.png', type: 'image', time: '16:09', dim: '512 × 512', size: '64 KB', status: 'up', p: P[5], app: 'chrome.exe', url: 'https://i.imgur.com/T4xa9Kp.png', dest: 'Imgur' },
+      { id: 9, day: 'Yesterday', name: 'Recording_2026-11-07_15-30-12.mp4', type: 'video', time: '15:30', dim: '2560 × 1440', size: '52.3 MB', status: 'local', p: P[1], dur: '1:58', app: 'Code.exe' },
+      { id: 10, day: 'Yesterday', name: 'Window_2026-11-07_09-58-01.png', type: 'image', time: '09:58', dim: '1600 × 900', size: '318 KB', status: 'up', p: P[2], app: 'Outlook.exe', url: 'https://i.imgur.com/Ld8sQw3.png', dest: 'Imgur' }
+    ];
+    const ST = {
+      up: { label: 'Link', long: 'Uploaded', badge: 'color: var(--ok); background: var(--okSoft)', icon: 'M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1' },
+      local: { label: 'Local', long: 'Not uploaded', badge: 'color: var(--text2); background: var(--subtle)', icon: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' },
+      fail: { label: 'Failed', long: 'Upload failed', badge: 'color: var(--err); background: var(--errSoft)', icon: 'M12 8v5M12 16.5h.01M12 3l9.5 17h-19z' }
+    };
+    const TYPE = { image: 'PNG image', video: 'MP4 video', gif: 'GIF animation' };
+    const sel = this.state.sel;
+    const decorate = (c) => ({
+      ...c,
+      timed: c.type !== 'image',
+      typeTag: c.type === 'gif' ? 'GIF' : 'MP4',
+      statusLabel: ST[c.status].label,
+      statusLong: ST[c.status].long,
+      badge: ST[c.status].badge,
+      badgeIcon: ST[c.status].icon,
+      pressed: c.id === sel ? 'true' : 'false',
+      ring: c.id === sel ? 'border: 1px solid var(--accent); box-shadow: 0 0 0 1px var(--accent)' : 'border: 1px solid var(--stroke)',
+      pick: () => this.setState({ sel: c.id })
+    });
+    const f = this.state.filter;
+    const view = this.state.view || this.props.view || 'history';
+    const shown = data.filter((c) => (view === 'recordings' ? c.type !== 'image' : (f === 'all' || c.type === f || c.status === f))).map(decorate);
+    const groups = ['Today', 'Yesterday']
+      .map((d) => ({ label: d, items: shown.filter((c) => c.day === d) }))
+      .filter((g) => g.items.length)
+      .map((g) => ({ ...g, count: g.items.length + (g.items.length === 1 ? ' capture' : ' captures') }));
+    const pool = view === 'recordings' ? data.filter((c) => c.type !== 'image') : data;
+    const cur = decorate(pool.find((c) => c.id === sel) || pool[0]);
+    const info = [
+      { k: 'Dimensions', v: cur.dim },
+      { k: 'File size', v: cur.size },
+      { k: 'Captured from', v: cur.app },
+      { k: 'Destination', v: cur.dest || '—' },
+      { k: 'Saved to', v: 'Pictures\\Snapline\\2026-11' }
+    ];
+    if (cur.dur) info.splice(1, 0, { k: 'Duration', v: cur.dur });
+    const s = { ...cur, kind: TYPE[cur.type], isUploaded: cur.status === 'up', isLocal: cur.status === 'local', isFailed: cur.status === 'fail', info };
+    const filterDefs = [['all', 'All'], ['image', 'Images'], ['video', 'Videos'], ['gif', 'GIFs'], ['up', 'Uploaded'], ['local', 'Local only']];
+    const filters = filterDefs.map(([id, label]) => ({
+      label,
+      checked: f === id ? 'true' : 'false',
+      style: f === id ? 'background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px var(--shadow)' : 'background: transparent; color: var(--text2)',
+      pick: () => this.setState({ filter: id })
+    }));
+    const navDefs = [
+      { label: 'History', count: '248', d: 'M12 7v5l3 2M3 12a9 9 0 1 0 2.64-6.36L3 8M3 3v5h5', active: true },
+      { label: 'Workflows', count: '', d: 'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9' },
+      { label: 'Tools', count: '', d: 'M14 7a4 4 0 0 1 5.5-3.7L17 6l1 1 2.7-2.5A4 4 0 0 1 15 10L6 19a2 2 0 0 1-3-3l9-9' }
+    ];
+    const ids = ['history', 'workflows', 'tools'];
+    const nav = navDefs.map((n, i) => {
+      const on = view === ids[i];
+      return { ...n, active: on, current: on ? 'page' : undefined, bg: on ? 'background: var(--subtle)' : 'background: transparent', pick: () => this.setState({ view: ids[i] }) };
+    });
+    const PAGES = {
+      history: ['History', '248 captures · 1.2 GB on disk · 31 uploaded this week', ''],
+      uploads: ['Uploads', 'Everything you have sent to a host, with its link and deletion link', ''],
+      recordings: ['Recordings', '12 videos and GIFs · 1.4 GB on disk', 'Start recording'],
+      text: ['Text & OCR', 'Text pulled out of your captures — searchable from the title bar', ''],
+      workflows: ['Workflows', 'A workflow is a hotkey plus the steps that run after the capture', 'New workflow'],
+      tools: ['Tools', "Utilities that don't need a capture first", '']
+    };
+    const pg = PAGES[view] || PAGES.history;
+    const uploads = data.filter((c) => c.status !== 'local').map((c, i) => {
+      const d = decorate(c);
+      return { ...d, destLabel: c.dest || 'Imgur', short: c.url ? c.url.replace('https://', '') : '—', border: i === 0 ? 'border-top: none' : 'border-top: 1px solid var(--stroke)' };
+    });
+    const upStats = [
+      { label: 'Uploaded this week', value: '31' },
+      { label: 'Failed, waiting to retry', value: '1' },
+      { label: 'Deletion links saved', value: '31' }
+    ];
+    const ocr = [
+      { src: 'explorer.exe', when: 'Today, 13:40', lang: 'English', p: P[2], text: 'Error 0x80070005: Access is denied.\nC:\\Program Files\\Acme Sync\\logs\\sync.log' },
+      { src: 'Outlook.exe', when: 'Yesterday, 09:58', lang: 'English', p: P[0], text: 'Meeting moved to Thursday 14:00, room 3B.\nPlease bring the Q4 slides.' },
+      { src: 'Code.exe', when: 'Yesterday, 15:30', lang: 'Code', p: P[1], text: 'pip install --upgrade acme-sync-cli==4.2.0' }
+    ];
+    const flowDefs = [
+      { id: 'f1', name: 'Screenshot to link (default)', key: 'PrtSc', on: true, steps: ['Capture region', 'Copy image', 'Upload to Imgur', 'Copy link'] },
+      { id: 'f2', name: 'Annotate and share', key: 'Ctrl+Shift+A', on: true, steps: ['Capture region', 'Open editor', 'Upload', 'Copy as Markdown'] },
+      { id: 'f3', name: 'Bug report clip', key: 'Ctrl+Shift+R', on: true, steps: ['Record region', 'Convert to GIF', 'Upload to S3', 'Copy link'] },
+      { id: 'f4', name: 'Grab text', key: 'Ctrl+Shift+T', on: false, steps: ['Capture region', 'Extract text (OCR)', 'Copy text'] },
+      { id: 'f5', name: 'Save quietly', key: 'Ctrl+Alt+PrtSc', on: false, steps: ['Capture screen', 'Save to folder'] }
+    ];
+    const flows = flowDefs.map((w) => {
+      const has = Object.prototype.hasOwnProperty.call(this.state.flows, w.id);
+      const on = has ? this.state.flows[w.id] : w.on;
+      return {
+        ...w, on, onLabel: on ? 'On' : 'Off',
+        nameStyle: on ? 'color: var(--text)' : 'color: var(--text3)',
+        steps: w.steps.map((label, i) => ({ label, arrow: i > 0 })),
+        flip: () => this.setState({ flows: { ...this.state.flows, [w.id]: !on } })
+      };
+    });
+    const toolCards = [
+      { name: 'Colour picker', key: 'Ctrl+Shift+C', desc: 'Pick any pixel on screen and copy its hex, RGB or HSL value.', d: 'M16 3l5 5-2.5 2.5-5-5zM13.5 5.5L5 14v5h5l8.5-8.5' },
+      { name: 'Text capture (OCR)', key: 'Ctrl+Shift+T', desc: 'Select an area and copy the text in it.', d: 'M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M9 9h6M12 9v7' },
+      { name: 'Screen ruler', key: 'Ctrl+Shift+M', desc: 'Measure distances and sizes in pixels.', d: 'M3 17L17 3l4 4L7 21zM7 13l2 2M10 10l2 2M13 7l2 2' },
+      { name: 'QR code', key: '—', desc: 'Scan a QR code on screen, or make one from a link.', d: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM18 14h2M14 18h2' },
+      { name: 'Image editor', key: '—', desc: 'Open any image to annotate, crop or blur.', d: 'M4 20h4L19 9l-4-4L4 16zM13 7l4 4' },
+      { name: 'Pin to screen', key: '—', desc: 'Keep an image floating above other windows.', d: 'M9 4h6l-1 6 3 3H7l3-3zM12 13v8' },
+      { name: 'Image combiner', key: '—', desc: 'Join several captures side by side or stacked.', d: 'M4 4h7v16H4zM13 4h7v16h-7z' },
+      { name: 'Video converter', key: '—', desc: 'Turn recordings into GIF, WebM or a smaller MP4.', d: 'M4 4h16v16H4zM8 4v16M16 4v16M4 9h4M4 15h4M16 9h4M16 15h4' }
+    ];
+    const tools = [
+      { label: 'Region', key: 'PrtSc', d: 'M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M9 9h6v6H9z' },
+      { label: 'Window', key: 'Alt+PrtSc', d: 'M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM3 9h18' },
+      { label: 'Screen', key: 'Ctrl+PrtSc', d: 'M3 5h18v11H3zM8 20h8M12 16v4' },
+      { label: 'Scrolling', key: 'Ctrl+Alt+S', d: 'M7 3h10v18H7zM12 8v7M9 12l3 3 3-3' },
+      { label: 'Record', key: 'Shift+PrtSc', d: 'M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z' },
+      { label: 'GIF', key: 'Ctrl+Shift+G', d: 'M4 4h16v16H4zM8 4v16M16 4v16M4 9h4M4 15h4M16 9h4M16 15h4' },
+      { label: 'Text', key: 'Ctrl+Shift+T', d: 'M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M9 9h6M12 9v7' },
+      { label: 'Color', key: 'Ctrl+Shift+C', d: 'M16 3l5 5-2.5 2.5-5-5zM13.5 5.5L5 14v5h5l8.5-8.5' }
+    ];
+    const grid = view === 'history' || view === 'recordings';
+    return {
+      vars, nav, filters, groups, s,
+      pageTitle: pg[0], pageSub: pg[1], headerAction: pg[2],
+      showFilters: view === 'history', showGrid: grid, showDetail: grid,
+      isUploads: view === 'uploads', isText: view === 'text', isFlows: view === 'workflows', isTools: view === 'tools',
+      uploads, upStats, ocr, flows, toolCards
+    };
+  }
+}
+</script>
+</body>
+</html>

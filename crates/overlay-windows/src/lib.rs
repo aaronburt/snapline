@@ -1,0 +1,1 @@
+#![doc = "Native overlay windows for Snapline, drawn with Win32, Direct2D, DirectComposition and DirectWrite. This crate owns the capture overlay, annotation toolbar, pin, ruler, colour picker and recording border. It may use unsafe code and must never host a webview."]

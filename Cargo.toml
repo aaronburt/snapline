@@ -1,0 +1,124 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/store",
+    "crates/upload",
+    "crates/platform-windows",
+    "crates/overlay-windows",
+    "crates/services",
+    "apps/snapline",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/aaronburt/snapline"
+
+[workspace.dependencies]
+tauri = { version = "=2.12.5", features = ["tray-icon", "image-ico"] }
+tauri-build = "=2.7.4"
+tauri-plugin-single-instance = "=2.5.5"
+windows = { version = "=0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_DirectComposition",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Imaging",
+    "Win32_Media_Audio",
+    "Win32_Media_KernelStreaming",
+    "Win32_Media_Multimedia",
+    "Win32_Security",
+    "Win32_Security_Credentials",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_DataExchange",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Power",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_System_WinRT_Graphics_Capture",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+    "Foundation",
+    "Foundation_Collections",
+    "Graphics",
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Globalization",
+    "Storage_Streams",
+    "Data_Xml_Dom",
+    "UI_Notifications",
+] }
+webview2-com = "=0.39.1"
+rusqlite = { version = "=0.41.1", features = ["bundled"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+toml = "=1.2.1"
+ts-rs = "=12.0.1"
+serde_json_path = "=0.7.2"
+ureq = { version = "=3.5.1", features = ["rustls", "platform-verifier"] }
+hmac = "=0.13.0"
+sha2 = "=0.11.1"
+ssh2 = "=0.9.7"
+img-parts = "=0.4.2"
+crossbeam-channel = "=0.5.17"
+time = { version = "=0.3.55", features = ["formatting", "macros", "local-offset"] }
+zeroize = { version = "=1.9.1", features = ["derive"] }
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+tracing-appender = "=0.2.5"
+thiserror = "=2.0.21"
+anyhow = "=1.0.104"
+qrcode = "=0.14.1"
+rqrr = "=0.11.0"
+rand = "=0.10.3"
+insta = { version = "=1.49.0", features = ["json"] }
+proptest = "=1.12.0"
+tempfile = "=3.27.0"
+tiny_http = "=0.12.0"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+pedantic = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = "line-tables-only"
+
+[profile.dev]
+debug = "line-tables-only"

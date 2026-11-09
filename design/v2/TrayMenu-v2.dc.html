@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Snapline tray context menu v2</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:inherit;text-decoration:none}a:hover{color:inherit}
+.mi{cursor:pointer}
+.mi:hover{box-shadow:inset 0 0 0 999px var(--subtle)}
+button{font-family:inherit}
+button:focus-visible{outline:2px solid var(--text);outline-offset:-2px}
+</style>
+</helmet>
+<div style="{{vars}}; width: 760px; height: 800px; position: relative; overflow: hidden; background: var(--wall); font-family: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, sans-serif; color: var(--text); font-size: 13px">
+  <div aria-hidden="true" style="position: absolute; left: -300px; top: 200px; width: 760px; height: 760px; border-radius: 50%; background: var(--wall2); opacity: 0.55"></div>
+
+  <div style="position: absolute; right: 24px; bottom: 60px; width: 288px">
+    <!-- Main menu -->
+    <div role="menu" aria-label="Snapline" style="background: var(--layer); border: 1px solid var(--stroke); border-radius: 8px; box-shadow: 0 16px 40px var(--shadow); padding: 4px; display: flex; flex-direction: column">
+      <sc-for list="{{items}}" as="it" hint-placeholder-count="11">
+        <sc-if value="{{it.sep}}" hint-placeholder-val="{{false}}">
+          <div role="separator" style="height: 1px; background: var(--stroke); margin: 4px 0"></div>
+        </sc-if>
+        <sc-if value="{{it.row}}" hint-placeholder-val="{{true}}">
+          <button role="{{it.role}}" aria-checked="{{it.ariaChecked}}" aria-haspopup="{{it.popup}}" aria-expanded="{{it.expanded}}" class="mi" onClick="{{it.act}}" onMouseEnter="{{it.hover}}" style="{{it.bg}}; height: 34px; border: none; color: var(--text); border-radius: 4px; display: flex; align-items: center; gap: 12px; padding: 0 10px 0 12px; font-size: 13px; text-align: left; width: 100%">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="{{it.iconColor}}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none"><path d="{{it.d}}"></path></svg>
+            <span style="flex: 1; white-space: nowrap">{{it.label}}</span>
+            <span style="font-size: 12px; color: var(--text3); white-space: nowrap">{{it.key}}</span>
+            <sc-if value="{{it.sub}}" hint-placeholder-val="{{false}}">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+            </sc-if>
+          </button>
+        </sc-if>
+      </sc-for>
+    </div>
+
+    <!-- Submenu (opens to the left near the screen edge) -->
+    <sc-if value="{{hasSub}}" hint-placeholder-val="{{true}}">
+      <div role="menu" aria-label="{{subLabel}}" style="position: absolute; right: calc(100% + 4px); top: {{subTop}}px; width: 260px; background: var(--layer); border: 1px solid var(--stroke); border-radius: 8px; box-shadow: 0 16px 40px var(--shadow); padding: 4px; display: flex; flex-direction: column">
+        <sc-for list="{{sub}}" as="s" hint-placeholder-count="6">
+          <sc-if value="{{s.sep}}" hint-placeholder-val="{{false}}">
+            <div role="separator" style="height: 1px; background: var(--stroke); margin: 4px 0"></div>
+          </sc-if>
+          <sc-if value="{{s.row}}" hint-placeholder-val="{{true}}">
+            <button role="{{s.role}}" aria-checked="{{s.ariaChecked}}" class="mi" onClick="{{s.act}}" style="background: transparent; height: 34px; border: none; color: var(--text); border-radius: 4px; display: flex; align-items: center; gap: 12px; padding: 0 12px; font-size: 13px; text-align: left; width: 100%">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="{{s.iconColor}}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none"><path d="{{s.d}}"></path></svg>
+              <span style="flex: 1; white-space: nowrap">{{s.label}}</span>
+              <span style="font-size: 12px; color: var(--text3); white-space: nowrap">{{s.key}}</span>
+            </button>
+          </sc-if>
+        </sc-for>
+      </div>
+    </sc-if>
+  </div>
+
+  <!-- Taskbar (right end) -->
+  <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 48px; background: var(--taskbar); border-top: 1px solid var(--stroke); display: flex; align-items: center; justify-content: flex-end; gap: 2px; padding: 0 8px; box-sizing: border-box">
+    <div aria-hidden="true" style="width: 32px; height: 40px; display: flex; align-items: center; justify-content: center; color: var(--text2)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"></path></svg></div>
+    <button aria-label="Snapline" aria-haspopup="menu" aria-expanded="true" style="position: relative; width: 36px; height: 40px; border: none; border-radius: 4px; background: var(--subtle); display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer">
+      <svg width="18" height="18" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--accent)"></rect><path d="M9 13V9h4M19 9h4v4M23 19v4h-4M13 23H9v-4" fill="none" stroke="var(--onAccent)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    </button>
+    <div aria-hidden="true" style="height: 40px; padding: 0 8px; display: flex; align-items: center; gap: 10px; color: var(--text)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16a5 5 0 0 1 6 0M12 19.5h.01"></path></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h4l5-4v14l-5-4H4zM17 9a4 4 0 0 1 0 6"></path></svg>
+    </div>
+    <div aria-hidden="true" style="height: 40px; padding: 0 8px; display: flex; flex-direction: column; align-items: flex-end; justify-content: center; font-size: 12px; line-height: 16px">
+      <span>14:32</span>
+      <span>08/11/2026</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":true,"section":"Theme"},"$preview":{"width":760,"height":800}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      open: 'record',
+      paused: false,
+      after: { copy: true, edit: false, save: true, upload: true, link: true, toast: true },
+      dest: 'imgur',
+      audio: { sys: true, mic: false }
+    };
+  }
+  tokens(dark) {
+    return dark ? {
+      layer: '#2c2c2c', stroke: 'rgba(255,255,255,0.09)', text: '#ffffff', text2: '#d0d0d0', text3: '#a8a8a8',
+      accent: '#60cdff', onAccent: '#002a40', subtle: 'rgba(255,255,255,0.07)',
+      wall: '#14232e', wall2: '#1a2f3d', taskbar: 'rgba(28,28,28,0.95)', shadow: 'rgba(0,0,0,0.5)'
+    } : {
+      layer: '#f9f9f9', stroke: 'rgba(0,0,0,0.09)', text: '#1a1a1a', text2: '#3b3b3b', text3: '#5f5f5f',
+      accent: '#005fb8', onAccent: '#ffffff', subtle: 'rgba(0,0,0,0.05)',
+      wall: '#c9d7e3', wall2: '#b9cbda', taskbar: 'rgba(243,243,243,0.95)', shadow: 'rgba(0,0,0,0.18)'
+    };
+  }
+  renderVals() {
+    const dark = this.props.dark ?? true;
+    const t = this.tokens(dark);
+    const vars = Object.keys(t).map((k) => '--' + k + ':' + t[k]).join(';') + ';color-scheme:' + (dark ? 'dark' : 'light');
+    const I = {
+      region: 'M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M9 9h6v6H9z',
+      window: 'M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM3 9h18',
+      screen: 'M3 5h18v11H3zM8 20h8M12 16v4',
+      more: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
+      rec: 'M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+      file: 'M14 3H6v18h12V7zM14 3v4h4',
+      clip: 'M9 4h6v3H9zM9 5H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-3',
+      tools: 'M14 7a4 4 0 0 1 5.5-3.7L17 6l1 1 2.7-2.5A4 4 0 0 1 15 10L6 19a2 2 0 0 1-3-3l9-9',
+      flow: 'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9',
+      cloud: 'M7 18a4 4 0 0 1-.5-7.97A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z',
+      open: 'M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5',
+      gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12h2M3 12h2M12 3v2M12 19v2M17 7l1.4-1.4M5.6 18.4L7 17M17 17l1.4 1.4M5.6 5.6L7 7',
+      pause: 'M9 5v14M15 5v14',
+      play: 'M7 4l13 8-13 8z',
+      power: 'M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0',
+      check: 'M5 12l5 5 9-10',
+      none: '',
+      scroll: 'M7 3h10v18H7zM12 8v7M9 12l3 3 3-3',
+      cursor: 'M5 3l14 7-6 2-2 6z',
+      redo: 'M20 7v5h-5M20 12a8 8 0 1 1-2.3-5.7L20 9',
+      timer: 'M12 9v4l2 2M9 2h6M12 21a8 8 0 1 0 0-16 8 8 0 0 0 0 16z',
+      gif: 'M4 4h16v16H4zM8 4v16M16 4v16M4 9h4M4 15h4M16 9h4M16 15h4',
+      color: 'M16 3l5 5-2.5 2.5-5-5zM13.5 5.5L5 14v5h5l8.5-8.5',
+      ocr: 'M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M9 9h6M12 9v7',
+      ruler: 'M3 17L17 3l4 4L7 21zM7 13l2 2M10 10l2 2M13 7l2 2',
+      qr: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM18 14h2M14 18h2',
+      edit: 'M4 20h4L19 9l-4-4L4 16zM13 7l4 4',
+      pin: 'M9 4h6l-1 6 3 3H7l3-3zM12 13v8',
+      server: 'M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01',
+      code: 'M8 8l-4 4 4 4M16 8l4 4-4 4M14 5l-4 14',
+      folder: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'
+    };
+    const S = this.state;
+    const ROW = 34, SEP = 9, PAD = 5;
+    const defs = [
+      { label: 'Capture region', key: 'PrtSc', d: I.region },
+      { label: 'Capture window', key: 'Alt+PrtSc', d: I.window },
+      { label: 'Capture full screen', key: 'Ctrl+PrtSc', d: I.screen },
+      { label: 'Scrolling capture', key: 'Ctrl+Alt+S', d: I.scroll },
+      { label: 'Record screen', d: I.rec, sub: 'record' },
+      { sep: true },
+      { label: 'Open Snapline', d: I.open },
+      { label: 'Settings', d: I.gear },
+      { label: S.paused ? 'Resume hotkeys' : 'Pause hotkeys', d: S.paused ? I.play : I.pause, toggle: 'paused' },
+      { sep: true },
+      { label: 'Exit', d: I.power }
+    ];
+    let y = PAD;
+    let subTop = 0;
+    const items = defs.map((d) => {
+      const top = y;
+      y += d.sep ? SEP : ROW;
+      if (d.sep) return { sep: true, row: false };
+      const isOpen = d.sub && S.open === d.sub;
+      if (isOpen) subTop = top;
+      return {
+        ...d, row: true, sep: false, sub: !!d.sub, key: d.key || '',
+        role: 'menuitem', ariaChecked: undefined,
+        popup: d.sub ? 'menu' : undefined, expanded: d.sub ? (isOpen ? 'true' : 'false') : undefined,
+        iconColor: 'var(--text2)',
+        bg: isOpen ? 'background: var(--subtle)' : 'background: transparent',
+        hover: () => { if (this.state.open !== (d.sub || null)) this.setState({ open: d.sub || null }); },
+        act: d.toggle ? () => this.setState({ paused: !this.state.paused }) : (d.sub ? () => this.setState({ open: d.sub }) : () => {})
+      };
+    });
+    const menuH = y + PAD;
+    const check = (on, set) => ({ role: 'menuitemcheckbox', ariaChecked: on ? 'true' : 'false', d: on ? I.check : I.none, iconColor: 'var(--accent)', act: set });
+    const tAfter = (k) => () => this.setState({ after: { ...this.state.after, [k]: !this.state.after[k] } });
+    const tAudio = (k) => () => this.setState({ audio: { ...this.state.audio, [k]: !this.state.audio[k] } });
+    const subs = {
+      capture: { label: 'More capture modes', rows: [
+        { label: 'Scrolling capture', key: 'Ctrl+Alt+S', d: I.scroll },
+        { label: 'Active monitor', d: I.screen },
+        { label: 'Monitor under cursor', d: I.cursor },
+        { label: 'Last region again', key: 'Ctrl+Shift+R', d: I.redo },
+        { sep: true },
+        { label: 'Region in 3 seconds', d: I.timer },
+        { label: 'Region in 5 seconds', d: I.timer }
+      ] },
+      record: { label: 'Record screen', rows: [
+        { label: 'Record video (MP4)', key: 'Shift+PrtSc', d: I.rec },
+        { label: 'Record GIF', key: 'Ctrl+Shift+G', d: I.gif },
+        { label: 'Record active window', d: I.window },
+        { sep: true },
+        { label: 'System audio', ...check(S.audio.sys, tAudio('sys')) },
+        { label: 'Microphone', ...check(S.audio.mic, tAudio('mic')) }
+      ] },
+      tools: { label: 'Tools', rows: [
+        { label: 'Color picker', key: 'Ctrl+Shift+C', d: I.color },
+        { label: 'Capture text (OCR)', key: 'Ctrl+Shift+T', d: I.ocr },
+        { label: 'Screen ruler', d: I.ruler },
+        { label: 'QR code', d: I.qr },
+        { label: 'Image editor', d: I.edit },
+        { label: 'Pin image to screen', d: I.pin }
+      ] },
+      after: { label: 'After capture', rows: [
+        { label: 'Copy image to clipboard', ...check(S.after.copy, tAfter('copy')) },
+        { label: 'Open in editor', ...check(S.after.edit, tAfter('edit')) },
+        { label: 'Save to folder', ...check(S.after.save, tAfter('save')) },
+        { label: 'Upload', ...check(S.after.upload, tAfter('upload')) },
+        { label: 'Copy link after upload', ...check(S.after.link, tAfter('link')) },
+        { label: 'Show notification', ...check(S.after.toast, tAfter('toast')) }
+      ] },
+      dest: { label: 'Image destination', rows: [
+        { label: 'Imgur', ...check(S.dest === 'imgur', () => this.setState({ dest: 'imgur' })), role: 'menuitemradio' },
+        { label: 'Amazon S3', ...check(S.dest === 's3', () => this.setState({ dest: 's3' })), role: 'menuitemradio' },
+        { label: 'Custom: My server', ...check(S.dest === 'custom', () => this.setState({ dest: 'custom' })), role: 'menuitemradio' },
+        { label: 'Save locally only', ...check(S.dest === 'local', () => this.setState({ dest: 'local' })), role: 'menuitemradio' },
+        { sep: true },
+        { label: 'Manage destinations…', d: I.server }
+      ] }
+    };
+    const cur = S.open ? subs[S.open] : null;
+    let sub = [];
+    let subH = 0;
+    if (cur) {
+      subH = PAD * 2;
+      sub = cur.rows.map((r) => {
+        subH += r.sep ? SEP : ROW;
+        if (r.sep) return { sep: true, row: false };
+        return { role: 'menuitem', iconColor: 'var(--text2)', key: '', act: () => {}, ...r, row: true, sep: false };
+      });
+    }
+    const top = Math.max(0, Math.min(subTop - PAD, menuH - subH));
+    return { vars, items, sub, hasSub: !!cur, subLabel: cur ? cur.label : '', subTop: top };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+[package]
+name = "snapline-services"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+snapline-core = { path = "../core" }
+snapline-store = { path = "../store" }
+snapline-upload = { path = "../upload" }
+serde.workspace = true
+serde_json.workspace = true
+crossbeam-channel.workspace = true
+ts-rs.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+time.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

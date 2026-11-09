@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Snapline capture overlay</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#0b57d0;text-decoration:none}a:hover{color:#0842a0}
+.hv{cursor:pointer}
+.hv:hover{box-shadow:inset 0 0 0 999px var(--subtle)}
+button{font-family:inherit}
+button:focus-visible{outline:2px solid var(--text);outline-offset:1px}
+</style>
+</helmet>
+<div style="{{vars}}; width: 1280px; height: 800px; position: relative; overflow: hidden; background: #ffffff; font-family: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, sans-serif; font-size: 13px; color: #1f1f1f">
+
+  <!-- ===== Frozen screen: a browser window as it was at the moment of capture ===== -->
+  <div aria-hidden="true" style="position: absolute; left: 0; top: 0; width: 1280px; height: 40px; background: #dfe3e8; display: flex; align-items: flex-end; padding-left: 12px; box-sizing: border-box">
+    <div style="height: 32px; width: 240px; background: #ffffff; border-radius: 8px 8px 0 0; display: flex; align-items: center; gap: 8px; padding: 0 12px; box-sizing: border-box; font-size: 12px">
+      <span style="width: 14px; height: 14px; border-radius: 3px; background: #2f6fde"></span>
+      <span style="flex: 1; white-space: nowrap; overflow: hidden">What's new in 4.2 · Acme Sync Docs</span>
+    </div>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 0; top: 40px; width: 1280px; height: 44px; background: #ffffff; border-bottom: 1px solid #e3e3e3; display: flex; align-items: center; gap: 12px; padding: 0 16px; box-sizing: border-box">
+    <span style="width: 16px; height: 16px; border-radius: 50%; border: 2px solid #9aa0a6; box-sizing: border-box"></span>
+    <div style="flex: 1; height: 30px; border-radius: 15px; background: #f1f3f4; display: flex; align-items: center; padding: 0 14px; font-size: 13px; color: #444">docs.acmesync.example/release-notes/4-2</div>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 0; top: 84px; width: 1280px; height: 56px; border-bottom: 1px solid #ececec; display: flex; align-items: center; gap: 28px; padding: 0 40px; box-sizing: border-box; font-size: 14px">
+    <span style="font-weight: 700; font-size: 16px; color: #1a3d7c">Acme Sync</span>
+    <span>Docs</span><span>Download</span><span>Pricing</span><span>Blog</span>
+    <span style="flex: 1"></span>
+    <span style="color: #555">Sign in</span>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 40px; top: 176px; width: 200px; display: flex; flex-direction: column; gap: 12px; font-size: 13px; color: #555">
+    <span style="font-weight: 600; color: #1f1f1f">Release notes</span>
+    <span style="color: #0b57d0; font-weight: 600">4.2 (latest)</span>
+    <span>4.1</span><span>4.0</span><span>3.9</span><span>Older releases</span>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 1000px; top: 176px; width: 220px; display: flex; flex-direction: column; gap: 10px; font-size: 12px; color: #555">
+    <span style="font-weight: 600; color: #1f1f1f">On this page</span>
+    <span>Faster first sync</span><span>Selective sync on Windows</span><span>Download</span><span>Bug fixes</span>
+  </div>
+
+  <div aria-hidden="true" style="position: absolute; left: 300px; top: 170px; width: 600px; font-size: 32px; line-height: 44px; font-weight: 700">What's new in 4.2</div>
+  <div aria-hidden="true" style="position: absolute; left: 300px; top: 222px; width: 600px; font-size: 13px; color: #666">Released 4 November 2026 · 6 min read</div>
+  <div aria-hidden="true" style="position: absolute; left: 300px; top: 266px; width: 600px; font-size: 20px; line-height: 28px; font-weight: 600">Faster first sync</div>
+  <div aria-hidden="true" style="position: absolute; left: 300px; top: 302px; width: 600px; font-size: 15px; line-height: 24px; color: #333">Initial sync of large folders is now <span style="background: {{hl}}; border-radius: 2px; padding: 1px 0">up to twice as fast</span>, and it picks up where it left off after a restart instead of starting again.</div>
+  <div aria-hidden="true" style="position: absolute; left: 300px; top: 368px; width: 600px; font-size: 20px; line-height: 28px; font-weight: 600">Selective sync on Windows</div>
+  <div aria-hidden="true" style="position: absolute; left: 300px; top: 404px; width: 600px; font-size: 15px; line-height: 24px; color: #333">Choose which folders stay on this PC straight from the tray icon, without opening settings.</div>
+  <div aria-hidden="true" style="position: absolute; left: 300px; top: 476px; width: 220px; height: 40px; border-radius: 6px; background: #0b57d0; color: #ffffff; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600">Download 4.2 for Windows</div>
+  <div aria-hidden="true" style="position: absolute; left: 540px; top: 486px; font-size: 14px; color: #0b57d0">Other platforms</div>
+  <div aria-hidden="true" style="position: absolute; left: 300px; top: 540px; width: 600px; height: 96px; border: 1px solid #e3e3e3; border-radius: 8px; background: #f8f9fb; box-sizing: border-box">
+    <div style="position: absolute; left: 16px; top: 12px; font-size: 14px; font-weight: 600">Get release emails</div>
+    <div style="position: absolute; left: 16px; top: 44px; width: 340px; height: 36px; border: 1px solid #c8ccd2; border-radius: 6px; background: #ffffff; display: flex; align-items: center; padding: 0 12px; box-sizing: border-box; font-size: 14px; color: #333">jamie.lee@example.com</div>
+    <div style="position: absolute; left: 368px; top: 44px; width: 104px; height: 36px; border-radius: 6px; border: 1px solid #0b57d0; color: #0b57d0; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; box-sizing: border-box">Subscribe</div>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 300px; top: 668px; width: 600px; font-size: 20px; line-height: 28px; font-weight: 600">Bug fixes</div>
+  <div aria-hidden="true" style="position: absolute; left: 300px; top: 704px; width: 600px; font-size: 15px; line-height: 24px; color: #333">Fixed tray icon disappearing after Explorer restarts.</div>
+
+  <div aria-hidden="true" style="position: absolute; left: 0; bottom: 0; width: 1280px; height: 48px; background: #1c1c1c; display: flex; align-items: center; justify-content: center; gap: 8px">
+    <span style="width: 24px; height: 24px; border-radius: 6px; background: #3b7fc4"></span>
+    <span style="width: 24px; height: 24px; border-radius: 6px; background: #d9953a"></span>
+    <span style="width: 24px; height: 24px; border-radius: 6px; background: #4c9a6a"></span>
+  </div>
+
+  <!-- ===== Annotations drawn inside the selection ===== -->
+  <div aria-hidden="true" style="position: absolute; left: 504px; top: 444px; width: 26px; height: 26px; border-radius: 50%; background: #e5484d; color: #ffffff; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.35)">1</div>
+  <div aria-hidden="true" style="position: absolute; left: 290px; top: 466px; width: 240px; height: 60px; border: 3px solid #e5484d; border-radius: 8px; box-sizing: border-box"></div>
+  <div aria-hidden="true" style="position: absolute; left: 316px; top: 584px; width: 340px; height: 36px; border-radius: 6px; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); background: rgba(255,255,255,0.2)"></div>
+  <div aria-hidden="true" style="position: absolute; left: 666px; top: 590px; width: 26px; height: 26px; border-radius: 50%; background: #e5484d; color: #ffffff; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.35)">2</div>
+  <svg aria-hidden="true" width="300" height="140" viewBox="0 0 300 140" style="position: absolute; left: 536px; top: 390px; overflow: visible">
+    <path d="M250 20 C 200 30, 120 60, 6 100" fill="none" stroke="#e5484d" stroke-width="4" stroke-linecap="round"></path>
+    <path d="M24 84 L 4 101 L 28 108" fill="none" stroke="#e5484d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+  </svg>
+  <div aria-hidden="true" style="position: absolute; left: 760px; top: 384px; font-size: 16px; font-weight: 700; color: #e5484d; background: #ffffff; padding: 2px 6px; border-radius: 4px">Grab this build</div>
+
+  <!-- ===== Selection: everything outside is dimmed ===== -->
+  <div aria-hidden="true" style="position: absolute; left: 280px; top: 160px; width: 660px; height: 500px; border: 1px solid var(--accent); box-shadow: 0 0 0 9999px rgba(0,0,0,0.55); box-sizing: border-box"></div>
+  <sc-for list="{{handles}}" as="h" hint-placeholder-count="8">
+    <span aria-hidden="true" style="position: absolute; left: {{h.x}}px; top: {{h.y}}px; width: 9px; height: 9px; background: #ffffff; border: 1px solid var(--accent); box-sizing: border-box"></span>
+  </sc-for>
+  <div style="position: absolute; left: 280px; top: 128px; height: 24px; padding: 0 8px; border-radius: 4px; background: var(--layer); border: 1px solid var(--stroke); color: var(--text); display: flex; align-items: center; gap: 8px; font-size: 12px; font-family: 'Cascadia Code', Consolas, ui-monospace, monospace">
+    <span style="font-weight: 600">660 × 500</span>
+    <span style="color: var(--text3)">X 280 · Y 160</span>
+  </div>
+
+  <!-- Highlighter cursor -->
+  <svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" style="position: absolute; left: 708px; top: 320px"><path d="M9 14l-4 4v2h6l2-2M9 14l8-8 4 4-8 8zM9 14l4 4" fill="#ffffff" stroke="#1f1f1f" stroke-width="1.4" stroke-linejoin="round"></path></svg>
+
+  <!-- ===== Annotation toolbar (top of screen) ===== -->
+  <div role="toolbar" aria-label="Annotate capture" style="position: absolute; left: 50%; top: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 2px; padding: 5px; background: var(--layer); border: 1px solid var(--stroke); border-radius: 8px; box-shadow: 0 12px 32px rgba(0,0,0,0.45); color: var(--text); white-space: nowrap">
+    <sc-for list="{{tools}}" as="tl" hint-placeholder-count="11">
+      <button class="hv" onClick="{{tl.pick}}" aria-label="{{tl.label}}" aria-pressed="{{tl.pressed}}" title="{{tl.label}} ({{tl.key}})" style="{{tl.style}}; width: 34px; height: 34px; border: none; border-radius: 5px; display: flex; align-items: center; justify-content: center; padding: 0">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{tl.d}}"></path></svg>
+      </button>
+    </sc-for>
+    <span aria-hidden="true" style="width: 1px; height: 22px; background: var(--stroke); margin: 0 6px"></span>
+    <div role="radiogroup" aria-label="Colour" style="display: flex; gap: 2px">
+      <sc-for list="{{colors}}" as="c" hint-placeholder-count="6">
+        <button class="hv" role="radio" aria-checked="{{c.checked}}" aria-label="{{c.name}}" onClick="{{c.pick}}" style="width: 28px; height: 34px; border: none; background: transparent; border-radius: 5px; display: flex; align-items: center; justify-content: center; padding: 0">
+          <span style="{{c.ring}}; width: 18px; height: 18px; border-radius: 50%; background: {{c.hex}}; box-sizing: border-box"></span>
+        </button>
+      </sc-for>
+    </div>
+    <span aria-hidden="true" style="width: 1px; height: 22px; background: var(--stroke); margin: 0 6px"></span>
+    <div role="radiogroup" aria-label="Stroke size" style="display: flex; gap: 2px">
+      <sc-for list="{{sizes}}" as="sz" hint-placeholder-count="3">
+        <button class="hv" role="radio" aria-checked="{{sz.checked}}" aria-label="{{sz.name}}" onClick="{{sz.pick}}" style="{{sz.style}}; width: 28px; height: 34px; border: none; border-radius: 5px; display: flex; align-items: center; justify-content: center; padding: 0">
+          <span style="width: {{sz.dot}}px; height: {{sz.dot}}px; border-radius: 50%; background: currentColor"></span>
+        </button>
+      </sc-for>
+    </div>
+    <span aria-hidden="true" style="width: 1px; height: 22px; background: var(--stroke); margin: 0 6px"></span>
+    <button class="hv" aria-label="Undo" title="Undo (Ctrl+Z)" style="width: 34px; height: 34px; border: none; background: transparent; color: var(--text); border-radius: 5px; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14L4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3"></path></svg></button>
+    <button class="hv" aria-label="Redo" title="Redo (Ctrl+Y)" style="width: 34px; height: 34px; border: none; background: transparent; color: var(--text3); border-radius: 5px; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 14l5-5-5-5M20 9H9a5 5 0 0 0 0 10h3"></path></svg></button>
+    <span aria-hidden="true" style="width: 1px; height: 22px; background: var(--stroke); margin: 0 6px"></span>
+    <button class="hv" aria-label="Copy to clipboard" title="Copy (Ctrl+C)" style="width: 34px; height: 34px; border: none; background: transparent; color: var(--text); border-radius: 5px; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9zM5 15H4V4h11v1"></path></svg></button>
+    <button class="hv" aria-label="Save" title="Save (Ctrl+S)" style="width: 34px; height: 34px; border: none; background: transparent; color: var(--text); border-radius: 5px; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M4 20h16"></path></svg></button>
+    <button class="hv" aria-label="Pin to screen" title="Pin to screen" style="width: 34px; height: 34px; border: none; background: transparent; color: var(--text); border-radius: 5px; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v8"></path></svg></button>
+    <button title="Upload (Enter)" style="height: 34px; margin-left: 4px; padding: 0 12px; border: 1px solid var(--accent); background: var(--accent); color: var(--onAccent); border-radius: 5px; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; cursor: pointer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M7 9l5-5 5 5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"></path></svg>Upload</button>
+    <button class="hv" aria-label="Cancel capture" title="Cancel (Esc)" style="width: 34px; height: 34px; margin-left: 2px; border: none; background: transparent; color: var(--text); border-radius: 5px; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+  </div>
+
+  <!-- Active tool hint -->
+  <div style="position: absolute; left: 50%; top: 66px; transform: translateX(-50%); height: 26px; padding: 0 12px; border-radius: 13px; background: var(--layer); border: 1px solid var(--stroke); color: var(--text2); display: flex; align-items: center; font-size: 12px; white-space: nowrap">{{hint}}</div>
+
+  <!-- Keyboard hints -->
+  <div style="position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); display: flex; align-items: center; gap: 16px; height: 32px; padding: 0 14px; border-radius: 16px; background: rgba(20,20,20,0.82); color: #e6e6e6; font-size: 12px; white-space: nowrap">
+    <span><b style="color: #ffffff">Enter</b> upload</span>
+    <span><b style="color: #ffffff">Ctrl+C</b> copy</span>
+    <span><b style="color: #ffffff">Drag edges</b> resize</span>
+    <span><b style="color: #ffffff">Right-click</b> reselect</span>
+    <span><b style="color: #ffffff">Esc</b> cancel</span>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":true,"section":"Theme"},"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { tool: 'highlight', color: 'yellow', size: 'm' };
+  }
+  tokens(dark) {
+    return dark ? {
+      layer: '#2c2c2c', stroke: 'rgba(255,255,255,0.1)', text: '#ffffff', text2: '#d0d0d0', text3: '#a8a8a8',
+      accent: '#60cdff', onAccent: '#002a40', accentSoft: 'rgba(96,205,255,0.18)', subtle: 'rgba(255,255,255,0.07)'
+    } : {
+      layer: '#f9f9f9', stroke: 'rgba(0,0,0,0.1)', text: '#1a1a1a', text2: '#3b3b3b', text3: '#6b6b6b',
+      accent: '#005fb8', onAccent: '#ffffff', accentSoft: 'rgba(0,95,184,0.12)', subtle: 'rgba(0,0,0,0.05)'
+    };
+  }
+  renderVals() {
+    const dark = this.props.dark ?? true;
+    const t = this.tokens(dark);
+    const vars = Object.keys(t).map((k) => '--' + k + ':' + t[k]).join(';') + ';color-scheme:' + (dark ? 'dark' : 'light');
+    const S = this.state;
+    const toolDefs = [
+      { id: 'move', label: 'Select and move', key: 'V', d: 'M5 3l14 7-6 2-2 6z', hint: 'Select: click an annotation to move or resize it' },
+      { id: 'rect', label: 'Rectangle', key: 'R', d: 'M4 6h16v12H4z', hint: 'Rectangle: drag to draw · Shift for a square' },
+      { id: 'ellipse', label: 'Ellipse', key: 'E', d: 'M12 19c4.4 0 8-3.1 8-7s-3.6-7-8-7-8 3.1-8 7 3.6 7 8 7z', hint: 'Ellipse: drag to draw · Shift for a circle' },
+      { id: 'arrow', label: 'Arrow', key: 'A', d: 'M5 19L19 5M10 5h9v9', hint: 'Arrow: drag from tail to tip · drag the middle to curve it' },
+      { id: 'pen', label: 'Pen', key: 'P', d: 'M3 17c3-4 5 2 8-2s4-9 7-6 1 6 3 6', hint: 'Pen: draw freehand' },
+      { id: 'highlight', label: 'Highlighter', key: 'H', d: 'M9 14l-4 4v2h6l2-2M9 14l8-8 4 4-8 8zM9 14l4 4', hint: 'Highlighter: drag over text · snaps to text lines' },
+      { id: 'text', label: 'Text', key: 'T', d: 'M5 6V4h14v2M12 4v16M9 20h6', hint: 'Text: click to type a label' },
+      { id: 'step', label: 'Step number', key: 'N', d: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM11 9l2-1v8', hint: 'Step: click to place 3 next' },
+      { id: 'blur', label: 'Blur or pixelate', key: 'B', d: 'M4 4h4v4H4zM12 4h4v4h-4zM8 8h4v4H8zM16 8h4v4h-4zM4 12h4v4H4zM12 12h4v4h-4zM8 16h4v4H8zM16 16h4v4h-4z', hint: 'Blur: drag over anything private' },
+      { id: 'crop', label: 'Crop', key: 'C', d: 'M6 2v16h16M2 6h16v16', hint: 'Crop: drag the selection edges' },
+      { id: 'color', label: 'Pick colour from screen', key: 'I', d: 'M16 3l5 5-2.5 2.5-5-5zM13.5 5.5L5 14v5h5l8.5-8.5', hint: 'Colour picker: click to copy a pixel’s hex value' }
+    ];
+    const tools = toolDefs.map((tl) => ({
+      ...tl,
+      pressed: S.tool === tl.id ? 'true' : 'false',
+      style: S.tool === tl.id ? 'background: var(--accentSoft); color: var(--accent)' : 'background: transparent; color: var(--text)',
+      pick: () => this.setState({ tool: tl.id })
+    }));
+    const colorDefs = [
+      { id: 'red', name: 'Red', hex: '#e5484d', hl: 'rgba(229,72,77,0.32)' },
+      { id: 'orange', name: 'Orange', hex: '#f76b15', hl: 'rgba(247,107,21,0.32)' },
+      { id: 'yellow', name: 'Yellow', hex: '#ffd60a', hl: 'rgba(255,214,10,0.55)' },
+      { id: 'green', name: 'Green', hex: '#30a46c', hl: 'rgba(48,164,108,0.32)' },
+      { id: 'blue', name: 'Blue', hex: '#0090ff', hl: 'rgba(0,144,255,0.28)' },
+      { id: 'white', name: 'White', hex: '#ffffff', hl: 'rgba(200,200,200,0.4)' }
+    ];
+    const colors = colorDefs.map((c) => ({
+      ...c,
+      checked: S.color === c.id ? 'true' : 'false',
+      ring: S.color === c.id ? 'box-shadow: 0 0 0 2px var(--layer), 0 0 0 4px var(--text)' : 'box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25)',
+      pick: () => this.setState({ color: c.id })
+    }));
+    const sizes = [['s', 'Thin', 4], ['m', 'Medium', 7], ['l', 'Thick', 11]].map(([id, name, dot]) => ({
+      name, dot,
+      checked: S.size === id ? 'true' : 'false',
+      style: S.size === id ? 'background: var(--accentSoft); color: var(--accent)' : 'background: transparent; color: var(--text2)',
+      pick: () => this.setState({ size: id })
+    }));
+    const cur = colorDefs.find((c) => c.id === S.color) || colorDefs[2];
+    const hint = (toolDefs.find((tl) => tl.id === S.tool) || toolDefs[5]).hint;
+    const L = 280, T = 160, W = 660, H = 500, o = 4;
+    const handles = [
+      [L - o, T - o], [L + W / 2 - o, T - o], [L + W - o - 1, T - o],
+      [L - o, T + H / 2 - o], [L + W - o - 1, T + H / 2 - o],
+      [L - o, T + H - o - 1], [L + W / 2 - o, T + H - o - 1], [L + W - o - 1, T + H - o - 1]
+    ].map(([x, y]) => ({ x, y }));
+    return { vars, tools, colors, sizes, hl: cur.hl, hint, handles };
+  }
+}
+</script>
+</body>
+</html>

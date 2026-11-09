@@ -1,0 +1,17 @@
+[package]
+name = "snapline-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+time.workspace = true
+zeroize.workspace = true
+rand.workspace = true
+qrcode.workspace = true
+rqrr.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

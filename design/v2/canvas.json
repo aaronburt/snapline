@@ -1,0 +1,318 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "App-Recordings.dc.html": {
+      "expand": "fill",
+      "h": 880,
+      "is_interactive": true,
+      "page": "app",
+      "title": "v1 (archived) · App · Recordings",
+      "w": 1280,
+      "x": 2720,
+      "y": 1300
+    },
+    "App-Text.dc.html": {
+      "expand": "fill",
+      "h": 880,
+      "is_interactive": true,
+      "page": "app",
+      "title": "v1 (archived) · App · Text & OCR",
+      "w": 1280,
+      "x": 0,
+      "y": 2300
+    },
+    "App-Tools.dc.html": {
+      "expand": "fill",
+      "h": 880,
+      "is_interactive": true,
+      "page": "app",
+      "title": "v1 (archived) · App · Tools",
+      "w": 1280,
+      "x": 2720,
+      "y": 2300
+    },
+    "App-Uploads.dc.html": {
+      "expand": "fill",
+      "h": 880,
+      "is_interactive": true,
+      "page": "app",
+      "title": "v1 (archived) · App · Uploads",
+      "w": 1280,
+      "x": 1360,
+      "y": 1300
+    },
+    "App-Workflows.dc.html": {
+      "expand": "fill",
+      "h": 880,
+      "is_interactive": true,
+      "page": "app",
+      "title": "v1 (archived) · App · Workflows",
+      "w": 1280,
+      "x": 1360,
+      "y": 2300
+    },
+    "App-v2-Tools.dc.html": {
+      "expand": "fill",
+      "h": 880,
+      "is_interactive": true,
+      "page": "app",
+      "title": "App · Tools",
+      "w": 1280,
+      "x": 2720,
+      "y": 0
+    },
+    "App-v2-Workflows.dc.html": {
+      "expand": "fill",
+      "h": 880,
+      "is_interactive": true,
+      "page": "app",
+      "title": "App · Workflows",
+      "w": 1280,
+      "x": 1360,
+      "y": 0
+    },
+    "App-v2.dc.html": {
+      "expand": "fill",
+      "h": 880,
+      "is_interactive": true,
+      "page": "app",
+      "title": "App · History",
+      "w": 1280,
+      "x": 0,
+      "y": 0
+    },
+    "App.dc.html": {
+      "expand": "fill",
+      "h": 880,
+      "is_interactive": true,
+      "page": "app",
+      "title": "v1 (archived) · App · History",
+      "w": 1280,
+      "x": 0,
+      "y": 1300
+    },
+    "Main-v2.dc.html": {
+      "h": 800,
+      "is_interactive": true,
+      "page": "tray",
+      "title": "Tray · Quick panel (left-click)",
+      "w": 1280,
+      "x": 0,
+      "y": 0
+    },
+    "Main.dc.html": {
+      "h": 800,
+      "is_interactive": true,
+      "page": "tray",
+      "title": "v1 (archived) · Tray · Quick panel (left-click)",
+      "w": 1280,
+      "x": 0,
+      "y": 1300
+    },
+    "Overlay.dc.html": {
+      "h": 800,
+      "is_interactive": true,
+      "page": "capture",
+      "title": "Capture · Frozen screen + annotation toolbar",
+      "w": 1280,
+      "x": 0,
+      "y": 0
+    },
+    "Settings-Capture-v2.dc.html": {
+      "expand": "fill",
+      "h": 720,
+      "is_interactive": true,
+      "page": "settings",
+      "title": "Settings · Capture",
+      "w": 1280,
+      "x": 1360,
+      "y": 0
+    },
+    "Settings-Capture.dc.html": {
+      "expand": "fill",
+      "h": 720,
+      "is_interactive": true,
+      "page": "settings",
+      "title": "v1 (archived) · Settings · Capture",
+      "w": 1280,
+      "x": 1360,
+      "y": 1200
+    },
+    "Settings-General-v2.dc.html": {
+      "expand": "fill",
+      "h": 720,
+      "is_interactive": true,
+      "page": "settings",
+      "title": "Settings · General & default workflow",
+      "w": 1280,
+      "x": 0,
+      "y": 0
+    },
+    "Settings-General.dc.html": {
+      "expand": "fill",
+      "h": 720,
+      "is_interactive": true,
+      "page": "settings",
+      "title": "v1 (archived) · Settings · General & after capture",
+      "w": 1280,
+      "x": 0,
+      "y": 1200
+    },
+    "Settings-Hotkeys-v2.dc.html": {
+      "expand": "fill",
+      "h": 720,
+      "is_interactive": true,
+      "page": "settings",
+      "title": "Settings · Hotkeys (new)",
+      "w": 1280,
+      "x": 2720,
+      "y": 0
+    },
+    "Settings-Uploads-v2.dc.html": {
+      "expand": "fill",
+      "h": 720,
+      "is_interactive": true,
+      "page": "settings",
+      "title": "Settings · Upload destinations",
+      "w": 1280,
+      "x": 4080,
+      "y": 0
+    },
+    "Settings-Uploads.dc.html": {
+      "expand": "fill",
+      "h": 720,
+      "is_interactive": true,
+      "page": "settings",
+      "title": "v1 (archived) · Settings · Upload destinations",
+      "w": 1280,
+      "x": 2720,
+      "y": 1200
+    },
+    "TrayMenu-v2.dc.html": {
+      "h": 800,
+      "is_interactive": true,
+      "page": "tray",
+      "title": "Tray · Context menu (right-click)",
+      "w": 760,
+      "x": 1360,
+      "y": 0
+    },
+    "TrayMenu.dc.html": {
+      "h": 800,
+      "is_interactive": true,
+      "page": "tray",
+      "title": "v1 (archived) · Tray · Context menu (right-click)",
+      "w": 760,
+      "x": 1360,
+      "y": 1300
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-11-08T13:05:26.158Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "page": "tray",
+    "view": "canvas"
+  },
+  "notes": {
+    "appTitle": {
+      "kind": "title1",
+      "maxW": 4000,
+      "page": "app",
+      "text": "App · v2 (preferred)",
+      "w": 240,
+      "x": 0,
+      "y": -320
+    },
+    "appV2": {
+      "kind": "title1",
+      "maxW": 4000,
+      "page": "app",
+      "text": "App · v1 (archived)",
+      "w": 240,
+      "x": 0,
+      "y": 1000
+    },
+    "settingsTitle": {
+      "kind": "title1",
+      "maxW": 5360,
+      "page": "settings",
+      "text": "Settings · v2 (preferred)",
+      "w": 240,
+      "x": 0,
+      "y": -320
+    },
+    "settingsV2": {
+      "kind": "title1",
+      "maxW": 4000,
+      "page": "settings",
+      "text": "Settings · v1 (archived)",
+      "w": 240,
+      "x": 0,
+      "y": 880
+    },
+    "trayTitle": {
+      "kind": "title1",
+      "maxW": 2120,
+      "page": "tray",
+      "text": "Tray · v2 (preferred)",
+      "w": 240,
+      "x": 0,
+      "y": -320
+    },
+    "trayV2": {
+      "kind": "title1",
+      "maxW": 2120,
+      "page": "tray",
+      "text": "Tray · v1 (archived)",
+      "w": 240,
+      "x": 0,
+      "y": 1000
+    }
+  },
+  "order": [
+    "Main-v2.dc.html",
+    "TrayMenu-v2.dc.html",
+    "Main.dc.html",
+    "TrayMenu.dc.html",
+    "App-v2-Tools.dc.html",
+    "App-v2-Workflows.dc.html",
+    "App-v2.dc.html",
+    "App.dc.html",
+    "App-Uploads.dc.html",
+    "App-Recordings.dc.html",
+    "App-Text.dc.html",
+    "App-Workflows.dc.html",
+    "App-Tools.dc.html",
+    "Settings-General-v2.dc.html",
+    "Settings-Capture-v2.dc.html",
+    "Settings-Hotkeys-v2.dc.html",
+    "Settings-Uploads-v2.dc.html",
+    "Settings-General.dc.html",
+    "Settings-Capture.dc.html",
+    "Settings-Uploads.dc.html",
+    "Overlay.dc.html"
+  ],
+  "pages": [
+    {
+      "id": "tray",
+      "name": "1 · Tray"
+    },
+    {
+      "id": "app",
+      "name": "2 · App"
+    },
+    {
+      "id": "settings",
+      "name": "3 · Settings"
+    },
+    {
+      "id": "capture",
+      "name": "4 · Capture overlay"
+    }
+  ],
+  "title": "Design"
+}

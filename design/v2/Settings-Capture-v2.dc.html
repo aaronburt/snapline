@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Snapline settings v2: Capture</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:inherit;text-decoration:none}a:hover{color:inherit}
+.hv{cursor:pointer}
+.hv:hover{box-shadow:inset 0 0 0 999px var(--subtle)}
+button,input,select{font-family:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--text);outline-offset:1px}
+.tg{appearance:none;-webkit-appearance:none;width:40px;height:20px;border-radius:10px;border:1px solid var(--text3);background:transparent;position:relative;margin:0;cursor:pointer;flex:none}
+.tg::after{content:"";position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;background:var(--text2);transition:left .15s}
+.tg:checked{background:var(--accent);border-color:var(--accent)}
+.tg:checked::after{left:23px;background:var(--onAccent)}
+</style>
+</helmet>
+<div style="{{vars}}; height: 100vh; overflow: hidden; display: flex; flex-direction: column; background: var(--mica); font-family: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, sans-serif; color: var(--text); font-size: 13px">
+
+  <!-- Title bar -->
+  <div style="height: 40px; display: flex; align-items: center; gap: 12px; padding-left: 16px; flex: none">
+    <svg width="16" height="16" viewBox="0 0 32 32" aria-hidden="true" style="flex: none"><rect width="32" height="32" rx="8" fill="var(--accent)"></rect><path d="M9 13V9h4M19 9h4v4M23 19v4h-4M13 23H9v-4" fill="none" stroke="var(--onAccent)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    <span style="font-size: 12px; flex: 1">Snapline Settings</span>
+    <div style="display: flex; flex: none">
+      <button class="hv" aria-label="Minimise" style="width: 46px; height: 40px; border: none; background: transparent; color: var(--text); display: flex; align-items: center; justify-content: center"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" stroke-width="1"></path></svg></button>
+      <button class="hv" aria-label="Maximise" style="width: 46px; height: 40px; border: none; background: transparent; color: var(--text); display: flex; align-items: center; justify-content: center"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1"></rect></svg></button>
+      <a href="App-v2.dc.html" class="hv" aria-label="Close" style="width: 46px; height: 40px; color: var(--text); display: flex; align-items: center; justify-content: center"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1"></path></svg></a>
+    </div>
+  </div>
+
+  <div style="flex: 1; min-height: 0; display: flex; flex-wrap: wrap; align-items: flex-start">
+    <!-- Settings navigation -->
+    <nav aria-label="Settings" style="flex: 1 1 240px; max-width: 100%; padding: 8px 12px 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px">
+      <a href="App-v2.dc.html" class="hv" style="height: 36px; border-radius: 4px; display: flex; align-items: center; gap: 10px; padding: 0 10px; color: var(--text2); align-self: flex-start">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"></path></svg>
+        Back to Snapline
+      </a>
+      <label style="margin: 8px 0 12px; height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--card); border: 1px solid var(--stroke); border-bottom-color: var(--strokeHi); border-radius: 4px; color: var(--text3)">
+        <input type="search" aria-label="Find a setting" placeholder="Find a setting" style="flex: 1; min-width: 0; border: none; background: transparent; color: var(--text); font-size: 13px; outline: none">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4"></path></svg>
+      </label>
+      <sc-for list="{{nav}}" as="n" hint-placeholder-count="4">
+        <a href="{{n.href}}" class="hv" aria-current="{{n.current}}" style="{{n.bg}}; position: relative; height: 40px; border-radius: 4px; display: flex; align-items: center; gap: 12px; padding: 0 12px 0 16px; color: var(--text)">
+          <sc-if value="{{n.active}}" hint-placeholder-val="{{false}}">
+            <span aria-hidden="true" style="position: absolute; left: 4px; top: 12px; width: 3px; height: 16px; border-radius: 2px; background: var(--accent)"></span>
+          </sc-if>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{n.d}}"></path></svg>
+          {{n.label}}
+        </a>
+      </sc-for>
+    </nav>
+
+    <!-- Settings content -->
+    <main style="flex: 999 1 560px; min-width: 0; height: calc(100vh - 40px); overflow-y: auto; background: var(--layer); border: 1px solid var(--stroke); border-right: none; border-bottom: none; border-top-left-radius: 8px; padding: 28px 40px 48px; box-sizing: border-box">
+      <div style="max-width: 1000px; display: flex; flex-direction: column; gap: 28px">
+        <h1 style="margin: 0; font-size: 28px; line-height: 36px; font-weight: 600">Capture</h1>
+
+        <sc-for list="{{sections}}" as="sec" hint-placeholder-count="6">
+          <section aria-label="{{sec.title}}" style="display: flex; flex-direction: column; gap: 4px">
+            <h2 style="margin: 0 0 4px; font-size: 14px; font-weight: 600">{{sec.title}}</h2>
+            <sc-if value="{{sec.desc}}" hint-placeholder-val="{{false}}">
+              <p style="margin: 0 0 6px; font-size: 12px; color: var(--text3)">{{sec.desc}}</p>
+            </sc-if>
+
+            <sc-if value="{{sec.monitors}}" hint-placeholder-val="{{false}}">
+              <div style="padding: 24px 20px 18px; background: var(--card); border: 1px solid var(--stroke); border-radius: 6px; display: flex; flex-direction: column; align-items: center; gap: 14px">
+                <div role="img" aria-label="{{mon.label}}" style="display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; justify-content: center">
+                  <sc-for list="{{mon.screens}}" as="m" hint-placeholder-count="2">
+                    <div style="{{m.style}}; width: {{m.w}}px; height: {{m.h}}px; border-radius: 6px; box-sizing: border-box; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px">
+                      <span style="font-size: 22px; font-weight: 600">{{m.n}}</span>
+                      <span style="font-size: 11px; opacity: 0.85">{{m.res}}</span>
+                      <sc-if value="{{m.cursor}}" hint-placeholder-val="{{false}}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" style="position: absolute; right: 22px; bottom: 18px"><path d="M5 3l14 7-6 2-2 6z" fill="var(--text)" stroke="var(--layer)" stroke-width="1.5" stroke-linejoin="round"></path></svg>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="font-size: 12px; color: var(--text3)">{{mon.caption}}</div>
+              </div>
+            </sc-if>
+
+            <sc-for list="{{sec.rows}}" as="r" hint-placeholder-count="3">
+              <sc-if value="{{r.isToggle}}" hint-placeholder-val="{{true}}">
+                <label class="hv" style="min-height: 68px; padding: 12px 20px; box-sizing: border-box; display: flex; align-items: center; gap: 16px; background: var(--card); border: 1px solid var(--stroke); border-radius: 6px">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text2)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none"><path d="{{r.d}}"></path></svg>
+                  <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+                    <span style="font-size: 14px">{{r.title}}</span>
+                    <span style="font-size: 12px; color: var(--text3)">{{r.desc}}</span>
+                  </span>
+                  <span style="font-size: 13px; color: var(--text2); width: 24px; text-align: right">{{r.onLabel}}</span>
+                  <input type="checkbox" class="tg" checked="{{r.on}}" onChange="{{r.flip}}">
+                </label>
+              </sc-if>
+              <sc-if value="{{r.isOther}}" hint-placeholder-val="{{false}}">
+                <div style="min-height: 68px; padding: 12px 20px; box-sizing: border-box; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; background: var(--card); border: 1px solid var(--stroke); border-radius: 6px">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text2)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none"><path d="{{r.d}}"></path></svg>
+                  <div style="flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+                    <span id="{{r.labelId}}" style="font-size: 14px">{{r.title}}</span>
+                    <span style="font-size: 12px; color: var(--text3)">{{r.desc}}</span>
+                  </div>
+                  <sc-if value="{{r.isSelect}}" hint-placeholder-val="{{false}}">
+                    <select aria-labelledby="{{r.labelId}}" value="{{r.value}}" onChange="{{r.change}}" style="height: 34px; min-width: 220px; padding: 0 10px; border: 1px solid var(--stroke); border-bottom-color: var(--strokeHi); border-radius: 4px; background: var(--layer); color: var(--text); font-size: 13px">
+                      <sc-for list="{{r.options}}" as="o" hint-placeholder-count="3">
+                        <option value="{{o}}">{{o}}</option>
+                      </sc-for>
+                    </select>
+                  </sc-if>
+                  <sc-if value="{{r.isSeg}}" hint-placeholder-val="{{false}}">
+                    <div role="radiogroup" aria-labelledby="{{r.labelId}}" style="display: flex; padding: 2px; background: var(--subtle); border: 1px solid var(--stroke); border-radius: 6px">
+                      <sc-for list="{{r.segs}}" as="sg" hint-placeholder-count="4">
+                        <button role="radio" aria-checked="{{sg.checked}}" onClick="{{sg.pick}}" style="{{sg.style}}; height: 30px; min-width: 52px; padding: 0 12px; border: none; border-radius: 4px; font-size: 12px; cursor: pointer">{{sg.label}}</button>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{r.isField}}" hint-placeholder-val="{{false}}">
+                    <div style="display: flex; gap: 6px; flex: 1 1 320px; max-width: 460px">
+                      <input type="text" aria-labelledby="{{r.labelId}}" value="{{r.value}}" onChange="{{r.change}}" spellcheck="false" style="{{r.font}}; flex: 1; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid var(--stroke); border-bottom-color: var(--strokeHi); border-radius: 4px; background: var(--layer); color: var(--text); font-size: 12px">
+                      <sc-if value="{{r.btn}}" hint-placeholder-val="{{false}}">
+                        <button class="hv" style="height: 34px; padding: 0 12px; border: 1px solid var(--stroke); border-bottom-color: var(--strokeHi); background: var(--layer); color: var(--text); border-radius: 4px; font-size: 13px; flex: none">{{r.btn}}</button>
+                      </sc-if>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{r.isRange}}" hint-placeholder-val="{{false}}">
+                    <div style="display: flex; align-items: center; gap: 12px">
+                      <input type="range" min="{{r.min}}" max="{{r.max}}" step="{{r.step}}" aria-labelledby="{{r.labelId}}" value="{{r.value}}" onChange="{{r.change}}" style="width: 200px; accent-color: var(--accent)">
+                      <span style="width: 60px; text-align: right; font-size: 13px; color: var(--text2)">{{r.shown}}</span>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+            </sc-for>
+          </section>
+        </sc-for>
+      </div>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":true,"section":"Theme"},"$preview":{"width":1280,"height":720}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { vals: {} };
+  }
+  tokens(dark) {
+    return dark ? {
+      mica: '#1c1c1c', layer: '#272727', card: '#2d2d2d',
+      stroke: 'rgba(255,255,255,0.08)', strokeHi: 'rgba(255,255,255,0.16)',
+      text: '#ffffff', text2: '#d0d0d0', text3: '#a8a8a8',
+      accent: '#60cdff', onAccent: '#002a40', accentSoft: 'rgba(96,205,255,0.15)', subtle: 'rgba(255,255,255,0.06)', shadow: 'rgba(0,0,0,0.5)'
+    } : {
+      mica: '#eeeeee', layer: '#f9f9f9', card: '#ffffff',
+      stroke: 'rgba(0,0,0,0.09)', strokeHi: 'rgba(0,0,0,0.18)',
+      text: '#1a1a1a', text2: '#3b3b3b', text3: '#5f5f5f',
+      accent: '#005fb8', onAccent: '#ffffff', accentSoft: 'rgba(0,95,184,0.10)', subtle: 'rgba(0,0,0,0.045)', shadow: 'rgba(0,0,0,0.18)'
+    };
+  }
+  val(id, def) { return Object.prototype.hasOwnProperty.call(this.state.vals, id) ? this.state.vals[id] : def; }
+  setVal(id, v) { this.setState({ vals: { ...this.state.vals, [id]: v } }); }
+  row(r) {
+    const v = this.val(r.id, r.value);
+    const k = r.kind;
+    const out = { ...r, desc: r.desc || '', labelId: 'lbl-' + r.id, isToggle: k === 'toggle', isOther: k !== 'toggle', isSelect: k === 'select', isSeg: k === 'seg', isField: k === 'field', isRange: k === 'range', btn: r.btn || '' };
+    if (k === 'toggle') { out.on = !!v; out.onLabel = v ? 'On' : 'Off'; out.flip = () => this.setVal(r.id, !v); }
+    if (k === 'select' || k === 'field') { out.value = v; out.change = (e) => this.setVal(r.id, e.target.value); }
+    if (k === 'field') out.font = r.mono ? "font-family: 'Cascadia Code', Consolas, ui-monospace, monospace" : 'font-family: inherit';
+    if (k === 'range') { out.value = v; out.step = r.step || 1; out.shown = v + (r.unit || ''); out.change = (e) => this.setVal(r.id, Number(e.target.value)); }
+    if (k === 'seg') out.segs = r.options.map((o) => ({
+      label: o, checked: o === v ? 'true' : 'false',
+      style: o === v ? 'background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px var(--shadow)' : 'background: transparent; color: var(--text2)',
+      pick: () => this.setVal(r.id, o)
+    }));
+    return out;
+  }
+  renderVals() {
+    const dark = this.props.dark ?? true;
+    const t = this.tokens(dark);
+    const vars = Object.keys(t).map((k) => '--' + k + ':' + t[k]).join(';') + ';color-scheme:' + (dark ? 'dark' : 'light');
+    const I = {
+      cursor: 'M5 3l14 7-6 2-2 6z',
+      timer: 'M12 9v4l2 2M9 2h6M12 21a8 8 0 1 0 0-16 8 8 0 0 0 0 16z',
+      speaker: 'M4 9h4l5-4v14l-5-4H4zM17 9a4 4 0 0 1 0 6',
+      shadow: 'M4 4h13v13H4zM20 7v13H7',
+      freeze: 'M12 2v20M4 6l16 12M20 6L4 18',
+      search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4M11 8v6M8 11h6',
+      snap: 'M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM7 8h6v5H7z',
+      ruler: 'M3 17L17 3l4 4L7 21zM7 13l2 2M10 10l2 2M13 7l2 2',
+      cross: 'M12 2v20M2 12h20',
+      screen: 'M3 5h18v11H3zM8 20h8M12 16v4',
+      film: 'M4 4h16v16H4zM8 4v16M16 4v16M4 9h4M4 15h4M16 9h4M16 15h4',
+      fps: 'M13 3L5 14h6l-1 7 8-11h-6z',
+      gauge: 'M12 14l4-4M4 18a9 9 0 1 1 16 0',
+      audio: 'M3 10v4M7 7v10M11 4v16M15 8v8M19 11v2',
+      mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3',
+      border: 'M4 4h16v16H4z M8 8h8v8H8z',
+      code: 'M8 8l-4 4 4 4M16 8l4 4-4 4M14 5l-4 14',
+      gif: 'M4 5h16v14H4zM9 10H7v4h2v-1.5M12 10v4M15 14v-4h2.5M15 12h2',
+      width: 'M3 12h18M6 9l-3 3 3 3M18 9l3 3-3 3',
+      palette: 'M12 21a9 9 0 1 1 9-9c0 2-1.5 3-3 3h-2a2 2 0 0 0-1 3.7A1.5 1.5 0 0 1 12 21zM7.5 11h.01M10 7.5h.01M14.5 7.5h.01',
+      scroll: 'M7 3h10v18H7zM12 8v7M9 12l3 3 3-3',
+      stop: 'M6 6h12v12H6z',
+      sticky: 'M4 4h16v4H4zM4 11h16M4 15h16M4 19h10',
+      gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12h2M3 12h2M12 3v2M12 19v2M17 7l1.4-1.4M5.6 18.4L7 17M17 17l1.4 1.4M5.6 5.6L7 7',
+      region: 'M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M9 9h6v6H9z',
+      cloud: 'M7 18a4 4 0 0 1-.5-7.97A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z'
+    };
+    const R = (r) => this.row(r);
+    const monMode = this.val('mon', 'Monitor under cursor');
+    const sections = [
+      { title: 'Screenshots', rows: [
+        { id: 'cursor', kind: 'toggle', value: false, d: I.cursor, title: 'Include mouse cursor', desc: 'Draw the pointer into screenshots' },
+        { id: 'delay', kind: 'seg', value: 'Off', options: ['Off', '1 s', '3 s', '5 s'], d: I.timer, title: 'Capture delay', desc: 'Wait before capturing, so you can open a menu first' },
+        { id: 'sound', kind: 'toggle', value: true, d: I.speaker, title: 'Shutter sound', desc: 'Play a sound when a capture is taken' },
+        { id: 'shadow', kind: 'toggle', value: true, d: I.shadow, title: 'Keep window shadow and rounded corners', desc: 'Window captures keep the Windows 11 shadow on a transparent background' }
+      ].map(R) },
+      { title: 'Region selection', rows: [
+        { id: 'freeze', kind: 'toggle', value: true, d: I.freeze, title: 'Freeze the screen while selecting', desc: 'Menus, tooltips and video stay still while you drag' },
+        { id: 'mag', kind: 'toggle', value: true, d: I.search, title: 'Magnifier', desc: 'Pixel-accurate zoom next to the cursor' },
+        { id: 'zoom', kind: 'seg', value: '4×', options: ['2×', '4×', '8×'], d: I.search, title: 'Magnifier zoom' },
+        { id: 'snap', kind: 'toggle', value: true, d: I.snap, title: 'Snap to windows and controls', desc: 'Hover to pick a whole window, panel or button, then click' },
+        { id: 'info', kind: 'toggle', value: true, d: I.ruler, title: 'Show size and position', desc: 'Width, height and coordinates while dragging' },
+        { id: 'cross', kind: 'toggle', value: false, d: I.cross, title: 'Full-screen crosshair', desc: 'Guide lines across every monitor' }
+      ].map(R) },
+      { title: 'Monitors', desc: 'Choose what a full-screen capture (Ctrl+PrtSc) includes.', monitors: true, rows: [
+        { id: 'mon', kind: 'select', value: 'Monitor under cursor', options: ['All monitors', 'Monitor under cursor', 'Primary monitor'], d: I.screen, title: 'Full-screen capture uses' }
+      ].map(R) },
+      { title: 'Screen recording', rows: [
+        { id: 'vfmt', kind: 'select', value: 'MP4 · H.264', options: ['MP4 · H.264', 'MP4 · H.265 (HEVC)', 'WebM · VP9', 'MKV · H.264'], d: I.film, title: 'Video format', desc: 'H.264 plays everywhere; H.265 is smaller' },
+        { id: 'fps', kind: 'seg', value: '30', options: ['24', '30', '60'], d: I.fps, title: 'Frame rate', desc: 'Frames per second' },
+        { id: 'vq', kind: 'select', value: 'High (recommended)', options: ['High (recommended)', 'Balanced', 'Small file', 'Lossless'], d: I.gauge, title: 'Quality' },
+        { id: 'sys', kind: 'toggle', value: true, d: I.audio, title: 'Record system audio', desc: 'Sound playing on this PC' },
+        { id: 'mic', kind: 'toggle', value: false, d: I.mic, title: 'Record microphone' },
+        { id: 'micdev', kind: 'select', value: 'Default microphone', options: ['Default microphone', 'Headset microphone', 'USB microphone'], d: I.mic, title: 'Microphone device' },
+        { id: 'border', kind: 'toggle', value: true, d: I.border, title: 'Show recording border', desc: 'Outline the recorded area (not included in the video)' },
+        { id: 'ffmpeg', kind: 'field', mono: true, btn: 'Browse…', value: 'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe', d: I.code, title: 'FFmpeg location', desc: 'Used to encode video. Found automatically.' }
+      ].map(R) },
+      { title: 'GIF', rows: [
+        { id: 'gfps', kind: 'seg', value: '15', options: ['10', '15', '20', '30'], d: I.fps, title: 'Frame rate', desc: 'Lower frame rates make much smaller GIFs' },
+        { id: 'gw', kind: 'select', value: '800 px wide', options: ['Original size', '1280 px wide', '800 px wide', '480 px wide'], d: I.width, title: 'Maximum width' },
+        { id: 'pal', kind: 'toggle', value: true, d: I.palette, title: 'Optimise colour palette', desc: 'Smaller files, slightly slower to encode' }
+      ].map(R) },
+      { title: 'Scrolling capture', rows: [
+        { id: 'sdelay', kind: 'range', value: 300, min: 100, max: 1000, step: 50, unit: ' ms', d: I.scroll, title: 'Delay between scrolls', desc: 'Raise this for pages that load content as you scroll' },
+        { id: 'smax', kind: 'select', value: '30', options: ['10', '20', '30', '50', 'Unlimited'], d: I.stop, title: 'Stop after this many scrolls' },
+        { id: 'sticky', kind: 'toggle', value: true, d: I.sticky, title: 'Remove sticky headers', desc: 'Hide headers and footers that repeat on every scroll' }
+      ].map(R) }
+    ].map((s) => ({ ...s, desc: s.desc || '', monitors: !!s.monitors }));
+
+    const on = 'background: var(--accentSoft); border: 2px solid var(--accent); color: var(--text)';
+    const off = 'background: var(--subtle); border: 1px solid var(--strokeHi); color: var(--text3)';
+    const hl1 = monMode !== 'Monitor under cursor';
+    const hl2 = monMode !== 'Primary monitor';
+    const mon = {
+      label: 'Monitor 1, 1920 by 1080, primary; Monitor 2, 2560 by 1440. Highlighted: ' + monMode,
+      caption: monMode === 'All monitors' ? 'Both monitors are captured as one 4480 × 1440 image' : (monMode === 'Primary monitor' ? 'Monitor 1 (primary) is captured' : 'The monitor with the cursor is captured — here, Monitor 2'),
+      screens: [
+        { n: '1', res: '1920 × 1080 · primary', w: 216, h: 122, style: hl1 ? on : off, cursor: false },
+        { n: '2', res: '2560 × 1440', w: 288, h: 162, style: hl2 ? on : off, cursor: monMode === 'Monitor under cursor' }
+      ]
+    };
+
+    const navDefs = [
+      { label: 'General', href: 'Settings-General-v2.dc.html', d: I.gear },
+      { label: 'Capture', href: 'Settings-Capture-v2.dc.html', d: I.region, active: true },
+      { label: 'Hotkeys', href: 'Settings-Hotkeys-v2.dc.html', d: 'M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10' },
+      { label: 'Upload destinations', href: 'Settings-Uploads-v2.dc.html', d: I.cloud }
+    ];
+    const nav = navDefs.map((n) => ({ ...n, active: !!n.active, current: n.active ? 'page' : undefined, bg: n.active ? 'background: var(--subtle)' : 'background: transparent' }));
+    return { vars, nav, sections, mon };
+  }
+}
+</script>
+</body>
+</html>
