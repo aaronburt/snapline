@@ -357,6 +357,7 @@
                   type="button"
                   class="icon"
                   aria-label={`Move ${item.label} up`}
+                  title={index === 0 ? 'Already first.' : undefined}
                   disabled={index === 0}
                   onclick={() => move(index, index - 1)}>↑</button
                 >
@@ -364,6 +365,7 @@
                   type="button"
                   class="icon"
                   aria-label={`Move ${item.label} down`}
+                  title={index === selected.length - 1 ? 'Already last.' : undefined}
                   disabled={index === selected.length - 1}
                   onclick={() => move(index, index + 1)}>↓</button
                 >
@@ -447,7 +449,13 @@
         {#if status}
           <span class="status" role="status">{status}</span>
         {/if}
-        <Button variant="accent" icon="save" onclick={save} disabled={selected.length === 0 || saving}>
+        <Button
+          variant="accent"
+          icon="save"
+          onclick={save}
+          disabled={selected.length === 0 || saving}
+          title={selected.length === 0 ? 'Choose at least one image.' : undefined}
+        >
           {saving ? 'Saving…' : 'Save'}
         </Button>
       </div>

@@ -159,7 +159,10 @@ mod tests {
             let measurement = RulerMeasurement::measure(start, end);
             assert_eq!(measurement.width, expected.width);
             assert_eq!(measurement.height, expected.height);
-            assert_eq!(measurement.rect(), Rect::new(Px(100), Px(100), Px(300), Px(400)));
+            assert_eq!(
+                measurement.rect(),
+                Rect::new(Px(100), Px(100), Px(300), Px(400))
+            );
             assert!((measurement.diagonal() - 500.0).abs() < f64::EPSILON);
         }
     }
@@ -179,10 +182,22 @@ mod tests {
     #[test]
     fn the_angle_is_signed_from_the_horizontal() {
         let origin = point(0, 0);
-        assert_eq!(RulerMeasurement::measure(origin, point(10, 0)).angle_degrees(), 0.0);
-        assert_eq!(RulerMeasurement::measure(origin, point(0, 10)).angle_degrees(), 90.0);
-        assert_eq!(RulerMeasurement::measure(origin, point(-10, 0)).angle_degrees(), 180.0);
-        assert_eq!(RulerMeasurement::measure(origin, point(0, -10)).angle_degrees(), -90.0);
+        assert_eq!(
+            RulerMeasurement::measure(origin, point(10, 0)).angle_degrees(),
+            0.0
+        );
+        assert_eq!(
+            RulerMeasurement::measure(origin, point(0, 10)).angle_degrees(),
+            90.0
+        );
+        assert_eq!(
+            RulerMeasurement::measure(origin, point(-10, 0)).angle_degrees(),
+            180.0
+        );
+        assert_eq!(
+            RulerMeasurement::measure(origin, point(0, -10)).angle_degrees(),
+            -90.0
+        );
         assert!(
             (RulerMeasurement::measure(origin, point(-10, -10)).angle_degrees() + 135.0).abs()
                 < 1e-9
@@ -231,7 +246,10 @@ mod tests {
         let measurement = RulerMeasurement::measure(point(-1920, -200), point(-1280, 100));
         assert_eq!(measurement.width, Px(640));
         assert_eq!(measurement.height, Px(300));
-        assert_eq!(measurement.rect(), Rect::new(Px(-1920), Px(-200), Px(640), Px(300)));
+        assert_eq!(
+            measurement.rect(),
+            Rect::new(Px(-1920), Px(-200), Px(640), Px(300))
+        );
         assert_eq!(measurement.delta_x(), 640);
         assert_eq!(measurement.delta_y(), 300);
         let reversed = RulerMeasurement::measure(point(-1280, 100), point(-1920, -200));

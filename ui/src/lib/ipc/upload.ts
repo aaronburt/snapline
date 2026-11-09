@@ -10,7 +10,7 @@ export async function copyLink(link: string): Promise<void> {
   }
 }
 
-export type DestinationKind = 'imgur' | 's3' | 'custom';
+export type DestinationKind = 'imgur' | 's3' | 'gist' | 'sftp' | 'custom';
 export type DestinationStatus = 'configured' | 'not_set_up';
 export type DestinationAction = 'configure' | 'set_up' | 'edit';
 export type DestinationTestStatus = 'not_tested' | 'succeeded' | 'failed';
@@ -47,6 +47,14 @@ export interface DestinationView {
   errorMessage: string | null;
   headers: DestinationHeader[];
   importedFromSxcu: boolean;
+  host: string | null;
+  port: number | null;
+  username: string | null;
+  authMethod: string | null;
+  privateKeyPath: string | null;
+  remoteFolder: string | null;
+  passwordSaved: boolean;
+  passphraseSaved: boolean;
   warnings: string[];
 }
 
@@ -78,6 +86,14 @@ export interface DestinationInput {
   errorMessage?: string | null;
   headers: DestinationHeaderInput[];
   importedFromSxcu?: boolean | null;
+  host?: string | null;
+  port?: number | null;
+  username?: string | null;
+  authMethod?: string | null;
+  privateKeyPath?: string | null;
+  remoteFolder?: string | null;
+  password?: string | null;
+  passphrase?: string | null;
 }
 
 export interface DestinationTestOutcome {

@@ -59,6 +59,9 @@ pub enum ToolReq {
     },
     EditorOpenFile,
     EditorOpenClipboard,
+    PinFile,
+    PinClipboard,
+    PinMenu,
     Available {
         tool: String,
     },
@@ -71,6 +74,13 @@ pub enum EditorActionDto {
     Save,
     Pin,
     Upload,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum PinSourceDto {
+    File,
+    Clipboard,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -261,6 +271,10 @@ pub enum ToolResp {
     EditorOpened {
         outcome: EditorOutcomeDto,
     },
+    Pinned {
+        source: PinSourceDto,
+    },
+    PinCancelled,
     Available {
         available: bool,
     },

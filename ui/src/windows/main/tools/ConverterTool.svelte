@@ -277,7 +277,13 @@
     <SelectRow icon="film" title="Output format" options={formatOptions} bind:value={formatLabel} />
 
     <div class="actions">
-      <Button variant="accent" icon="film" onclick={start} disabled={!ready || running}>
+      <Button
+        variant="accent"
+        icon="film"
+        onclick={start}
+        disabled={!ready || running}
+        title={!ready ? (mode === 'History' ? 'Choose a recording first.' : 'Choose a video file first.') : undefined}
+      >
         Convert
       </Button>
       {#if running}
@@ -289,7 +295,7 @@
 
     {#if running || progress}
       <div class="progressrow">
-        <div class="progresshead">
+        <div class="progresshead" aria-live="polite">
           <span>{phaseLabel}</span>
           {#if rounded !== null}
             <span>{rounded}%</span>

@@ -4,7 +4,9 @@
 pub mod custom;
 pub mod error;
 pub mod exif;
+pub mod gist;
 pub mod http;
 pub mod s3;
+pub mod sftp;
 pub mod imgur;
 pub mod queue;

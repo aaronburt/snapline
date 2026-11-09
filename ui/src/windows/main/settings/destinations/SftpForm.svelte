@@ -1,9 +1,9 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import Button from '../../../../components/Button.svelte';
   import Segmented from '../../../../components/Segmented.svelte';
   import type {
     DestinationInput,
-    DestinationKind,
     DestinationTestOutcome,
     DestinationView,
   } from '../../../../lib/ipc/upload';
@@ -46,17 +46,29 @@
 
   let { view, onsave, ontest, onremove }: Props = $props();
 
-  let host = $state(view.host ?? '');
-  let port = $state(String(view.port ?? 22));
-  let username = $state(view.username ?? '');
-  let auth = $state(view.authMethod === 'private_key' ? PRIVATE_KEY : PASSWORD);
-  let privateKeyPath = $state(view.privateKeyPath ?? '');
-  let remoteFolder = $state(view.remoteFolder ?? '');
-  let publicUrlPattern = $state(view.publicUrlPattern ?? '');
+  const start = untrack(() => ({
+    host: view.host ?? '',
+    port: String(view.port ?? 22),
+    username: view.username ?? '',
+    auth: view.authMethod === 'private_key' ? PRIVATE_KEY : PASSWORD,
+    privateKeyPath: view.privateKeyPath ?? '',
+    remoteFolder: view.remoteFolder ?? '',
+    publicUrlPattern: view.publicUrlPattern ?? '',
+    passwordSaved: view.passwordSaved ?? false,
+    passphraseSaved: view.passphraseSaved ?? false,
+  }));
+
+  let host = $state(start.host);
+  let port = $state(start.port);
+  let username = $state(start.username);
+  let auth = $state<string>(start.auth);
+  let privateKeyPath = $state(start.privateKeyPath);
+  let remoteFolder = $state(start.remoteFolder);
+  let publicUrlPattern = $state(start.publicUrlPattern);
   let password = $state('');
   let passphrase = $state('');
-  let passwordSaved = $state(view.passwordSaved ?? false);
-  let passphraseSaved = $state(view.passphraseSaved ?? false);
+  let passwordSaved = $state(start.passwordSaved);
+  let passphraseSaved = $state(start.passphraseSaved);
   let error = $state('');
   let saving = $state(false);
   let removing = $state(false);
@@ -96,7 +108,7 @@
     try {
       const input: SftpInput = {
         id: view.id,
-        kind: 'sftp' as unknown as DestinationKind,
+        kind: 'sftp',
         host: trimmedHost,
         port: portNumber,
         username: trimmedUsername,
@@ -150,7 +162,7 @@
   }
 </script>
 
-<div class="destination-form" aria-label="SFTP">
+<div class="destination-form" role="group" aria-label="SFTP">
   <div class="fields">
     <label class="field">
       <span class="label">Host</span>
@@ -255,11 +267,30 @@
     <p class="error" role="alert">{error}</p>
   {/if}
   <div class="footer">
-    <Button variant="accent" height={34} icon="upload" onclick={test} disabled={testState === 'testing'}>
+    <Button
+      variant="accent"
+      height={34}
+      icon="upload"
+      onclick={test}
+      disabled={testState === 'testing'}
+      title={testState === 'testing' ? 'A test upload is already running.' : undefined}
+    >
       Test upload
     </Button>
-    <Button variant="secondary" height={34} onclick={save} disabled={saving}>Save</Button>
-    <Button variant="danger-text" height={34} onclick={remove} disabled={removing}>
+    <Button
+      variant="secondary"
+      height={34}
+      onclick={save}
+      disabled={saving}
+      title={saving ? 'Saving…' : undefined}>Save</Button
+    >
+    <Button
+      variant="danger-text"
+      height={34}
+      onclick={remove}
+      disabled={removing}
+      title={removing ? 'Removing…' : undefined}
+    >
       Remove destination
     </Button>
     <div class="spacer"></div>

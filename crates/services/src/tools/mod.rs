@@ -9,12 +9,14 @@ use crate::dto::tool::{
 };
 use crate::editor::{EditorAction, EditorOutcome, EditorService, TOOL_EDITOR};
 use crate::tools::combine::{CombineRequest, PickedImage, Source};
+use crate::tools::pin::PinService;
 use crate::{ServiceError, Services};
 
 pub mod combine;
 pub mod colour;
 pub mod convert;
 pub mod ocr;
+pub mod pin;
 pub mod qr;
 pub mod ruler;
 pub mod scrolling;
@@ -92,8 +94,11 @@ impl ToolService {
             ToolReq::EditorOpenClipboard => Ok(ToolResp::EditorOpened {
                 outcome: editor_outcome(EditorService::new(&self._services).open_clipboard()?),
             }),
+            ToolReq::PinFile => PinService::new(&self._services).file(),
+            ToolReq::PinClipboard => PinService::new(&self._services).clipboard(),
+            ToolReq::PinMenu => PinService::new(&self._services).menu(),
             ToolReq::Available { tool } => Ok(ToolResp::Available {
-                available: tool == TOOL_EDITOR && EditorService::new(&self._services).available(),
+                available: pin::available(&EditorService::new(&self._services), &tool),
             }),
         }
     }

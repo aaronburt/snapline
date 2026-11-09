@@ -64,9 +64,17 @@ export function destinationActionText(action: string): string {
   return 'Set up';
 }
 
-export function destinationIcon(kind: string): 'image' | 'bucket' | 'cloud' {
+export function destinationIcon(
+  kind: string,
+): 'image' | 'bucket' | 'code' | 'server' | 'cloud' {
   if (kind === 's3') {
     return 'bucket';
+  }
+  if (kind === 'gist') {
+    return 'code';
+  }
+  if (kind === 'sftp') {
+    return 'server';
   }
   if (kind === 'custom') {
     return 'cloud';

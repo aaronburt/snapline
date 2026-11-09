@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { expectAccessible } from '../../../test/axe';
 import QrTool from './QrTool.svelte';
 
 const ipc = vi.hoisted(() => ({
@@ -40,8 +41,9 @@ async function openMake(): Promise<HTMLElement> {
 }
 
 describe('QrTool', () => {
-  it('renders the Scan and Make tabs with Scan selected', () => {
-    render(QrTool);
+  it('renders the Scan and Make tabs with Scan selected', async () => {
+    const { container } = render(QrTool);
+    await expectAccessible(container);
     expect(screen.getByText('QR code')).not.toBeNull();
     expect(screen.getByRole('radio', { name: 'Scan' }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByRole('radio', { name: 'Make' }).getAttribute('aria-checked')).toBe('false');

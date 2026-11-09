@@ -156,7 +156,9 @@
           <p class="notice" role="status">{scanError}</p>
         {/if}
         {#if scanned}
-          <pre class="result" aria-label="QR code text">{scanned.text}</pre>
+          <div class="result-wrap" role="group" aria-label="QR code text">
+            <pre class="result">{scanned.text}</pre>
+          </div>
           <div class="actions">
             <Button icon="copy" onclick={copyText}>Copy</Button>
             {#if scanned.link}
@@ -181,7 +183,7 @@
           placeholder="https://example.com"
         />
         <div class="makerow">
-          <div class="preview">
+          <div class="preview" role={svg ? 'img' : undefined} aria-label={svg ? 'QR code' : undefined}>
             {#if svg}
               {@html svg}
             {:else}
@@ -192,8 +194,8 @@
             {/if}
           </div>
           <div class="side">
-            <Button icon="copy" onclick={copyImage} disabled={!svg}>Copy image</Button>
-            <Button icon="save" onclick={savePng} disabled={!svg}>Save as PNG</Button>
+            <Button icon="copy" onclick={copyImage} disabled={!svg} title={svg ? undefined : 'Type text to make a QR code first.'}>Copy image</Button>
+            <Button icon="save" onclick={savePng} disabled={!svg} title={svg ? undefined : 'Type text to make a QR code first.'}>Save as PNG</Button>
           </div>
         </div>
         {#if makeError}

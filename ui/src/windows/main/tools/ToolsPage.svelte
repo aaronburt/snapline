@@ -2,12 +2,13 @@
   import { onMount } from 'svelte';
   import Icon from '../../../components/Icon.svelte';
   import type { IconName } from '../../../lib/icons';
-  import { editorOpenFile, toolAvailable } from '../../../lib/ipc/tool';
+  import { editorOpenFile, pinMenu as openPinMenu, toolAvailable } from '../../../lib/ipc/tool';
 
   interface Tool {
     name: string;
     icon: IconName;
     chord: string;
+    description?: string;
   }
 
   const tools: Tool[] = [
@@ -16,13 +17,19 @@
     { name: 'Screen ruler', icon: 'ruler', chord: 'Ctrl+Shift+M' },
     { name: 'QR code', icon: 'qr', chord: '—' },
     { name: 'Image editor', icon: 'edit', chord: '—' },
-    { name: 'Pin to screen', icon: 'pin', chord: '—' },
+    {
+      name: 'Pin to screen',
+      icon: 'pin',
+      chord: '—',
+      description: 'Keep an image floating above other windows.',
+    },
     { name: 'Image combiner', icon: 'width', chord: '—' },
     { name: 'Video converter', icon: 'film', chord: '—' },
   ];
 
   let editorAvailable = $state(false);
-  let editorError = $state('');
+  let pinAvailable = $state(false);
+  let error = $state('');
 
   onMount(() => {
     void toolAvailable('tool_editor')
@@ -32,27 +39,44 @@
       .catch(() => {
         editorAvailable = false;
       });
+    void toolAvailable('tool_pin')
+      .then((available) => {
+        pinAvailable = available;
+      })
+      .catch(() => {
+        pinAvailable = false;
+      });
   });
 
-  function describe(error: unknown): string {
+  function messageOf(value: unknown, fallback: string): string {
     if (
-      error !== null &&
-      typeof error === 'object' &&
-      'message' in error &&
-      typeof (error as { message: unknown }).message === 'string'
+      value !== null &&
+      typeof value === 'object' &&
+      'message' in value &&
+      typeof (value as { message: unknown }).message === 'string'
     ) {
-      return (error as { message: string }).message;
+      return (value as { message: string }).message;
     }
-    return 'The image editor could not be opened.';
+    return fallback;
   }
 
   function openEditor(): void {
     if (!editorAvailable) {
       return;
     }
-    editorError = '';
-    void editorOpenFile().catch((error: unknown) => {
-      editorError = describe(error);
+    error = '';
+    void editorOpenFile().catch((failure: unknown) => {
+      error = messageOf(failure, 'The image editor could not be opened.');
+    });
+  }
+
+  function choosePin(): void {
+    if (!pinAvailable) {
+      return;
+    }
+    error = '';
+    void openPinMenu().catch((failure: unknown) => {
+      error = messageOf(failure, 'The image could not be pinned.');
     });
   }
 </script>
@@ -65,8 +89,8 @@
     </div>
   </div>
 
-  {#if editorError}
-    <p class="error" role="status">{editorError}</p>
+  {#if error}
+    <p class="error" role="status">{error}</p>
   {/if}
 
   <div class="grid">
@@ -82,6 +106,24 @@
           </span>
           <span class="chord">{tool.chord}</span>
         </button>
+      {:else if tool.name === 'Pin to screen'}
+        <div class="cardwrap">
+          <button
+            type="button"
+            class="card"
+            disabled={!pinAvailable}
+            onclick={choosePin}
+          >
+            <span class="tile" aria-hidden="true">
+              <Icon name={tool.icon} size={20} />
+            </span>
+            <span class="name">{tool.name}</span>
+            <span class="desc">
+              {pinAvailable ? tool.description : 'Coming in a later version'}
+            </span>
+            <span class="chord">{tool.chord}</span>
+          </button>
+        </div>
       {:else}
         <button type="button" class="card" disabled>
           <span class="tile" aria-hidden="true">
@@ -156,6 +198,16 @@
     flex-direction: column;
     gap: 10px;
     min-height: 140px;
+  }
+
+  .cardwrap {
+    position: relative;
+    display: flex;
+  }
+
+  .cardwrap > .card {
+    flex: 1;
+    width: 100%;
   }
 
   .card:disabled {

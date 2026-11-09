@@ -90,6 +90,8 @@ pub enum UploadResp {
 pub enum DestinationKindDto {
     Imgur,
     S3,
+    Gist,
+    Sftp,
     Custom,
 }
 
@@ -144,6 +146,14 @@ pub struct DestinationViewDto {
     pub error_message: Option<String>,
     pub headers: Vec<DestinationHeaderDto>,
     pub imported_from_sxcu: bool,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    pub auth_method: Option<String>,
+    pub private_key_path: Option<String>,
+    pub remote_folder: Option<String>,
+    pub password_saved: bool,
+    pub passphrase_saved: bool,
     pub warnings: Vec<String>,
 }
 
@@ -179,6 +189,14 @@ pub struct DestinationInput {
     pub error_message: Option<String>,
     pub headers: Vec<DestinationHeaderInput>,
     pub imported_from_sxcu: Option<bool>,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    pub auth_method: Option<String>,
+    pub private_key_path: Option<String>,
+    pub remote_folder: Option<String>,
+    pub password: Option<String>,
+    pub passphrase: Option<String>,
 }
 
 impl std::fmt::Debug for DestinationInput {
@@ -223,6 +241,14 @@ impl std::fmt::Debug for DestinationInput {
                     .collect::<Vec<_>>(),
             )
             .field("imported_from_sxcu", &self.imported_from_sxcu)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("auth_method", &self.auth_method)
+            .field("private_key_path", &self.private_key_path)
+            .field("remote_folder", &self.remote_folder)
+            .field("password", &self.password.as_ref().map(|_| "***"))
+            .field("passphrase", &self.passphrase.as_ref().map(|_| "***"))
             .finish()
     }
 }

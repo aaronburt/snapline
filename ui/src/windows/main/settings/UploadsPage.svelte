@@ -133,12 +133,12 @@
 
   function accepts(kind: DestinationKind, target: string): boolean {
     if (target === 'images') {
-      return true;
+      return kind !== 'gist';
     }
     if (target === 'text') {
-      return kind === 'custom';
+      return kind === 'gist' || kind === 'custom';
     }
-    return kind === 's3' || kind === 'custom';
+    return kind === 's3' || kind === 'sftp' || kind === 'custom';
   }
 
   function optionValue(raw: string): string {
@@ -312,6 +312,8 @@
               variant="accent"
               height={32}
               icon="plus"
+              ariaHaspopup="dialog"
+              ariaExpanded={addOpen}
               onclick={() => (addOpen = !addOpen)}
             >
               Add destination
@@ -325,6 +327,14 @@
                 <button type="button" class="hv" onclick={() => add('s3')}>
                   <Icon name="bucket" size={16} />
                   Amazon S3
+                </button>
+                <button type="button" class="hv" onclick={() => add('gist')}>
+                  <Icon name="code" size={16} />
+                  GitHub Gist
+                </button>
+                <button type="button" class="hv" onclick={() => add('sftp')}>
+                  <Icon name="server" size={16} />
+                  SFTP
                 </button>
                 <button type="button" class="hv" onclick={() => add('custom')}>
                   <Icon name="cloud" size={16} />

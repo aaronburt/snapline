@@ -7,12 +7,18 @@ use snapline_core::secret::{Secret, SecretKey};
 use snapline_store::settings::uploads::{Destination, Proxy, Timeout};
 use snapline_store::settings::Settings;
 use snapline_upload::custom::{header_secret_field, sxcu, CustomUploader};
+use snapline_upload::gist::{GistUploader, TOKEN_FIELD as GIST_TOKEN_FIELD};
 use snapline_upload::http::{HttpClient, HttpTimeout, Method, ProxySetting};
 use snapline_upload::imgur::{ImgurUploader, CLIENT_ID_FIELD};
 use snapline_upload::queue::{UploadFile, Uploader};
 use snapline_upload::s3::{
     S3Config, S3Uploader, ACCESS_KEY_ID_FIELD, DEFAULT_PUBLIC_URL_PATTERN,
     SECRET_ACCESS_KEY_FIELD,
+};
+use snapline_upload::sftp::{
+    HostKeyConfirmer, HostKeyPrompt, HostKeyState, HostKeyStore, SftpAuthMethod, SftpConfig,
+    SftpUploader, PASSWORD_FIELD as SFTP_PASSWORD_FIELD,
+    PASSPHRASE_FIELD as SFTP_PASSPHRASE_FIELD,
 };
 
 use crate::dto::upload::{
@@ -24,9 +30,18 @@ use crate::{ServiceError, Services};
 
 pub const IMGUR_NAME: &str = "Imgur";
 pub const S3_NAME: &str = "Amazon S3";
+pub const GIST_NAME: &str = "GitHub Gist";
+pub const SFTP_NAME: &str = "SFTP";
 pub const CUSTOM_NAME: &str = "Custom uploader";
+pub const GIST_DETAIL: &str = "Text and code snippets";
+pub const SFTP_DETAIL: &str = "Your own server over SSH";
 pub const TEST_FILE_NAME: &str = "snapline-test.png";
 pub const TEST_CONTENT_TYPE: &str = "image/png";
+pub const TEST_GIST_FILE_NAME: &str = "snapline-test.txt";
+pub const TEST_GIST_CONTENT_TYPE: &str = "text/plain";
+pub const TEST_GIST_CONTENT: &str = "Snapline test upload.";
+pub const HOST_KEYS_UNAVAILABLE: &str =
+    "Host key checking is not available in this build.";
 
 const TEST_PNG: [u8; 67] = [
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
@@ -50,6 +65,20 @@ pub enum DestinationConfig {
         path_prefix: String,
         public_url_pattern: String,
         acl_public_read: bool,
+    },
+    Gist {
+        id: String,
+        public: bool,
+    },
+    Sftp {
+        id: String,
+        host: String,
+        port: u16,
+        username: String,
+        auth_method: String,
+        private_key_path: Option<String>,
+        remote_folder: String,
+        public_url_pattern: String,
     },
     Custom {
         id: String,
@@ -76,7 +105,11 @@ pub struct HeaderConfig {
 impl DestinationConfig {
     pub fn id(&self) -> &str {
         match self {
-            Self::Imgur { id } | Self::S3 { id, .. } | Self::Custom { id, .. } => id,
+            Self::Imgur { id }
+            | Self::S3 { id, .. }
+            | Self::Gist { id, .. }
+            | Self::Sftp { id, .. }
+            | Self::Custom { id, .. } => id,
         }
     }
 
@@ -84,6 +117,8 @@ impl DestinationConfig {
         match self {
             Self::Imgur { .. } => DestinationKindDto::Imgur,
             Self::S3 { .. } => DestinationKindDto::S3,
+            Self::Gist { .. } => DestinationKindDto::Gist,
+            Self::Sftp { .. } => DestinationKindDto::Sftp,
             Self::Custom { .. } => DestinationKindDto::Custom,
         }
     }
@@ -92,6 +127,8 @@ impl DestinationConfig {
         match self {
             Self::Imgur { .. } => IMGUR_NAME.to_owned(),
             Self::S3 { .. } => S3_NAME.to_owned(),
+            Self::Gist { .. } => GIST_NAME.to_owned(),
+            Self::Sftp { .. } => SFTP_NAME.to_owned(),
             Self::Custom { name, .. } => {
                 if name.trim().is_empty() {
                     CUSTOM_NAME.to_owned()
@@ -109,11 +146,51 @@ impl DestinationConfig {
                 ACCESS_KEY_ID_FIELD.to_owned(),
                 SECRET_ACCESS_KEY_FIELD.to_owned(),
             ],
+            Self::Gist { .. } => vec![GIST_TOKEN_FIELD.to_owned()],
+            Self::Sftp { .. } => vec![
+                SFTP_PASSWORD_FIELD.to_owned(),
+                SFTP_PASSPHRASE_FIELD.to_owned(),
+            ],
             Self::Custom { headers, .. } => headers
                 .iter()
                 .map(|header| header_secret_field(&header.name))
                 .collect(),
         }
+    }
+}
+
+pub struct UnavailableHostKeyStore;
+
+impl HostKeyStore for UnavailableHostKeyStore {
+    fn state(
+        &self,
+        _host: &str,
+        _port: u16,
+        _key: &[u8],
+    ) -> Result<HostKeyState, snapline_upload::error::UploadError> {
+        Err(snapline_upload::error::UploadError::Permanent(
+            HOST_KEYS_UNAVAILABLE.to_owned(),
+        ))
+    }
+
+    fn remember(
+        &self,
+        _host: &str,
+        _port: u16,
+        _algorithm: &str,
+        _key: &[u8],
+    ) -> Result<(), snapline_upload::error::UploadError> {
+        Err(snapline_upload::error::UploadError::Permanent(
+            HOST_KEYS_UNAVAILABLE.to_owned(),
+        ))
+    }
+}
+
+pub struct UnavailableHostKeyConfirmer;
+
+impl HostKeyConfirmer for UnavailableHostKeyConfirmer {
+    fn confirm(&self, _prompt: &HostKeyPrompt) -> bool {
+        false
     }
 }
 
@@ -143,7 +220,19 @@ pub trait UploaderFactory: Send + Sync {
     ) -> Result<Arc<dyn Uploader>, ServiceError>;
 }
 
-struct LiveFactory;
+struct LiveFactory {
+    host_keys: Arc<dyn HostKeyStore>,
+    confirmer: Arc<dyn HostKeyConfirmer>,
+}
+
+impl LiveFactory {
+    fn new(host_keys: Arc<dyn HostKeyStore>, confirmer: Arc<dyn HostKeyConfirmer>) -> Self {
+        Self {
+            host_keys,
+            confirmer,
+        }
+    }
+}
 
 impl UploaderFactory for LiveFactory {
     fn build(
@@ -163,6 +252,25 @@ impl UploaderFactory for LiveFactory {
                 let uploader =
                     S3Uploader::with_http(s3, timeout, proxy).map_err(upload_error)?;
                 Ok(Arc::new(uploader))
+            }
+            DestinationConfig::Gist { id, public } => {
+                let uploader = GistUploader::from_settings(
+                    id.clone(),
+                    *public,
+                    timeout,
+                    proxy,
+                )
+                .map_err(upload_error)?;
+                Ok(Arc::new(uploader))
+            }
+            DestinationConfig::Sftp { .. } => {
+                let sftp = sftp_config(config)?;
+                Ok(Arc::new(SftpUploader::from_settings(
+                    sftp,
+                    timeout,
+                    self.host_keys.clone(),
+                    self.confirmer.clone(),
+                )))
             }
             DestinationConfig::Custom { id, .. } => {
                 let (custom, _) = custom_config(config)?;
@@ -192,6 +300,9 @@ pub struct Registry {
     secrets: Arc<dyn CoreSecretStore + Send + Sync>,
     dialog: Arc<dyn SxcuDialog>,
     factory: Arc<dyn UploaderFactory>,
+    host_keys: Arc<dyn HostKeyStore>,
+    confirmer: Arc<dyn HostKeyConfirmer>,
+    custom_factory: bool,
 }
 
 impl fmt::Debug for Registry {
@@ -205,11 +316,19 @@ impl Registry {
         services: &Services,
         secrets: Arc<dyn CoreSecretStore + Send + Sync>,
     ) -> Self {
+        let host_keys: Arc<dyn HostKeyStore> = Arc::new(UnavailableHostKeyStore);
+        let confirmer: Arc<dyn HostKeyConfirmer> = Arc::new(UnavailableHostKeyConfirmer);
         Self {
             services: services.clone(),
             secrets,
             dialog: Arc::new(UnavailableDialog),
-            factory: Arc::new(LiveFactory),
+            factory: Arc::new(LiveFactory::new(
+                host_keys.clone(),
+                confirmer.clone(),
+            )),
+            host_keys,
+            confirmer,
+            custom_factory: false,
         }
     }
 
@@ -220,7 +339,29 @@ impl Registry {
 
     pub fn with_factory(mut self, factory: Arc<dyn UploaderFactory>) -> Self {
         self.factory = factory;
+        self.custom_factory = true;
         self
+    }
+
+    pub fn with_sftp(
+        mut self,
+        host_keys: Arc<dyn HostKeyStore>,
+        confirmer: Arc<dyn HostKeyConfirmer>,
+    ) -> Self {
+        self.host_keys = host_keys.clone();
+        self.confirmer = confirmer.clone();
+        if !self.custom_factory {
+            self.factory = Arc::new(LiveFactory::new(host_keys, confirmer));
+        }
+        self
+    }
+
+    pub fn host_keys(&self) -> Arc<dyn HostKeyStore> {
+        self.host_keys.clone()
+    }
+
+    pub fn host_key_confirmer(&self) -> Arc<dyn HostKeyConfirmer> {
+        self.confirmer.clone()
     }
 
     fn settings(&self) -> Result<Settings, ServiceError> {
@@ -320,6 +461,8 @@ impl Registry {
         let base = match kind {
             DestinationKindDto::Imgur => "imgur",
             DestinationKindDto::S3 => "s3",
+            DestinationKindDto::Gist => "gist",
+            DestinationKindDto::Sftp => "sftp",
             DestinationKindDto::Custom => "custom",
         };
         if !configs.iter().any(|config| config.id() == base) {
@@ -370,6 +513,14 @@ impl Registry {
                     error_message: None,
                     headers: Vec::new(),
                     imported_from_sxcu: false,
+                    host: None,
+                    port: None,
+                    username: None,
+                    auth_method: None,
+                    private_key_path: None,
+                    remote_folder: None,
+                    password_saved: false,
+                    passphrase_saved: false,
                     warnings,
                 }
             }
@@ -425,6 +576,126 @@ impl Registry {
                     error_message: None,
                     headers: Vec::new(),
                     imported_from_sxcu: false,
+                    host: None,
+                    port: None,
+                    username: None,
+                    auth_method: None,
+                    private_key_path: None,
+                    remote_folder: None,
+                    password_saved: false,
+                    passphrase_saved: false,
+                    warnings,
+                }
+            }
+            DestinationConfig::Gist { id, public } => {
+                let saved = self.secret_saved(id, GIST_TOKEN_FIELD);
+                DestinationViewDto {
+                    id: id.clone(),
+                    kind: DestinationKindDto::Gist,
+                    name: GIST_NAME.to_owned(),
+                    detail: GIST_DETAIL.to_owned(),
+                    status: status(saved),
+                    action: if saved {
+                        DestinationActionDto::Configure
+                    } else {
+                        DestinationActionDto::SetUp
+                    },
+                    configured: saved,
+                    client_id_saved: saved,
+                    endpoint: None,
+                    region: None,
+                    bucket: None,
+                    path_prefix: None,
+                    public_url_pattern: None,
+                    acl_public_read: *public,
+                    access_key_id_saved: false,
+                    secret_access_key_saved: false,
+                    method: None,
+                    request_url: None,
+                    body: None,
+                    file_form_field: None,
+                    link: None,
+                    thumbnail: None,
+                    deletion: None,
+                    error_message: None,
+                    headers: Vec::new(),
+                    imported_from_sxcu: false,
+                    host: None,
+                    port: None,
+                    username: None,
+                    auth_method: None,
+                    private_key_path: None,
+                    remote_folder: None,
+                    password_saved: false,
+                    passphrase_saved: false,
+                    warnings,
+                }
+            }
+            DestinationConfig::Sftp {
+                id,
+                host,
+                port,
+                username,
+                auth_method,
+                private_key_path,
+                remote_folder,
+                public_url_pattern,
+            } => {
+                let auth = SftpAuthMethod::parse(auth_method).unwrap_or(SftpAuthMethod::Password);
+                let password_saved = self.secret_saved(id, SFTP_PASSWORD_FIELD);
+                let passphrase_saved = self.secret_saved(id, SFTP_PASSPHRASE_FIELD);
+                let key_saved = private_key_path
+                    .as_deref()
+                    .map(str::trim)
+                    .map(|path| !path.is_empty())
+                    .unwrap_or(false);
+                let configured = !host.trim().is_empty()
+                    && *port != 0
+                    && !username.trim().is_empty()
+                    && public_url_pattern.contains("<key>")
+                    && match auth {
+                        SftpAuthMethod::Password => password_saved,
+                        SftpAuthMethod::PrivateKey => key_saved,
+                    };
+                DestinationViewDto {
+                    id: id.clone(),
+                    kind: DestinationKindDto::Sftp,
+                    name: SFTP_NAME.to_owned(),
+                    detail: SFTP_DETAIL.to_owned(),
+                    status: status(configured),
+                    action: if configured {
+                        DestinationActionDto::Configure
+                    } else {
+                        DestinationActionDto::SetUp
+                    },
+                    configured,
+                    client_id_saved: false,
+                    endpoint: None,
+                    region: None,
+                    bucket: None,
+                    path_prefix: None,
+                    public_url_pattern: Some(public_url_pattern.clone()),
+                    acl_public_read: false,
+                    access_key_id_saved: false,
+                    secret_access_key_saved: false,
+                    method: None,
+                    request_url: None,
+                    body: None,
+                    file_form_field: None,
+                    link: None,
+                    thumbnail: None,
+                    deletion: None,
+                    error_message: None,
+                    headers: Vec::new(),
+                    imported_from_sxcu: false,
+                    host: Some(host.clone()),
+                    port: Some(*port),
+                    username: Some(username.clone()),
+                    auth_method: Some(auth.as_str().to_owned()),
+                    private_key_path: private_key_path.clone(),
+                    remote_folder: Some(remote_folder.clone()),
+                    password_saved,
+                    passphrase_saved,
                     warnings,
                 }
             }
@@ -490,6 +761,14 @@ impl Registry {
                         })
                         .collect(),
                     imported_from_sxcu: *imported_from_sxcu,
+                    host: None,
+                    port: None,
+                    username: None,
+                    auth_method: None,
+                    private_key_path: None,
+                    remote_folder: None,
+                    password_saved: false,
+                    passphrase_saved: false,
                     warnings,
                 }
             }
@@ -531,6 +810,20 @@ impl DestinationOperations for Registry {
                 path_prefix: String::new(),
                 public_url_pattern: DEFAULT_PUBLIC_URL_PATTERN.to_owned(),
                 acl_public_read: false,
+            },
+            DestinationKindDto::Gist => DestinationConfig::Gist {
+                id,
+                public: false,
+            },
+            DestinationKindDto::Sftp => DestinationConfig::Sftp {
+                id,
+                host: String::new(),
+                port: snapline_upload::sftp::DEFAULT_PORT,
+                username: String::new(),
+                auth_method: SftpAuthMethod::Password.as_str().to_owned(),
+                private_key_path: None,
+                remote_folder: String::new(),
+                public_url_pattern: String::new(),
             },
             DestinationKindDto::Custom => DestinationConfig::Custom {
                 id,
@@ -656,6 +949,134 @@ impl DestinationOperations for Registry {
                     acl_public_read: input.acl_public_read.unwrap_or(false),
                 }
             }
+            DestinationConfig::Gist { id, .. } => {
+                let saved = self.secret_saved(&id, GIST_TOKEN_FIELD);
+                let token = input
+                    .client_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                if let Some(token) = token {
+                    if !token.bytes().all(|byte| byte.is_ascii_graphic()) {
+                        return Err(ServiceError::Invalid(
+                            "The GitHub token is not valid.".to_owned(),
+                        ));
+                    }
+                    self.put_secret(&id, GIST_TOKEN_FIELD, token)?;
+                } else if !saved {
+                    return Err(ServiceError::Invalid(
+                        "Enter the GitHub token.".to_owned(),
+                    ));
+                }
+                DestinationConfig::Gist {
+                    id,
+                    public: input.acl_public_read.unwrap_or(false),
+                }
+            }
+            DestinationConfig::Sftp { id, auth_method, .. } => {
+                let host = input.host.as_deref().unwrap_or("").trim().to_owned();
+                if host.is_empty() {
+                    return Err(ServiceError::Invalid("Enter the SFTP host.".to_owned()));
+                }
+                let port = input.port.unwrap_or(snapline_upload::sftp::DEFAULT_PORT);
+                if port == 0 {
+                    return Err(ServiceError::Invalid(
+                        "The SFTP port must be between 1 and 65535.".to_owned(),
+                    ));
+                }
+                let username = input.username.as_deref().unwrap_or("").trim().to_owned();
+                if username.is_empty() {
+                    return Err(ServiceError::Invalid(
+                        "Enter the SFTP username.".to_owned(),
+                    ));
+                }
+                let previous =
+                    SftpAuthMethod::parse(&auth_method).unwrap_or(SftpAuthMethod::Password);
+                let auth = match input.auth_method.as_deref() {
+                    Some(value) => SftpAuthMethod::parse(value).ok_or_else(|| {
+                        ServiceError::Invalid(
+                            "The SFTP authentication method is not valid.".to_owned(),
+                        )
+                    })?,
+                    None => previous,
+                };
+                let pattern = input
+                    .public_url_pattern
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .to_owned();
+                if !pattern.contains("<key>") {
+                    return Err(ServiceError::Invalid(
+                        "The public URL pattern must contain <key>.".to_owned(),
+                    ));
+                }
+                let private_key_path = input
+                    .private_key_path
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned);
+                if auth == SftpAuthMethod::PrivateKey && private_key_path.is_none() {
+                    return Err(ServiceError::Invalid(
+                        "Choose the SFTP private key file.".to_owned(),
+                    ));
+                }
+                if auth == SftpAuthMethod::Password {
+                    let saved = self.secret_saved(&id, SFTP_PASSWORD_FIELD);
+                    let password = input
+                        .password
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty());
+                    if password.is_none() && !saved {
+                        return Err(ServiceError::Invalid(
+                            "Enter the SFTP password.".to_owned(),
+                        ));
+                    }
+                    if let Some(password) = password {
+                        self.put_secret(&id, SFTP_PASSWORD_FIELD, password)?;
+                    }
+                } else {
+                    let passphrase = input
+                        .passphrase
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty());
+                    if let Some(passphrase) = passphrase {
+                        self.put_secret(&id, SFTP_PASSPHRASE_FIELD, passphrase)?;
+                    }
+                }
+                if auth != previous {
+                    match auth {
+                        SftpAuthMethod::Password => {
+                            self.delete_secret(&id, SFTP_PASSPHRASE_FIELD);
+                        }
+                        SftpAuthMethod::PrivateKey => {
+                            self.delete_secret(&id, SFTP_PASSWORD_FIELD);
+                        }
+                    }
+                }
+                DestinationConfig::Sftp {
+                    id,
+                    host,
+                    port,
+                    username,
+                    auth_method: auth.as_str().to_owned(),
+                    private_key_path: if auth == SftpAuthMethod::PrivateKey {
+                        private_key_path
+                    } else {
+                        None
+                    },
+                    remote_folder: input
+                        .remote_folder
+                        .as_deref()
+                        .unwrap_or("")
+                        .trim()
+                        .to_owned(),
+                    public_url_pattern: pattern,
+                }
+            }
             DestinationConfig::Custom {
                 id,
                 headers: old_headers,
@@ -778,7 +1199,7 @@ impl DestinationOperations for Registry {
         }
         let (timeout, proxy) = self.http_settings()?;
         let uploader = self.factory.build(&config, timeout, proxy)?;
-        Ok((uploader, test_file()))
+        Ok((uploader, test_file_for(&config)))
     }
 
     fn import_sxcu(
@@ -1016,6 +1437,40 @@ fn s3_config(config: &DestinationConfig) -> Result<S3Config, ServiceError> {
     Ok(s3)
 }
 
+fn sftp_config(config: &DestinationConfig) -> Result<SftpConfig, ServiceError> {
+    let DestinationConfig::Sftp {
+        id,
+        host,
+        port,
+        username,
+        auth_method,
+        private_key_path,
+        remote_folder,
+        public_url_pattern,
+    } = config
+    else {
+        return Err(ServiceError::Invalid(
+            "The upload destination is not an SFTP server.".to_owned(),
+        ));
+    };
+    let auth = SftpAuthMethod::parse(auth_method).ok_or_else(|| {
+        ServiceError::Invalid("The SFTP authentication method is not valid.".to_owned())
+    })?;
+    let mut sftp = SftpConfig::new(id.clone(), host.clone(), username.clone())
+        .port(*port)
+        .auth(auth)
+        .remote_folder(remote_folder.clone())
+        .public_url_pattern(public_url_pattern.clone());
+    if let Some(path) = private_key_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        sftp = sftp.private_key_path(path);
+    }
+    Ok(sftp)
+}
+
 fn custom_config(
     config: &DestinationConfig,
 ) -> Result<(sxcu::CustomUploaderConfig, Vec<String>), ServiceError> {
@@ -1095,6 +1550,18 @@ pub fn test_file() -> UploadFile {
         TEST_CONTENT_TYPE,
         TEST_PNG.to_vec(),
     )
+}
+
+fn test_file_for(config: &DestinationConfig) -> UploadFile {
+    if matches!(config, DestinationConfig::Gist { .. }) {
+        return UploadFile::new(
+            std::path::PathBuf::from(TEST_GIST_FILE_NAME),
+            TEST_GIST_FILE_NAME,
+            TEST_GIST_CONTENT_TYPE,
+            TEST_GIST_CONTENT.as_bytes().to_vec(),
+        );
+    }
+    test_file()
 }
 
 #[cfg(test)]
@@ -1320,6 +1787,14 @@ mod tests {
             error_message: None,
             headers: Vec::new(),
             imported_from_sxcu: None,
+            host: None,
+            port: None,
+            username: None,
+            auth_method: None,
+            private_key_path: None,
+            remote_folder: None,
+            password: None,
+            passphrase: None,
         }
     }
 
@@ -1350,6 +1825,14 @@ mod tests {
                 value: Some("Bearer top-secret".to_owned()),
             }],
             imported_from_sxcu: Some(false),
+            host: None,
+            port: None,
+            username: None,
+            auth_method: None,
+            private_key_path: None,
+            remote_folder: None,
+            password: None,
+            passphrase: None,
         }
     }
 
@@ -1462,6 +1945,14 @@ mod tests {
             error_message: None,
             headers: Vec::new(),
             imported_from_sxcu: None,
+            host: None,
+            port: None,
+            username: None,
+            auth_method: None,
+            private_key_path: None,
+            remote_folder: None,
+            password: None,
+            passphrase: None,
         };
         let saved = registry.save(input.clone()).expect("save");
         assert_eq!(saved.detail, "Bucket my-bucket · eu-west-2");
@@ -1519,6 +2010,14 @@ mod tests {
             error_message: None,
             headers: Vec::new(),
             imported_from_sxcu: None,
+            host: None,
+            port: None,
+            username: None,
+            auth_method: None,
+            private_key_path: None,
+            remote_folder: None,
+            password: None,
+            passphrase: None,
         };
         assert_eq!(
             registry.save(input.clone()).expect_err("region").to_string(),
@@ -1743,6 +2242,14 @@ mod tests {
                 error_message: None,
                 headers: Vec::new(),
                 imported_from_sxcu: None,
+                host: None,
+                port: None,
+                username: None,
+                auth_method: None,
+                private_key_path: None,
+                remote_folder: None,
+                password: None,
+                passphrase: None,
             })
             .expect("save");
         assert!(registry.uploader("s3").is_some());
@@ -1770,5 +2277,439 @@ mod tests {
         assert_eq!(safe_file_name("My server"), "My server");
         assert_eq!(safe_file_name("a/b:c"), "a_b_c");
         assert_eq!(test_file().bytes.len(), TEST_PNG.len());
+    }
+
+    fn gist_input(id: &str, token: Option<&str>, public: bool) -> DestinationInput {
+        DestinationInput {
+            id: Some(id.to_owned()),
+            kind: DestinationKindDto::Gist,
+            name: None,
+            client_id: token.map(str::to_owned),
+            endpoint: None,
+            region: None,
+            bucket: None,
+            access_key_id: None,
+            secret_access_key: None,
+            path_prefix: None,
+            public_url_pattern: None,
+            acl_public_read: Some(public),
+            method: None,
+            request_url: None,
+            body: None,
+            file_form_field: None,
+            link: None,
+            thumbnail: None,
+            deletion: None,
+            error_message: None,
+            headers: Vec::new(),
+            imported_from_sxcu: None,
+            host: None,
+            port: None,
+            username: None,
+            auth_method: None,
+            private_key_path: None,
+            remote_folder: None,
+            password: None,
+            passphrase: None,
+        }
+    }
+
+    fn sftp_input(id: &str) -> DestinationInput {
+        DestinationInput {
+            id: Some(id.to_owned()),
+            kind: DestinationKindDto::Sftp,
+            name: None,
+            client_id: None,
+            endpoint: None,
+            region: None,
+            bucket: None,
+            access_key_id: None,
+            secret_access_key: None,
+            path_prefix: None,
+            public_url_pattern: Some("https://cdn.example.test/shots/<key>".to_owned()),
+            acl_public_read: None,
+            method: None,
+            request_url: None,
+            body: None,
+            file_form_field: None,
+            link: None,
+            thumbnail: None,
+            deletion: None,
+            error_message: None,
+            headers: Vec::new(),
+            imported_from_sxcu: None,
+            host: Some("sftp.example.test".to_owned()),
+            port: Some(2222),
+            username: Some("aaron".to_owned()),
+            auth_method: Some("password".to_owned()),
+            private_key_path: None,
+            remote_folder: Some("/srv/shots".to_owned()),
+            password: Some("correct horse".to_owned()),
+            passphrase: None,
+        }
+    }
+
+    struct FakeHostKeys;
+
+    impl HostKeyStore for FakeHostKeys {
+        fn state(
+            &self,
+            _host: &str,
+            _port: u16,
+            _key: &[u8],
+        ) -> Result<HostKeyState, snapline_upload::error::UploadError> {
+            Ok(HostKeyState::Unknown)
+        }
+
+        fn remember(
+            &self,
+            _host: &str,
+            _port: u16,
+            _algorithm: &str,
+            _key: &[u8],
+        ) -> Result<(), snapline_upload::error::UploadError> {
+            Ok(())
+        }
+    }
+
+    struct FakeConfirmer;
+
+    impl HostKeyConfirmer for FakeConfirmer {
+        fn confirm(&self, _prompt: &HostKeyPrompt) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn destination_kinds_round_trip_through_json() {
+        for kind in [
+            DestinationKindDto::Imgur,
+            DestinationKindDto::S3,
+            DestinationKindDto::Gist,
+            DestinationKindDto::Sftp,
+            DestinationKindDto::Custom,
+        ] {
+            let json = serde_json::to_string(&kind).expect("kind json");
+            let back: DestinationKindDto =
+                serde_json::from_str(&json).expect("kind round trip");
+            assert_eq!(back, kind);
+        }
+        assert_eq!(
+            serde_json::to_string(&DestinationKindDto::Gist).expect("gist"),
+            "\"gist\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DestinationKindDto::Sftp).expect("sftp"),
+            "\"sftp\""
+        );
+    }
+
+    #[test]
+    fn destination_configs_round_trip_through_json() {
+        let gist = DestinationConfig::Gist {
+            id: "gist".to_owned(),
+            public: true,
+        };
+        let json = serde_json::to_string(&gist).expect("gist config");
+        let back: DestinationConfig = serde_json::from_str(&json).expect("gist back");
+        assert_eq!(back, gist);
+
+        let sftp = DestinationConfig::Sftp {
+            id: "sftp".to_owned(),
+            host: "sftp.example.test".to_owned(),
+            port: 2222,
+            username: "aaron".to_owned(),
+            auth_method: "private_key".to_owned(),
+            private_key_path: Some("C:\\keys\\id_ed25519".to_owned()),
+            remote_folder: "/srv/shots".to_owned(),
+            public_url_pattern: "https://cdn.example.test/<key>".to_owned(),
+        };
+        let json = serde_json::to_string(&sftp).expect("sftp config");
+        let back: DestinationConfig = serde_json::from_str(&json).expect("sftp back");
+        assert_eq!(back, sftp);
+    }
+
+    #[test]
+    fn gist_add_save_status_and_secret_isolation() {
+        let fixture = fixture();
+        let registry = fixture.registry();
+        let added = registry.add(DestinationKindDto::Gist).expect("add");
+        assert_eq!(added.id, "gist");
+        assert_eq!(added.kind, DestinationKindDto::Gist);
+        assert_eq!(added.name, "GitHub Gist");
+        assert_eq!(added.detail, "Text and code snippets");
+        assert_eq!(added.status, DestinationStatusDto::NotSetUp);
+        assert_eq!(added.action, DestinationActionDto::SetUp);
+        assert!(!added.client_id_saved);
+
+        let saved = registry
+            .save(gist_input("gist", Some("ghp_example_token"), true))
+            .expect("save");
+        assert_eq!(saved.status, DestinationStatusDto::Configured);
+        assert_eq!(saved.action, DestinationActionDto::Configure);
+        assert!(saved.client_id_saved);
+        assert!(saved.acl_public_read);
+        assert_eq!(saved.detail, "Text and code snippets");
+        assert!(fixture.secrets.has("gist", GIST_TOKEN_FIELD));
+        assert!(!fixture.secrets.has("gist", SFTP_PASSWORD_FIELD));
+        let text = fixture.settings_text();
+        assert!(!text.contains("ghp_example_token"));
+        let json = serde_json::to_string(&saved).expect("json");
+        assert!(!json.contains("ghp_example_token"));
+        assert!(!format!("{saved:?}").contains("ghp_example_token"));
+        let input = gist_input("gist", Some("ghp_example_token"), true);
+        assert!(!format!("{input:?}").contains("ghp_example_token"));
+
+        let kept = registry
+            .save(gist_input("gist", None, false))
+            .expect("keep saved token");
+        assert!(kept.configured);
+        assert!(kept.client_id_saved);
+        assert!(!kept.acl_public_read);
+        assert!(fixture.secrets.has("gist", GIST_TOKEN_FIELD));
+    }
+
+    #[test]
+    fn gist_requires_a_token_once() {
+        let fixture = fixture();
+        let registry = fixture.registry();
+        registry.add(DestinationKindDto::Gist).expect("add");
+        let error = registry
+            .save(gist_input("gist", None, false))
+            .expect_err("missing token");
+        assert_eq!(error.to_string(), "Enter the GitHub token.");
+        let error = registry
+            .save(gist_input("gist", Some("bad token\n"), false))
+            .expect_err("invalid token");
+        assert_eq!(error.to_string(), "The GitHub token is not valid.");
+    }
+
+    #[test]
+    fn sftp_password_fields_round_trip_and_secrets_stay_out_of_settings() {
+        let fixture = fixture();
+        let registry = fixture.registry();
+        let added = registry.add(DestinationKindDto::Sftp).expect("add");
+        assert_eq!(added.id, "sftp");
+        assert_eq!(added.kind, DestinationKindDto::Sftp);
+        assert_eq!(added.name, "SFTP");
+        assert_eq!(added.detail, "Your own server over SSH");
+        assert_eq!(added.port, Some(22));
+        assert_eq!(added.host.as_deref(), Some(""));
+        assert_eq!(added.status, DestinationStatusDto::NotSetUp);
+        assert_eq!(added.action, DestinationActionDto::SetUp);
+
+        let saved = registry.save(sftp_input("sftp")).expect("save");
+        assert_eq!(saved.status, DestinationStatusDto::Configured);
+        assert_eq!(saved.action, DestinationActionDto::Configure);
+        assert_eq!(saved.host.as_deref(), Some("sftp.example.test"));
+        assert_eq!(saved.port, Some(2222));
+        assert_eq!(saved.username.as_deref(), Some("aaron"));
+        assert_eq!(saved.auth_method.as_deref(), Some("password"));
+        assert_eq!(saved.private_key_path, None);
+        assert_eq!(saved.remote_folder.as_deref(), Some("/srv/shots"));
+        assert_eq!(
+            saved.public_url_pattern.as_deref(),
+            Some("https://cdn.example.test/shots/<key>")
+        );
+        assert!(saved.password_saved);
+        assert!(!saved.passphrase_saved);
+        assert!(fixture.secrets.has("sftp", SFTP_PASSWORD_FIELD));
+        assert!(!fixture.secrets.has("sftp", SFTP_PASSPHRASE_FIELD));
+        let text = fixture.settings_text();
+        assert!(!text.contains("correct horse"));
+        assert!(!serde_json::to_string(&saved)
+            .expect("json")
+            .contains("correct horse"));
+        assert!(!format!("{saved:?}").contains("correct horse"));
+    }
+
+    #[test]
+    fn sftp_private_key_auth_and_method_changes_delete_the_other_secret() {
+        let fixture = fixture();
+        let registry = fixture.registry();
+        registry.add(DestinationKindDto::Sftp).expect("add");
+        registry.save(sftp_input("sftp")).expect("password save");
+        assert!(fixture.secrets.has("sftp", SFTP_PASSWORD_FIELD));
+
+        let mut key = sftp_input("sftp");
+        key.auth_method = Some("private_key".to_owned());
+        key.private_key_path = Some("C:\\keys\\id_ed25519".to_owned());
+        key.password = None;
+        key.passphrase = Some("key secret".to_owned());
+        let saved = registry.save(key).expect("key save");
+        assert_eq!(saved.auth_method.as_deref(), Some("private_key"));
+        assert_eq!(
+            saved.private_key_path.as_deref(),
+            Some("C:\\keys\\id_ed25519")
+        );
+        assert!(saved.passphrase_saved);
+        assert!(!saved.password_saved);
+        assert!(!fixture.secrets.has("sftp", SFTP_PASSWORD_FIELD));
+        assert!(fixture.secrets.has("sftp", SFTP_PASSPHRASE_FIELD));
+        assert!(!fixture.settings_text().contains("key secret"));
+
+        let mut password = sftp_input("sftp");
+        password.auth_method = Some("password".to_owned());
+        password.password = None;
+        let error = registry.save(password).expect_err("password required");
+        assert_eq!(error.to_string(), "Enter the SFTP password.");
+        assert!(fixture.secrets.has("sftp", SFTP_PASSPHRASE_FIELD));
+
+        let mut password = sftp_input("sftp");
+        password.auth_method = Some("password".to_owned());
+        let saved = registry.save(password).expect("password again");
+        assert_eq!(saved.auth_method.as_deref(), Some("password"));
+        assert_eq!(saved.private_key_path, None);
+        assert!(saved.password_saved);
+        assert!(!saved.passphrase_saved);
+        assert!(fixture.secrets.has("sftp", SFTP_PASSWORD_FIELD));
+        assert!(!fixture.secrets.has("sftp", SFTP_PASSPHRASE_FIELD));
+    }
+
+    #[test]
+    fn sftp_validates_the_required_fields() {
+        let fixture = fixture();
+        let registry = fixture.registry();
+        registry.add(DestinationKindDto::Sftp).expect("add");
+
+        let mut input = sftp_input("sftp");
+        input.host = Some("  ".to_owned());
+        assert_eq!(
+            registry.save(input.clone()).expect_err("host").to_string(),
+            "Enter the SFTP host."
+        );
+        input.host = Some("sftp.example.test".to_owned());
+        input.port = Some(0);
+        assert_eq!(
+            registry.save(input.clone()).expect_err("port").to_string(),
+            "The SFTP port must be between 1 and 65535."
+        );
+        input.port = Some(22);
+        input.username = Some("".to_owned());
+        assert_eq!(
+            registry.save(input.clone()).expect_err("username").to_string(),
+            "Enter the SFTP username."
+        );
+        input.username = Some("aaron".to_owned());
+        input.public_url_pattern = Some("https://example.test/no-token".to_owned());
+        assert_eq!(
+            registry.save(input.clone()).expect_err("pattern").to_string(),
+            "The public URL pattern must contain <key>."
+        );
+        input.public_url_pattern = Some("https://example.test/<key>".to_owned());
+        input.auth_method = Some("private_key".to_owned());
+        input.private_key_path = None;
+        assert_eq!(
+            registry.save(input.clone()).expect_err("key").to_string(),
+            "Choose the SFTP private key file."
+        );
+        input.auth_method = Some("carrier_pigeon".to_owned());
+        assert_eq!(
+            registry.save(input).expect_err("auth").to_string(),
+            "The SFTP authentication method is not valid."
+        );
+    }
+
+    #[test]
+    fn removing_gist_and_sftp_deletes_every_secret() {
+        let fixture = fixture();
+        let registry = fixture.registry();
+        registry.add(DestinationKindDto::Gist).expect("add gist");
+        registry.add(DestinationKindDto::Sftp).expect("add sftp");
+        registry
+            .save(gist_input("gist", Some("ghp_example_token"), false))
+            .expect("save gist");
+        let mut key = sftp_input("sftp");
+        key.auth_method = Some("private_key".to_owned());
+        key.private_key_path = Some("C:\\keys\\id_ed25519".to_owned());
+        key.password = None;
+        key.passphrase = Some("key secret".to_owned());
+        registry.save(key).expect("save sftp");
+
+        registry.remove("gist").expect("remove gist");
+        assert!(!fixture.secrets.has("gist", GIST_TOKEN_FIELD));
+        assert!(fixture.secrets.has("sftp", SFTP_PASSPHRASE_FIELD));
+        assert_eq!(list(&registry).len(), 1);
+
+        registry.remove("sftp").expect("remove sftp");
+        assert!(!fixture.secrets.has("sftp", SFTP_PASSPHRASE_FIELD));
+        assert!(!fixture.secrets.has("sftp", SFTP_PASSWORD_FIELD));
+        assert!(list(&registry).is_empty());
+    }
+
+    #[test]
+    fn gist_and_sftp_test_uploads_go_through_the_queue() {
+        let uploader = FakeUploader::new();
+        let factory = Arc::new(FakeFactory {
+            uploader: uploader.clone(),
+        });
+        let fixture = fixture();
+        let registry = fixture.registry_with(Arc::new(FakeDialog::empty()), factory);
+        registry.add(DestinationKindDto::Gist).expect("add gist");
+        registry
+            .save(gist_input("gist", Some("ghp_example_token"), false))
+            .expect("save gist");
+        registry.add(DestinationKindDto::Sftp).expect("add sftp");
+        registry.save(sftp_input("sftp")).expect("save sftp");
+        let thread = UploaderThread::start(
+            &fixture.services,
+            fixture.secrets.clone(),
+            snapline_upload::queue::RetryPolicy::new(0),
+            Arc::new(NoFiles),
+            Arc::new(registry),
+        )
+        .expect("thread");
+        let service = thread.service();
+        for (id, file_name) in [
+            ("gist", TEST_GIST_FILE_NAME),
+            ("sftp", TEST_FILE_NAME),
+        ] {
+            let response = service
+                .handle(UploadReq::Destination(DestinationReq::Test {
+                    id: id.to_owned(),
+                }))
+                .expect("test upload");
+            let outcome = match response {
+                UploadResp::Destination(crate::dto::upload::DestinationResp::Test {
+                    outcome,
+                }) => outcome,
+                other => panic!("unexpected response: {other:?}"),
+            };
+            assert_eq!(outcome.status, DestinationTestStatusDto::Succeeded, "{id}");
+            let expected = format!("https://example.test/{file_name}");
+            assert_eq!(outcome.link.as_deref(), Some(expected.as_str()), "{id}");
+        }
+        assert_eq!(uploader.calls.load(Ordering::SeqCst), 2);
+        thread.join().expect("join");
+    }
+
+    #[test]
+    fn the_registry_injects_sftp_host_keys_and_confirmation() {
+        let fixture = fixture();
+        let host_keys: Arc<dyn HostKeyStore> = Arc::new(FakeHostKeys);
+        let confirmer: Arc<dyn HostKeyConfirmer> = Arc::new(FakeConfirmer);
+        let registry = fixture
+            .registry()
+            .with_sftp(host_keys.clone(), confirmer.clone());
+        assert!(Arc::ptr_eq(&registry.host_keys(), &host_keys));
+        assert!(Arc::ptr_eq(
+            &registry.host_key_confirmer(),
+            &confirmer
+        ));
+
+        assert!(matches!(
+            UnavailableHostKeyStore.state("example.com", 22, b"key"),
+            Err(snapline_upload::error::UploadError::Permanent(_))
+        ));
+        assert!(matches!(
+            UnavailableHostKeyStore.remember("example.com", 22, "ssh-ed25519", b"key"),
+            Err(snapline_upload::error::UploadError::Permanent(_))
+        ));
+        assert!(!UnavailableHostKeyConfirmer.confirm(&HostKeyPrompt {
+            host: "example.com".to_owned(),
+            port: 22,
+            algorithm: "ssh-ed25519".to_owned(),
+            fingerprint: "SHA256:test".to_owned(),
+        }));
     }
 }

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { expectAccessible } from '../../../test/axe';
 import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
 import ConverterTool from './ConverterTool.svelte';
 
@@ -71,7 +72,9 @@ afterEach(() => {
 
 describe('ConverterTool', () => {
   it('shows History recordings and selects the first one', async () => {
-    render(ConverterTool);
+    const { container } = render(ConverterTool);
+    await waitFor(() => expect(history.historyPage).toHaveBeenCalledWith('videos', null));
+    await expectAccessible(container);
     expect(screen.getByText('Video converter')).not.toBeNull();
     expect(screen.getByText('Turn recordings into GIF, WebM or a smaller MP4')).not.toBeNull();
     await waitFor(() => expect(history.historyPage).toHaveBeenCalledWith('videos', null));

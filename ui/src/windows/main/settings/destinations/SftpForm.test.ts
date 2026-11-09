@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { expectAccessible } from '../../../../test/axe';
 import type { DestinationView } from '../../../../lib/ipc/upload';
 import SftpForm from './SftpForm.svelte';
 
@@ -19,7 +20,7 @@ type SftpView = DestinationView & {
 function view(overrides: Partial<SftpView> = {}): SftpView {
   return {
     id: 'sftp',
-    kind: 'sftp' as unknown as DestinationView['kind'],
+    kind: 'sftp',
     name: 'SFTP',
     detail: 'Your own server over SSH',
     status: 'not_set_up' as const,
@@ -58,8 +59,8 @@ function view(overrides: Partial<SftpView> = {}): SftpView {
 }
 
 describe('SftpForm', () => {
-  it('shows the seven settings fields and the default port', () => {
-    render(SftpForm, {
+  it('shows the seven settings fields and the default port', async () => {
+    const { container } = render(SftpForm, {
       props: {
         view: view(),
         onsave: vi.fn(),
@@ -67,6 +68,7 @@ describe('SftpForm', () => {
         onremove: vi.fn(),
       },
     });
+    await expectAccessible(container);
     expect((screen.getByLabelText('Host') as HTMLInputElement).value).toBe('example.com');
     expect((screen.getByLabelText('Port (22)') as HTMLInputElement).value).toBe('22');
     expect(screen.getByLabelText('Username')).not.toBeNull();

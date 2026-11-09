@@ -67,6 +67,18 @@ impl EditorOutcome {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinSource {
+    File,
+    Clipboard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinOutcome {
+    Pinned(PinSource),
+    Cancelled,
+}
+
 #[derive(Debug, Clone)]
 pub enum EditorClipboardContent {
     Image(Image),
@@ -188,23 +200,47 @@ impl EditorService {
     }
 
     pub fn open_clipboard(&self) -> Result<EditorOutcome, ServiceError> {
+        let (image, title) = self.clipboard_image()?;
+        self.edit(image, title)
+    }
+
+    pub fn pin_available(&self) -> bool {
+        self.ports.is_some()
+    }
+
+    pub fn pin_file(&self) -> Result<PinOutcome, ServiceError> {
+        let path = self.ports()?.file_dialog.pick_image()?;
+        let Some(path) = path else {
+            return Ok(PinOutcome::Cancelled);
+        };
+        let (image, _title) = file_image(&path, self.services.codec()?)?;
+        self.ports()?.pin.pin(image)?;
+        Ok(PinOutcome::Pinned(PinSource::File))
+    }
+
+    pub fn pin_clipboard(&self) -> Result<PinOutcome, ServiceError> {
+        let (image, _title) = self.clipboard_image()?;
+        self.ports()?.pin.pin(image)?;
+        Ok(PinOutcome::Pinned(PinSource::Clipboard))
+    }
+
+    fn clipboard_image(&self) -> Result<(Image, String), ServiceError> {
         let Some(content) = self.ports()?.clipboard_source.read()? else {
             return Err(ServiceError::Invalid(
                 "The clipboard does not contain an image.".to_owned(),
             ));
         };
-        let (image, title) = match content {
-            EditorClipboardContent::Image(image) => (image, String::from(CLIPBOARD_TITLE)),
+        match content {
+            EditorClipboardContent::Image(image) => Ok((image, String::from(CLIPBOARD_TITLE))),
             EditorClipboardContent::Files(paths) => {
                 let Some(path) = paths.first() else {
                     return Err(ServiceError::Invalid(
                         "The clipboard does not contain an image.".to_owned(),
                     ));
                 };
-                file_image(path, self.services.codec()?)?
+                file_image(path, self.services.codec()?)
             }
-        };
-        self.edit(image, title)
+        }
     }
 
     fn edit(&self, image: Image, title: String) -> Result<EditorOutcome, ServiceError> {

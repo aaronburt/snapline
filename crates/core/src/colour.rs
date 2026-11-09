@@ -90,11 +90,7 @@ impl Hex {
         }
         let digits: Vec<u8> = value.bytes().map(hex_digit).collect();
         match digits.len() {
-            3 | 4 => Ok(Self::new(
-                digits[0] * 17,
-                digits[1] * 17,
-                digits[2] * 17,
-            )),
+            3 | 4 => Ok(Self::new(digits[0] * 17, digits[1] * 17, digits[2] * 17)),
             6 | 8 => Ok(Self::new(
                 digits[0] * 16 + digits[1],
                 digits[2] * 16 + digits[3],
@@ -288,9 +284,18 @@ fn parse_rgb(value: &str) -> Result<Rgb, ColourError> {
     if parts.len() != 3 {
         return Err(ColourError::Rgb);
     }
-    let r = parts[0].trim().parse::<u8>().map_err(|_| ColourError::Rgb)?;
-    let g = parts[1].trim().parse::<u8>().map_err(|_| ColourError::Rgb)?;
-    let b = parts[2].trim().parse::<u8>().map_err(|_| ColourError::Rgb)?;
+    let r = parts[0]
+        .trim()
+        .parse::<u8>()
+        .map_err(|_| ColourError::Rgb)?;
+    let g = parts[1]
+        .trim()
+        .parse::<u8>()
+        .map_err(|_| ColourError::Rgb)?;
+    let b = parts[2]
+        .trim()
+        .parse::<u8>()
+        .map_err(|_| ColourError::Rgb)?;
     Ok(Rgb::new(r, g, b))
 }
 
@@ -421,18 +426,9 @@ mod tests {
 
     #[test]
     fn rgb_parsing_accepts_function_syntax() {
-        assert_eq!(
-            Rgb::parse("rgb(229, 72, 77)"),
-            Ok(Rgb::new(229, 72, 77))
-        );
-        assert_eq!(
-            Rgb::parse("RGB( 0 , 0 , 0 )"),
-            Ok(Rgb::new(0, 0, 0))
-        );
-        assert_eq!(
-            Rgb::parse("hsl(358, 75%, 59%)"),
-            Ok(Rgb::new(229, 72, 77))
-        );
+        assert_eq!(Rgb::parse("rgb(229, 72, 77)"), Ok(Rgb::new(229, 72, 77)));
+        assert_eq!(Rgb::parse("RGB( 0 , 0 , 0 )"), Ok(Rgb::new(0, 0, 0)));
+        assert_eq!(Rgb::parse("hsl(358, 75%, 59%)"), Ok(Rgb::new(229, 72, 77)));
     }
 
     #[test]

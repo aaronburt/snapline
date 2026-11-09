@@ -19,6 +19,14 @@ export interface QrScanned {
   isUrl: boolean;
 }
 
+export type PinSource = 'file' | 'clipboard';
+
+type PinRequest = { kind: 'pinFile' } | { kind: 'pinClipboard' } | { kind: 'pinMenu' };
+
+type PinResponse =
+  | { kind: 'pinned'; data: { source: PinSource } }
+  | { kind: 'pinCancelled' };
+
 function unexpected(): IpcError {
   return {
     code: 'internal',
@@ -63,6 +71,42 @@ export async function editorOpenClipboard(): Promise<EditorOutcomeDto> {
   const resp = await call<ToolReq, ToolResp>('ipc_tool', req);
   if (resp.kind === 'editorOpened') {
     return resp.data.outcome;
+  }
+  throw unexpected();
+}
+
+export async function pinFromFile(): Promise<PinSource | null> {
+  const req: PinRequest = { kind: 'pinFile' };
+  const resp = await call<PinRequest, PinResponse>('ipc_tool', req);
+  if (resp.kind === 'pinned') {
+    return resp.data.source;
+  }
+  if (resp.kind === 'pinCancelled') {
+    return null;
+  }
+  throw unexpected();
+}
+
+export async function pinFromClipboard(): Promise<PinSource | null> {
+  const req: PinRequest = { kind: 'pinClipboard' };
+  const resp = await call<PinRequest, PinResponse>('ipc_tool', req);
+  if (resp.kind === 'pinned') {
+    return resp.data.source;
+  }
+  if (resp.kind === 'pinCancelled') {
+    return null;
+  }
+  throw unexpected();
+}
+
+export async function pinMenu(): Promise<PinSource | null> {
+  const req: PinRequest = { kind: 'pinMenu' };
+  const resp = await call<PinRequest, PinResponse>('ipc_tool', req);
+  if (resp.kind === 'pinned') {
+    return resp.data.source;
+  }
+  if (resp.kind === 'pinCancelled') {
+    return null;
   }
   throw unexpected();
 }

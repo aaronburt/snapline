@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { expectAccessible } from '../../../test/axe';
 import UploadsPage from './UploadsPage.svelte';
 import { resetSettings } from './settings';
 import { settingsDto } from './settingsDto';
@@ -55,6 +56,14 @@ function destination(overrides: Partial<DestinationView> = {}): DestinationView 
     errorMessage: null,
     headers: [],
     importedFromSxcu: false,
+    host: null,
+    port: null,
+    username: null,
+    authMethod: null,
+    privateKeyPath: null,
+    remoteFolder: null,
+    passwordSaved: false,
+    passphraseSaved: false,
     warnings: [],
     ...overrides,
   };
@@ -81,7 +90,8 @@ afterEach(cleanup);
 
 describe('UploadsPage', () => {
   it('gets the settings on mount and defaults every destination', async () => {
-    render(UploadsPage);
+    const { container } = render(UploadsPage);
+    await expectAccessible(container);
     for (const title of ['Images', 'Videos and GIFs', 'Text and code', 'Other files']) {
       expect((screen.getByRole('combobox', { name: title }) as HTMLSelectElement).value).toBe(
         'save_locally_only',
@@ -251,6 +261,106 @@ describe('UploadsPage', () => {
     expect(await screen.findByText('My server')).not.toBeNull();
     expect(screen.getByText('Custom uploader · imported from .sxcu')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Edit' })).not.toBeNull();
+  });
+
+  it('offers GitHub Gist and SFTP in the Add destination menu', async () => {
+    render(UploadsPage);
+    await fireEvent.click(screen.getByRole('button', { name: /Add destination/ }));
+    expect(screen.getByRole('button', { name: 'Imgur' })).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Amazon S3' })).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'GitHub Gist' })).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'SFTP' })).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Custom uploader' })).not.toBeNull();
+  });
+
+  it('adds and renders the GitHub Gist form', async () => {
+    uploadIpc.addDestination.mockResolvedValue(
+      destination({
+        id: 'gist',
+        kind: 'gist',
+        name: 'GitHub Gist',
+        detail: 'Text and code snippets',
+        status: 'not_set_up',
+        action: 'set_up',
+      }),
+    );
+    render(UploadsPage);
+    await fireEvent.click(screen.getByRole('button', { name: /Add destination/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'GitHub Gist' }));
+    await waitFor(() => expect(uploadIpc.addDestination).toHaveBeenCalledWith('gist'));
+    expect(await screen.findByRole('heading', { name: 'GitHub Gist' })).not.toBeNull();
+    expect(screen.getByLabelText('Token')).not.toBeNull();
+    expect(screen.getByText('Public')).not.toBeNull();
+  });
+
+  it('adds and renders the SFTP form with saved secret placeholders', async () => {
+    uploadIpc.addDestination.mockResolvedValue(
+      destination({
+        id: 'sftp',
+        kind: 'sftp',
+        name: 'SFTP',
+        detail: 'Your own server over SSH',
+        status: 'configured',
+        action: 'configure',
+        configured: true,
+        host: 'sftp.example.test',
+        port: 2222,
+        username: 'aaron',
+        authMethod: 'password',
+        privateKeyPath: null,
+        remoteFolder: '/srv/shots',
+        publicUrlPattern: 'https://cdn.example.test/<key>',
+        passwordSaved: true,
+        passphraseSaved: false,
+      }),
+    );
+    render(UploadsPage);
+    await fireEvent.click(screen.getByRole('button', { name: /Add destination/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'SFTP' }));
+    await waitFor(() => expect(uploadIpc.addDestination).toHaveBeenCalledWith('sftp'));
+    expect(await screen.findByRole('heading', { name: 'SFTP' })).not.toBeNull();
+    expect((screen.getByLabelText('Host') as HTMLInputElement).value).toBe('sftp.example.test');
+    expect((screen.getByLabelText('Password') as HTMLInputElement).placeholder).toBe('Saved');
+  });
+
+  it('routes Gist to text and SFTP to other files', async () => {
+    uploadIpc.listDestinations.mockResolvedValue([
+      destination({
+        id: 'gist',
+        kind: 'gist',
+        name: 'GitHub Gist',
+        status: 'configured',
+        action: 'configure',
+        configured: true,
+        clientIdSaved: true,
+      }),
+      destination({
+        id: 'sftp',
+        kind: 'sftp',
+        name: 'SFTP',
+        status: 'configured',
+        action: 'configure',
+        configured: true,
+        host: 'sftp.example.test',
+        port: 22,
+        username: 'aaron',
+        authMethod: 'password',
+        remoteFolder: '/srv/shots',
+        publicUrlPattern: 'https://cdn.example.test/<key>',
+        passwordSaved: true,
+      }),
+    ]);
+    render(UploadsPage);
+    await waitFor(() => expect(uploadIpc.listDestinations).toHaveBeenCalledTimes(1));
+    const text = screen.getByRole('combobox', { name: 'Text and code' }) as HTMLSelectElement;
+    const other = screen.getByRole('combobox', { name: 'Other files' }) as HTMLSelectElement;
+    const images = screen.getByRole('combobox', { name: 'Images' }) as HTMLSelectElement;
+    await waitFor(() =>
+      expect([...text.options].map((option) => option.value)).toContain('gist'),
+    );
+    expect([...text.options].map((option) => option.value)).not.toContain('sftp');
+    expect([...other.options].map((option) => option.value)).toContain('sftp');
+    expect([...images.options].map((option) => option.value)).not.toContain('gist');
   });
 
   it('removes a destination after confirmation', async () => {

@@ -83,7 +83,7 @@
   }
 </script>
 
-<div class="destination-form" aria-label="Imgur">
+<div class="destination-form" role="group" aria-label="Imgur">
   <div class="fields">
     <SecretInput
       label="Client ID"
@@ -96,11 +96,30 @@
     <p class="error" role="alert">{error}</p>
   {/if}
   <div class="footer">
-    <Button variant="accent" height={34} icon="upload" onclick={test} disabled={testState === 'testing'}>
+    <Button
+      variant="accent"
+      height={34}
+      icon="upload"
+      onclick={test}
+      disabled={testState === 'testing'}
+      title={testState === 'testing' ? 'A test upload is already running.' : undefined}
+    >
       Test upload
     </Button>
-    <Button variant="secondary" height={34} onclick={save} disabled={saving}>Save</Button>
-    <Button variant="danger-text" height={34} onclick={remove} disabled={removing}>
+    <Button
+      variant="secondary"
+      height={34}
+      onclick={save}
+      disabled={saving}
+      title={saving ? 'Saving…' : undefined}>Save</Button
+    >
+    <Button
+      variant="danger-text"
+      height={34}
+      onclick={remove}
+      disabled={removing}
+      title={removing ? 'Removing…' : undefined}
+    >
       Remove destination
     </Button>
     <div class="spacer"></div>

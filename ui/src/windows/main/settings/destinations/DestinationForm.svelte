@@ -5,8 +5,10 @@
     DestinationView,
   } from '../../../../lib/ipc/upload';
   import CustomForm from './CustomForm.svelte';
+  import GistForm from './GistForm.svelte';
   import ImgurForm from './ImgurForm.svelte';
   import S3Form from './S3Form.svelte';
+  import SftpForm from './SftpForm.svelte';
 
   interface Props {
     view: DestinationView;
@@ -23,6 +25,10 @@
   <ImgurForm {view} {onsave} {ontest} {onremove} />
 {:else if view.kind === 's3'}
   <S3Form {view} {onsave} {ontest} {onremove} />
+{:else if view.kind === 'gist'}
+  <GistForm {view} {onsave} {ontest} {onremove} />
+{:else if view.kind === 'sftp'}
+  <SftpForm {view} {onsave} {ontest} {onremove} />
 {:else}
   <CustomForm {view} {onsave} {ontest} {onremove} {onexport} />
 {/if}

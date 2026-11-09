@@ -48,6 +48,8 @@ describe('destination form mappings', () => {
   it('gives each destination kind its icon', () => {
     expect(destinationIcon('imgur')).toBe('image');
     expect(destinationIcon('s3')).toBe('bucket');
+    expect(destinationIcon('gist')).toBe('code');
+    expect(destinationIcon('sftp')).toBe('server');
     expect(destinationIcon('custom')).toBe('cloud');
   });
 

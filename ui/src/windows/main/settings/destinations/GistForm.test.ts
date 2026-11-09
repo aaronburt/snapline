@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { expectAccessible } from '../../../../test/axe';
 import type { DestinationView } from '../../../../lib/ipc/upload';
 import GistForm from './GistForm.svelte';
 
@@ -31,6 +32,14 @@ function view(overrides: Partial<DestinationView> = {}): DestinationView {
     errorMessage: null,
     headers: [],
     importedFromSxcu: false,
+    host: null,
+    port: null,
+    username: null,
+    authMethod: null,
+    privateKeyPath: null,
+    remoteFolder: null,
+    passwordSaved: false,
+    passphraseSaved: false,
     warnings: [],
     ...overrides,
   };
@@ -58,8 +67,11 @@ afterEach(() => {
 });
 
 describe('GistForm', () => {
-  it('renders the Token, Public, Test upload, Save and Remove destination controls', () => {
-    form();
+  it('renders the Token, Public, Test upload, Save and Remove destination controls', async () => {
+    const { container } = render(GistForm, {
+      props: { view: view(), onsave: vi.fn(), ontest: vi.fn(), onremove: vi.fn() },
+    });
+    await expectAccessible(container);
     const token = screen.getByLabelText('Token') as HTMLInputElement;
     expect(token.type).toBe('password');
     expect(token.placeholder).toBe('');
