@@ -114,6 +114,7 @@ pub struct UploadRecord {
     pub state: UploadState,
     pub url: Option<String>,
     pub deletion_url: Option<String>,
+    pub etag: Option<String>,
     pub error: Option<String>,
     pub attempts: i64,
     pub updated_at: i64,

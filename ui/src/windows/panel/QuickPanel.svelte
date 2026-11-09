@@ -3,7 +3,10 @@
   import Icon from '../../components/Icon.svelte';
   import Logo from '../../components/Logo.svelte';
   import Thumb from '../../components/Thumb.svelte';
-  import { panelCaptures, panelLastLink, toPanelRecent } from './data';
+  import type { UploadReq } from '../../lib/ipc/bindings/UploadReq';
+  import type { UploadResp } from '../../lib/ipc/bindings/UploadResp';
+  import { call } from '../../lib/ipc/core';
+  import { panelCaptures, toPanelRecent } from './data';
   import type { PanelRecent } from './data';
   import {
     openCapture,
@@ -19,13 +22,15 @@
     lastLink?: string | null;
   }
 
-  let { lastLink = panelLastLink }: Props = $props();
+  let { lastLink }: Props = $props();
 
   let frame: HTMLElement | undefined = $state();
   let recents = $state<PanelRecent[]>([]);
   let recentsLoaded = $state(false);
+  let lastLinkFromIpc = $state<string | null>(null);
 
-  const link = $derived(lastLink ? withoutScheme(lastLink) : null);
+  const source = $derived(lastLink !== undefined ? lastLink : lastLinkFromIpc);
+  const link = $derived(source === null || source === '' ? null : withoutScheme(source));
 
   function withoutScheme(value: string): string {
     if (value.startsWith('https://')) {
@@ -58,9 +63,24 @@
     }
   }
 
+  async function loadLastLink(): Promise<void> {
+    try {
+      const response = await call<UploadReq, UploadResp>('ipc_upload', {
+        kind: 'lastLink',
+      });
+      if (response.kind === 'lastLink') {
+        lastLinkFromIpc = response.data.link;
+      }
+    } catch {
+      lastLinkFromIpc = null;
+    }
+    await reportHeight();
+  }
+
   onMount(() => {
     void reportHeight();
     void loadRecent();
+    void loadLastLink();
   });
 
   function close(): void {

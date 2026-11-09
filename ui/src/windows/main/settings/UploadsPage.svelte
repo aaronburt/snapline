@@ -1,14 +1,34 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import Card from '../../../components/Card.svelte';
   import Button from '../../../components/Button.svelte';
-  import Icon from '../../../components/Icon.svelte';
-  import SelectRow from '../../../components/SelectRow.svelte';
-  import SegmentedRow from '../../../components/SegmentedRow.svelte';
-  import ToggleRow from '../../../components/ToggleRow.svelte';
+  import Card from '../../../components/Card.svelte';
   import EmptyState from '../../../components/EmptyState.svelte';
+  import Icon from '../../../components/Icon.svelte';
+  import Popover from '../../../components/Popover.svelte';
+  import SegmentedRow from '../../../components/SegmentedRow.svelte';
+  import SelectRow from '../../../components/SelectRow.svelte';
+  import ToggleRow from '../../../components/ToggleRow.svelte';
+  import type {
+    DestinationInput,
+    DestinationKind,
+    DestinationTestOutcome,
+    DestinationView,
+  } from '../../../lib/ipc/upload';
+  import {
+    addDestination,
+    exportSxcu,
+    importSxcu,
+    listDestinations,
+    removeDestination,
+    saveDestination,
+    testDestination,
+  } from '../../../lib/ipc/upload';
   import SettingsPage from './SettingsPage.svelte';
   import SettingsSection from './SettingsSection.svelte';
+  import DestinationCard from './destinations/DestinationCard.svelte';
+  import DestinationForm from './destinations/DestinationForm.svelte';
+  import DestinationSelectRow from './destinations/DestinationSelectRow.svelte';
+  import { errorText } from './destinations/model';
   import {
     HISTORY_OPTIONS,
     PROXY_OPTIONS,
@@ -26,13 +46,25 @@
   let { filter = '' }: Props = $props();
 
   const rows = $derived($settings.uploads);
-  const destinationOptions = ['Save locally only'];
-  const shortenerOptions = ['None'];
-  let activeForm = $state<string | null>(null);
+  let destinations = $state<DestinationView[]>([]);
+  let destinationError = $state('');
+  let importWarnings = $state<string[]>([]);
+  let activeView = $state<DestinationView | null>(null);
+  let addOpen = $state(false);
 
   onMount(() => {
     void loadSettings();
+    void refreshDestinations();
   });
+
+  async function refreshDestinations(): Promise<void> {
+    try {
+      destinations = await listDestinations();
+      destinationError = '';
+    } catch (failure) {
+      destinationError = errorText(failure);
+    }
+  }
 
   function matches(title: string, description = ''): boolean {
     const needle = filter.trim().toLowerCase();
@@ -60,7 +92,13 @@
   const accountsVisible = $derived(
     matches('Accounts and uploaders') ||
       matches('Import ShareX uploader (.sxcu)') ||
-      matches('Add destination'),
+      matches('Add destination') ||
+      destinations.some(
+        (destination) =>
+          matches(destination.name) ||
+          matches(destination.detail) ||
+          matches(destination.status === 'configured' ? 'Configured' : 'Not set up'),
+      ),
   );
 
   const stripVisible = $derived(
@@ -84,6 +122,127 @@
       historyVisible ||
       proxyVisible,
   );
+
+  interface DestinationOption {
+    id: string;
+    label: string;
+  }
+
+  const saveLocally: DestinationOption = { id: 'save_locally_only', label: 'Save locally only' };
+  const none: DestinationOption = { id: 'none', label: 'None' };
+
+  function accepts(kind: DestinationKind, target: string): boolean {
+    if (target === 'images') {
+      return true;
+    }
+    if (target === 'text') {
+      return kind === 'custom';
+    }
+    return kind === 's3' || kind === 'custom';
+  }
+
+  function optionValue(raw: string): string {
+    if (raw === 'save_locally_only' || raw === 'none') {
+      return raw;
+    }
+    const destination = destinations.find(
+      (item) => item.id === raw || item.name === raw,
+    );
+    return destination?.id ?? raw;
+  }
+
+  function fallbackLabel(raw: string): string {
+    if (raw === 'save_locally_only') {
+      return 'Save locally only';
+    }
+    if (raw === 'none') {
+      return 'None';
+    }
+    const destination = destinations.find(
+      (item) => item.id === raw || item.name === raw,
+    );
+    return destination?.name ?? raw;
+  }
+
+  function optionsFor(target: string, raw: string): DestinationOption[] {
+    const base =
+      target === 'shortener'
+        ? [none]
+        : [saveLocally, ...destinations
+            .filter((destination) => destination.configured && accepts(destination.kind, target))
+            .map((destination) => ({ id: destination.id, label: destination.name }))];
+    const value = optionValue(raw);
+    if (base.some((option) => option.id === value)) {
+      return base;
+    }
+    return [...base, { id: value, label: fallbackLabel(raw) }];
+  }
+
+  async function add(kind: DestinationKind): Promise<void> {
+    addOpen = false;
+    destinationError = '';
+    try {
+      const view = await addDestination(kind);
+      destinations = [...destinations, view];
+      activeView = view;
+    } catch (failure) {
+      destinationError = errorText(failure);
+    }
+  }
+
+  async function importUploader(): Promise<void> {
+    destinationError = '';
+    importWarnings = [];
+    try {
+      const imported = await importSxcu();
+      importWarnings = imported.warnings;
+      if (imported.destination) {
+        destinations = [...destinations, imported.destination];
+        activeView = imported.destination;
+      }
+    } catch (failure) {
+      destinationError = errorText(failure);
+    }
+  }
+
+  function open(view: DestinationView): void {
+    activeView = view;
+    destinationError = '';
+  }
+
+  async function save(input: DestinationInput): Promise<DestinationView> {
+    const updated = await saveDestination(input);
+    destinations = destinations.map((destination) =>
+      destination.id === updated.id ? updated : destination,
+    );
+    activeView = updated;
+    return updated;
+  }
+
+  function test(id: string): Promise<DestinationTestOutcome> {
+    return testDestination(id);
+  }
+
+  async function remove(id: string): Promise<void> {
+    await removeDestination(id);
+    destinations = destinations.filter((destination) => destination.id !== id);
+    if (activeView?.id === id) {
+      activeView = null;
+    }
+  }
+
+  function exportUploader(id: string, includeHeaderValues: boolean): Promise<string | null> {
+    return exportSxcu(id, includeHeaderValues);
+  }
+
+  function formTitle(view: DestinationView): string {
+    if (view.kind === 'custom') {
+      return view.name === 'Custom uploader'
+        ? 'Custom uploader'
+        : `Custom uploader · ${view.name}`;
+    }
+    return view.name;
+  }
 </script>
 
 <SettingsPage title="Upload destinations">
@@ -93,47 +252,47 @@
       description="Where each kind of capture goes when “Upload” runs."
     >
       {#if imagesVisible}
-        <SelectRow
+        <DestinationSelectRow
           icon="image"
           title="Images"
-          options={destinationOptions}
-          value={rows.images}
+          options={optionsFor('images', rows.images)}
+          value={optionValue(rows.images)}
           onchange={(value) => updateUploads('images', value)}
         />
       {/if}
       {#if videosVisible}
-        <SelectRow
+        <DestinationSelectRow
           icon="film"
           title="Videos and GIFs"
-          options={destinationOptions}
-          value={rows.videos}
+          options={optionsFor('videos', rows.videos)}
+          value={optionValue(rows.videos)}
           onchange={(value) => updateUploads('videos', value)}
         />
       {/if}
       {#if textVisible}
-        <SelectRow
+        <DestinationSelectRow
           icon="text"
           title="Text and code"
-          options={destinationOptions}
-          value={rows.text}
+          options={optionsFor('text', rows.text)}
+          value={optionValue(rows.text)}
           onchange={(value) => updateUploads('text', value)}
         />
       {/if}
       {#if filesVisible}
-        <SelectRow
+        <DestinationSelectRow
           icon="file"
           title="Other files"
-          options={destinationOptions}
-          value={rows.otherFiles}
+          options={optionsFor('other', rows.otherFiles)}
+          value={optionValue(rows.otherFiles)}
           onchange={(value) => updateUploads('otherFiles', value)}
         />
       {/if}
       {#if shortenerVisible}
-        <SelectRow
+        <DestinationSelectRow
           icon="short"
           title="Link shortener"
-          options={shortenerOptions}
-          value={rows.linkShortener}
+          options={optionsFor('shortener', rows.linkShortener)}
+          value={optionValue(rows.linkShortener)}
           onchange={(value) => updateUploads('linkShortener', value)}
         />
       {/if}
@@ -145,21 +304,81 @@
       <div class="accounts-head">
         <h2>Accounts and uploaders</h2>
         <div class="account-actions">
-          <Button variant="secondary" height={32} icon="save">Import ShareX uploader (.sxcu)</Button>
-          <Button variant="accent" height={32} icon="plus">Add destination</Button>
+          <Button variant="secondary" height={32} icon="save" onclick={importUploader}>
+            Import ShareX uploader (.sxcu)
+          </Button>
+          <div class="add-wrap">
+            <Button
+              variant="accent"
+              height={32}
+              icon="plus"
+              onclick={() => (addOpen = !addOpen)}
+            >
+              Add destination
+            </Button>
+            <Popover label="Add destination" bind:open={addOpen} onclose={() => (addOpen = false)}>
+              <div class="menu">
+                <button type="button" class="hv" onclick={() => add('imgur')}>
+                  <Icon name="image" size={16} />
+                  Imgur
+                </button>
+                <button type="button" class="hv" onclick={() => add('s3')}>
+                  <Icon name="bucket" size={16} />
+                  Amazon S3
+                </button>
+                <button type="button" class="hv" onclick={() => add('custom')}>
+                  <Icon name="cloud" size={16} />
+                  Custom uploader
+                </button>
+              </div>
+            </Popover>
+          </div>
         </div>
       </div>
-      <Card>
-        <div class="accounts-empty">
-          <EmptyState
-            title="No destinations yet"
-            text="Add a destination to upload captures."
-          />
-        </div>
-      </Card>
-      {#if activeForm}
+
+      {#if destinations.length === 0}
         <Card>
-          <div class="destination-form"></div>
+          <div class="accounts-empty">
+            <EmptyState
+              title="No destinations yet"
+              text="Add a destination to upload captures."
+            />
+          </div>
+        </Card>
+      {:else}
+        <Card>
+          {#each destinations as destination, index (destination.id)}
+            <DestinationCard view={destination} first={index === 0} onaction={open} />
+          {/each}
+        </Card>
+      {/if}
+
+      {#if importWarnings.length > 0}
+        <p class="warning" role="status">{importWarnings.join(' ')}</p>
+      {/if}
+      {#if destinationError}
+        <p class="error" role="alert">{destinationError}</p>
+      {/if}
+
+      {#if activeView}
+        <Card>
+          <div class="destination-form">
+            <div class="form-head">
+              <h3>{formTitle(activeView)}</h3>
+              {#if activeView.kind === 'custom'}
+                <p class="description">
+                  Compatible with ShareX .sxcu files. Response values use JSON paths.
+                </p>
+              {/if}
+            </div>
+            <DestinationForm
+              view={activeView}
+              onsave={save}
+              ontest={test}
+              onremove={remove}
+              onexport={exportUploader}
+            />
+          </div>
         </Card>
       {/if}
     </section>
@@ -265,10 +484,42 @@
     font-weight: 600;
   }
 
+  h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
   .account-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+  }
+
+  .add-wrap {
+    position: relative;
+  }
+
+  .menu {
+    display: flex;
+    flex-direction: column;
+    min-width: 180px;
+    gap: 2px;
+  }
+
+  .menu button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 34px;
+    padding: 0 10px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
   }
 
   .accounts-empty {
@@ -277,6 +528,31 @@
 
   .destination-form {
     padding: 20px;
+  }
+
+  .form-head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 16px;
+  }
+
+  .description {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text3);
+  }
+
+  .warning {
+    margin: 0;
+    color: var(--text2);
+    font-size: 12px;
+  }
+
+  .error {
+    margin: 0;
+    color: var(--err);
+    font-size: 12px;
   }
 
   .row {

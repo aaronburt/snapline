@@ -453,8 +453,10 @@ impl Registry {
                     },
                     detail: if *imported_from_sxcu {
                         "Custom uploader · imported from .sxcu".to_owned()
+                    } else if name.trim().is_empty() || name.trim() == CUSTOM_NAME {
+                        CUSTOM_NAME.to_owned()
                     } else {
-                        format!("Custom uploader · {}", if name.trim().is_empty() { CUSTOM_NAME } else { name.trim() })
+                        format!("Custom uploader · {}", name.trim())
                     },
                     status: status(configured),
                     action: if configured {
@@ -628,19 +630,21 @@ impl DestinationOperations for Registry {
                     .as_deref()
                     .map(str::trim)
                     .filter(|value| !value.is_empty());
+                let access_saved = self.secret_saved(&id, ACCESS_KEY_ID_FIELD);
+                let secret_saved = self.secret_saved(&id, SECRET_ACCESS_KEY_FIELD);
+                if access.is_none() && !access_saved {
+                    return Err(ServiceError::Invalid("Enter the S3 access key ID.".to_owned()));
+                }
+                if secret.is_none() && !secret_saved {
+                    return Err(ServiceError::Invalid(
+                        "Enter the S3 secret access key.".to_owned(),
+                    ));
+                }
                 if let Some(access) = access {
                     self.put_secret(&id, ACCESS_KEY_ID_FIELD, access)?;
                 }
                 if let Some(secret) = secret {
                     self.put_secret(&id, SECRET_ACCESS_KEY_FIELD, secret)?;
-                }
-                if !self.secret_saved(&id, ACCESS_KEY_ID_FIELD) {
-                    return Err(ServiceError::Invalid("Enter the S3 access key ID.".to_owned()));
-                }
-                if !self.secret_saved(&id, SECRET_ACCESS_KEY_FIELD) {
-                    return Err(ServiceError::Invalid(
-                        "Enter the S3 secret access key.".to_owned(),
-                    ));
                 }
                 DestinationConfig::S3 {
                     id,
@@ -856,6 +860,11 @@ impl DestinationOperations for Registry {
         }
         let text = sxcu::export(&custom, include_header_values, &values)
             .map_err(sxcu_error)?;
+        if text.len() > sxcu::MAX_FILE_BYTES {
+            return Err(ServiceError::Invalid(
+                "The .sxcu file is larger than 64 KiB.".to_owned(),
+            ));
+        }
         let file_name = format!("{}.sxcu", safe_file_name(name));
         self.dialog.save(&file_name, &text)
     }
@@ -1091,7 +1100,6 @@ pub fn test_file() -> UploadFile {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::path::Path;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Mutex;
 
@@ -1102,8 +1110,11 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::dto::upload::{DestinationTestStatusDto, DestinationViewDto};
-    use crate::uploads::{DestinationSource, FileSource, UploadService, UploaderThread};
+    use crate::dto::upload::{
+        DestinationHeaderInput, DestinationReq, DestinationTestStatusDto, DestinationViewDto,
+        UploadReq, UploadResp,
+    };
+    use crate::uploads::{DestinationSource, FileSource, UploaderThread};
 
     #[derive(Default)]
     struct FakeSecrets {
@@ -1274,9 +1285,9 @@ mod tests {
                 .with_dialog(Arc::new(FakeDialog::empty()))
         }
 
-        fn registry_with(&self, dialog: FakeDialog, factory: Arc<FakeFactory>) -> Registry {
+        fn registry_with(&self, dialog: Arc<FakeDialog>, factory: Arc<FakeFactory>) -> Registry {
             Registry::new(&self.services, self.secrets.clone())
-                .with_dialog(Arc::new(dialog))
+                .with_dialog(dialog)
                 .with_factory(factory)
         }
 
@@ -1360,15 +1371,6 @@ mod tests {
         .to_vec()
     }
 
-    fn destination(
-        response: crate::dto::upload::DestinationResp,
-    ) -> DestinationViewDto {
-        match response {
-            crate::dto::upload::DestinationResp::Destination(view) => view,
-            other => panic!("unexpected response: {other:?}"),
-        }
-    }
-
     fn list(registry: &Registry) -> Vec<DestinationViewDto> {
         match crate::dto::upload::DestinationResp::Destinations(
             registry.list().expect("list"),
@@ -1411,6 +1413,8 @@ mod tests {
         let json = serde_json::to_string(&saved).expect("json");
         assert!(!json.contains("a1b2c3d4"));
         assert!(!format!("{saved:?}").contains("a1b2c3d4"));
+        let input = imgur_input("imgur", Some("a1b2c3d4"));
+        assert!(!format!("{input:?}").contains("a1b2c3d4"));
         assert_eq!(saved.detail, "Image host · anonymous uploads");
     }
 
@@ -1595,7 +1599,7 @@ mod tests {
     fn sxcu_import_stores_header_values_and_reports_warnings() {
         let fixture = fixture();
         let registry = fixture.registry_with(
-            FakeDialog::with_file(sxcu_bytes()),
+            Arc::new(FakeDialog::with_file(sxcu_bytes())),
             Arc::new(FakeFactory {
                 uploader: FakeUploader::new(),
             }),
@@ -1619,7 +1623,7 @@ mod tests {
         bytes[0] = b'{';
         bytes[1] = b'}';
         let registry = fixture.registry_with(
-            FakeDialog::with_file(bytes),
+            Arc::new(FakeDialog::with_file(bytes)),
             Arc::new(FakeFactory {
                 uploader: FakeUploader::new(),
             }),
@@ -1634,7 +1638,7 @@ mod tests {
         let fixture = fixture();
         let bytes = br#"{"Name":"A","RequestURL":"file:///C:/secret.txt","Body":"Binary","URL":"{response}"}"#.to_vec();
         let registry = fixture.registry_with(
-            FakeDialog::with_file(bytes),
+            Arc::new(FakeDialog::with_file(bytes)),
             Arc::new(FakeFactory {
                 uploader: FakeUploader::new(),
             }),
@@ -1646,9 +1650,9 @@ mod tests {
     #[test]
     fn sxcu_export_blanks_header_values_unless_requested() {
         let fixture = fixture();
-        let dialog = FakeDialog::empty();
+        let dialog = Arc::new(FakeDialog::empty());
         let registry = fixture.registry_with(
-            dialog,
+            dialog.clone(),
             Arc::new(FakeFactory {
                 uploader: FakeUploader::new(),
             }),
@@ -1657,22 +1661,12 @@ mod tests {
         registry.save(custom_input("custom")).expect("save");
         registry.export_sxcu("custom", false).expect("export");
         registry.export_sxcu("custom", true).expect("export");
-        let saved = {
-            let registry = fixture.registry_with(
-                FakeDialog::empty(),
-                Arc::new(FakeFactory {
-                    uploader: FakeUploader::new(),
-                }),
-            );
-            registry.add(DestinationKindDto::Custom).expect("add");
-            registry.save(custom_input("custom")).expect("save");
-            registry.export_sxcu("custom", false).expect("export");
-            registry.export_sxcu("custom", true).expect("export");
-            Vec::<String>::new()
-        };
-        let _ = saved;
-        let text = fixture.settings_text();
-        assert!(!text.contains("top-secret"));
+        let saved = dialog.saved.lock().expect("dialog").clone();
+        assert_eq!(saved.len(), 2);
+        assert!(saved[0].0.ends_with(".sxcu"));
+        assert!(!saved[0].1.contains("top-secret"));
+        assert!(saved[1].1.contains("top-secret"));
+        assert!(!fixture.settings_text().contains("top-secret"));
     }
 
     #[test]
@@ -1682,7 +1676,7 @@ mod tests {
         let factory = Arc::new(FakeFactory {
             uploader: uploader.clone(),
         });
-        let registry = fixture.registry_with(FakeDialog::empty(), factory);
+        let registry = fixture.registry_with(Arc::new(FakeDialog::empty()), factory);
         registry.add(DestinationKindDto::Imgur).expect("add");
         registry
             .save(imgur_input("imgur", Some("a1b2c3d4")))
@@ -1723,7 +1717,7 @@ mod tests {
         let factory = Arc::new(FakeFactory {
             uploader: uploader.clone(),
         });
-        let registry = fixture.registry_with(FakeDialog::empty(), factory);
+        let registry = fixture.registry_with(Arc::new(FakeDialog::empty()), factory);
         registry.add(DestinationKindDto::S3).expect("add");
         registry
             .save(DestinationInput {
@@ -1776,9 +1770,5 @@ mod tests {
         assert_eq!(safe_file_name("My server"), "My server");
         assert_eq!(safe_file_name("a/b:c"), "a_b_c");
         assert_eq!(test_file().bytes.len(), TEST_PNG.len());
-    }
-
-    fn _paths_are_used(directory: &Path) -> Paths {
-        Paths::resolve(directory, directory, directory, directory, false)
     }
 }

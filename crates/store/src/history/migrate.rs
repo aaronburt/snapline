@@ -5,10 +5,13 @@ use rusqlite::{Connection, OpenFlags};
 
 use super::HistoryError;
 
-pub const CURRENT_VERSION: u32 = 1;
+pub const CURRENT_VERSION: u32 = 2;
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(5000);
 
-const MIGRATIONS: &[&str] = &[include_str!("../../migrations/0001_init.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../../migrations/0001_init.sql"),
+    include_str!("../../migrations/0002_upload_etag.sql"),
+];
 
 pub fn open_write(path: &Path) -> Result<Connection, HistoryError> {
     if let Some(parent) = path.parent() {
@@ -137,6 +140,45 @@ mod tests {
             .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
             .expect("foreign keys");
         assert_eq!(foreign_keys, 1);
+    }
+
+    #[test]
+    fn migration_two_adds_the_etag_column_and_keeps_existing_rows() {
+        let (_directory, path) = database();
+        let connection = Connection::open(&path).expect("open version one");
+        connection
+            .execute_batch(include_str!("../../migrations/0001_init.sql"))
+            .expect("version one schema");
+        connection
+            .pragma_update(None, "user_version", 1)
+            .expect("version one");
+        connection
+            .execute(
+                "INSERT INTO capture (id, kind, path, bytes, created_at) VALUES (1, 'image', 'C:\\shot.png', 12, 1)",
+                [],
+            )
+            .expect("capture");
+        connection
+            .execute(
+                "INSERT INTO upload (id, capture_id, dest_id, state, url, attempts, updated_at) VALUES (1, 1, 'imgur', 'done', 'https://example.com/shot.png', 1, 2)",
+                [],
+            )
+            .expect("upload");
+        drop(connection);
+
+        let connection = open_write(&path).expect("migrate");
+        assert_eq!(schema_version(&connection).expect("version"), 2);
+        let (url, etag): (Option<String>, Option<String>) = connection
+            .query_row("SELECT url, etag FROM upload WHERE id = 1", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .expect("upload row");
+        assert_eq!(url.as_deref(), Some("https://example.com/shot.png"));
+        assert_eq!(etag, None);
+        let captures: i64 = connection
+            .query_row("SELECT COUNT(*) FROM capture", [], |row| row.get(0))
+            .expect("capture count");
+        assert_eq!(captures, 1);
     }
 
     #[test]

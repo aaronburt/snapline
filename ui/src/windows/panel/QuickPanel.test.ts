@@ -5,6 +5,12 @@ import type { RecentCaptureDto } from '../../lib/ipc/bindings/RecentCaptureDto';
 import QuickPanel from './QuickPanel.svelte';
 import { relativeTime } from './data';
 
+const core = vi.hoisted(() => ({
+  call: vi.fn(),
+}));
+
+vi.mock('../../lib/ipc/core', () => core);
+
 const ipc = vi.hoisted(() => ({
   panelResize: vi.fn(() => Promise.resolve({ kind: 'panelResize' })),
   panelClose: vi.fn(() => Promise.resolve({ kind: 'panelClose' })),
@@ -41,6 +47,11 @@ beforeEach(() => {
   for (const mock of Object.values(ipc)) {
     mock.mockClear();
   }
+  core.call.mockReset();
+  core.call.mockResolvedValue({
+    kind: 'lastLink',
+    data: { link: 'https://i.imgur.com/kq7Ra2P.png' },
+  });
   ipc.panelRecent.mockResolvedValue([recent(1), recent(2), recent(3)]);
 });
 
@@ -121,11 +132,26 @@ describe('QuickPanel', () => {
     expect(screen.getAllByRole('img', { name: 'Uploaded' })).toHaveLength(1);
   });
 
-  it('disables Copy when there is no last link', () => {
-    render(QuickPanel, { props: { lastLink: null } });
+  it('disables Copy when there is no last link', async () => {
+    core.call.mockResolvedValue({ kind: 'lastLink', data: { link: null } });
+    render(QuickPanel);
+    await flush();
     const copy = screen.getByRole('button', { name: 'Copy' }) as HTMLButtonElement;
     expect(copy.disabled).toBe(true);
     expect(screen.getByText('None yet')).not.toBeNull();
+  });
+
+  it('reads the persisted last link on mount and shows it without the scheme', async () => {
+    core.call.mockResolvedValue({
+      kind: 'lastLink',
+      data: { link: 'https://files.example.com/very/long/link.png' },
+    });
+    render(QuickPanel);
+    await flush();
+    expect(core.call).toHaveBeenCalledWith('ipc_upload', { kind: 'lastLink' });
+    expect(screen.getByText('files.example.com/very/long/link.png')).not.toBeNull();
+    const copy = screen.getByRole('button', { name: 'Copy' }) as HTMLButtonElement;
+    expect(copy.disabled).toBe(false);
   });
 
   it('shows the empty state when there are no captures', async () => {
@@ -162,6 +188,7 @@ describe('QuickPanel', () => {
 
   it('copies the last link when it is present', async () => {
     render(QuickPanel);
+    await flush();
     await fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
     expect(ipc.panelCopyLink).toHaveBeenCalledOnce();
   });

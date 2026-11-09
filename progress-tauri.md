@@ -1233,6 +1233,7 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 - Built: one-at-a-time FIFO uploader thread with uploader thread name, 2/8/30/120/300 s backoff capped by settings, Retry-After override, states Queued/Uploading/BackingOff/Done/Failed/Cancelled, cancel for queued/backing-off and retry for failed/cancelled, typed service DTOs and event sink, core SecretStore bridge. Tests written, not run. App/uploader-thread wiring is pending the destinations registry (6.7).
 
 **6.3 Imgur.** Needs 6.1. Owns: `crates/upload/src/imgur.rs`.
+- Built: Client-ID multipart image upload, direct and page links, delete-by-delete-hash, and typed auth/rate-limit/size error mapping. Tests written, not run.
 
 **6.4 S3.** Needs 6.1. Owns: `crates/upload/src/s3/` (`mod.rs`, `sigv4.rs`). Tests: AWS SigV4 test vectors.
 - Built: in-house SigV4 canonical request/query/header signing with AWS published vectors, session token and unsigned headers; S3 uploader with virtual-host/path-style/custom endpoints, path prefix, public URL pattern, public-read ACL, ETag capture and If-Match/versionId deletion; typed error mapping and fake transport tests. `snapline-upload` now depends on `snapline-core` (internal). Open point: path-style has no settings control in 7.3.
@@ -1244,11 +1245,13 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 - Built: all five link formats with HTML attribute escaping and the Page-link fallback; JPEG APP1 EXIF/XMP and PNG eXIf/tEXt/zTXt/iTXt stripping without re-encoding, preserving pixels, ICC and comments; orientation reported rather than silently rotated. Tests written, not run.
 
 **6.7 Destinations page.** Needs 6.3, 6.4, 6.5. Owns: `crates/services/src/destinations.rs`, `crates/services/src/dto/upload.rs`, `ui/src/lib/ipc/upload.ts`, `ui/src/windows/main/settings/UploadsPage.svelte`, `ui/src/windows/main/settings/destinations/`.
+- Built: destination registry with credential isolation, Imgur/S3/custom add/edit/test/remove, `.sxcu` import/export, test upload through the queue, and the real Uploads settings page with inline forms and status pills. Tests written, not run.
 
 **6.8 Upload states in History and the quick panel.** Needs 6.2, 6.7. Owns: upload parts of `ui/src/windows/main/history/DetailPane.svelte` and the footer of `QuickPanel.svelte` (coordinate with the integrator: these files were last owned by 4.5 and 4.6, which are finished), `crates/store/migrations/0002_upload_etag.sql` (adds `etag TEXT` to `upload`).
 - Built: real Uploaded/Local/Failed/Uploading branches with Copy link, deletion link, host delete, Retry, Cancel and an accessible Upload elsewhere menu; last-link persistence in `uploads.extra["last_link"]` and no-scheme display with None yet/Copy disabled; migration 0002 adds `etag`; queue states now carry a capture id and the worker persists them into History so failed/queued rows survive and show Retry. Tests written, not run.
 
 **6.9 Upload from clipboard.** Needs 6.2. Owns: `crates/services/src/clipboard_upload.rs`, `crates/platform-windows/src/task_dialog.rs`.
+- Built: clipboard image and one-image path-list source, optional native confirmation, codec/worker save as a Clipboard capture, upload enqueue and toast. Tests written, not run.
 
 ### Milestone 7: Workflows
 
@@ -1460,7 +1463,7 @@ The executing agent must not answer these itself.
 | 2 | Settings and hotkeys | Built, not tested | e92db22 |
 | 3 | Screenshot | Built, not tested | 574495e |
 | 4 | Saving to disk and History | Built, not tested | 574495e |
-| 5 | Annotation | Not started | |
+| 5 | Annotation | Built, not tested | ad3e7f7 |
 | 6 | Networking and uploads | Not started | |
 | 7 | Workflows | Built, not tested | |
 | 8 | Recording | Not started | |

@@ -175,6 +175,7 @@ impl Status {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadSnapshot {
     pub id: UploadId,
+    pub capture_id: Option<i64>,
     pub dest: String,
     pub run_id: Option<String>,
     pub status: Status,
@@ -194,6 +195,7 @@ pub struct UploadJob {
     pub file: UploadFile,
     pub dest: String,
     pub run_id: Option<String>,
+    pub capture_id: Option<i64>,
 }
 
 impl UploadJob {
@@ -208,7 +210,13 @@ impl UploadJob {
             file,
             dest: dest.into(),
             run_id,
+            capture_id: None,
         }
+    }
+
+    pub fn with_capture_id(mut self, capture_id: i64) -> Self {
+        self.capture_id = Some(capture_id);
+        self
     }
 }
 
@@ -469,6 +477,7 @@ impl JobRecord {
     fn snapshot(&self) -> UploadSnapshot {
         UploadSnapshot {
             id: self.id,
+            capture_id: self.job.capture_id,
             dest: self.job.dest.clone(),
             run_id: self.job.run_id.clone(),
             status: self.status.clone(),

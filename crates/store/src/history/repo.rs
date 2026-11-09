@@ -14,7 +14,7 @@ const CAPTURE_SELECT: &str = "
 SELECT c.id, c.kind, c.path, c.bytes, c.width, c.height, c.duration_ms, c.source_app,
        c.created_at, c.ocr_text,
        u.id, u.capture_id, u.dest_id, u.state, u.url, u.deletion_url, u.error, u.attempts,
-       u.updated_at
+       u.updated_at, u.etag
 FROM capture c
 LEFT JOIN upload u ON u.id = (
     SELECT u2.id
@@ -69,7 +69,7 @@ VALUES ('delete', ?1, ?2, ?3, ?4)
 ";
 
 const SELECT_UPLOAD: &str = "
-SELECT id, capture_id, dest_id, state, url, deletion_url, error, attempts, updated_at
+SELECT id, capture_id, dest_id, state, url, deletion_url, error, attempts, updated_at, etag
 FROM upload
 WHERE id = ?1
 ";
@@ -137,6 +137,17 @@ impl HistoryRepo {
             Some(row) => Ok(Some(capture_from_row(row)?)),
             None => Ok(None),
         }
+    }
+
+    pub fn id_for_path(&self, path: &str) -> Result<Option<CaptureId>, HistoryError> {
+        self.conn
+            .query_row(
+                "SELECT id FROM capture WHERE path = ?1 ORDER BY id DESC LIMIT 1",
+                [path],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(HistoryError::from)
     }
 
     pub fn stats(&self) -> Result<HistoryStats, HistoryError> {
@@ -285,6 +296,7 @@ impl HistoryRepo {
                 row.get::<_, Option<String>>(6)?,
                 row.get::<_, i64>(7)?,
                 row.get::<_, i64>(8)?,
+                row.get::<_, Option<String>>(9)?,
             ))
         })?;
         let state = UploadState::parse(&raw.3)?;
@@ -296,6 +308,7 @@ impl HistoryRepo {
             state,
             url: raw.4,
             deletion_url: raw.5,
+            etag: raw.9,
             error: raw.6,
             attempts: raw.7,
             updated_at: raw.8,
@@ -366,6 +379,7 @@ fn capture_from_row(row: &Row<'_>) -> Result<Capture, HistoryError> {
                 error: row.get(16)?,
                 attempts: row.get(17)?,
                 updated_at: row.get(18)?,
+                etag: row.get(19)?,
             })
         }
         None => None,
@@ -687,6 +701,27 @@ mod tests {
             })
             .expect("count uploads");
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn an_upload_reads_its_saved_etag() {
+        let (_directory, mut repo) = repo();
+        let id = repo
+            .record(capture(CaptureKind::Image, "C:\\Pictures\\a.png", BASE))
+            .expect("record");
+        repo.set_upload(upload(id, UploadState::Done, BASE + 1))
+            .expect("upload");
+        repo.conn
+            .execute(
+                "UPDATE upload SET etag = ?1 WHERE capture_id = ?2",
+                params!["\"9b2cf535f27731c974343645a3985328\"", id],
+            )
+            .expect("etag");
+        let found = repo.get(id).expect("get").expect("capture");
+        assert_eq!(
+            found.upload.expect("upload").etag.as_deref(),
+            Some("\"9b2cf535f27731c974343645a3985328\"")
+        );
     }
 
     #[test]

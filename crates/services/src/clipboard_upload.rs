@@ -57,21 +57,29 @@ pub enum ClipboardUploadError {
 pub struct ClipboardUploadRequest {
     pub ask: bool,
     pub destination: String,
+    pub label: String,
 }
 
 impl ClipboardUploadRequest {
     pub fn new(ask: bool, destination: impl Into<String>) -> Self {
+        let destination = destination.into();
         Self {
             ask,
-            destination: destination.into(),
+            label: destination.clone(),
+            destination,
         }
     }
 
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = label.into();
+        self
+    }
+
     pub fn from_settings(settings: &Settings) -> Self {
-        Self {
-            ask: settings.uploads.ask_before_clipboard_upload,
-            destination: settings.uploads.images.as_str().to_owned(),
-        }
+        Self::new(
+            settings.uploads.ask_before_clipboard_upload,
+            settings.uploads.images.as_str(),
+        )
     }
 
     fn has_destination(&self) -> bool {
@@ -208,7 +216,7 @@ impl ClipboardUpload {
         if request.ask {
             let message = format!(
                 "Upload the image on the clipboard to {}?",
-                request.destination
+                request.label
             );
             match self
                 .confirm
@@ -665,6 +673,18 @@ mod tests {
             fixture.queue_calls(),
             vec![(7, "s3-production".to_owned())]
         );
+    }
+
+    #[test]
+    fn a_destination_label_is_used_in_the_message() {
+        let fixture = Fixture::new(Some(image()), Vec::new(), Confirmation::Upload);
+        let request = ClipboardUploadRequest::new(true, "imgur").with_label("Imgur");
+        fixture.service().run(&request).expect("upload");
+        assert_eq!(
+            fixture.confirm_messages(),
+            vec!["Upload the image on the clipboard to Imgur?".to_owned()]
+        );
+        assert_eq!(fixture.queue_calls(), vec![(7, "imgur".to_owned())]);
     }
 
     #[test]

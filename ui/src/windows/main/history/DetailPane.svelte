@@ -1,10 +1,18 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import Badge from '../../../components/Badge.svelte';
   import Icon from '../../../components/Icon.svelte';
   import Thumb from '../../../components/Thumb.svelte';
+  import { onEvent } from '../../../lib/events';
+  import type { AppEvent } from '../../../lib/ipc/bindings/AppEvent';
   import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
+  import type { UploadReq } from '../../../lib/ipc/bindings/UploadReq';
+  import type { UploadResp } from '../../../lib/ipc/bindings/UploadResp';
+  import type { UploadState } from '../../../lib/ipc/bindings/UploadState';
+  import { call } from '../../../lib/ipc/core';
+  import { copyLink, listDestinations } from '../../../lib/ipc/upload';
+  import type { DestinationView } from '../../../lib/ipc/upload';
   import {
-    badgeStatus,
     formatBytes,
     formatDay,
     formatDuration,
@@ -26,6 +34,19 @@
     onupload: (id: number) => void;
   }
 
+  type ShareStatus = 'uploaded' | 'local' | 'failed' | 'uploading';
+
+  interface ShareView {
+    status: ShareStatus;
+    url: string | null;
+    deletionUrl: string | null;
+    error: string | null;
+    destId: string | null;
+    queueId: number | null;
+    retryInMs: number | null;
+    cancellable: boolean;
+  }
+
   let {
     capture,
     defaultDestination,
@@ -35,18 +56,103 @@
     onannotate,
     onpin,
     ondelete,
-    onupload,
   }: Props = $props();
 
   let copyFailed = $state(false);
+  let actionError = $state('');
+  let busy = $state(false);
+  let live = $state<UploadState | null>(null);
+  let queueIds = $state<Record<number, number>>({});
+  let destinations = $state<DestinationView[]>([]);
+  let destinationsLoaded = $state(false);
+  let menuOpen = $state(false);
+  let shownId = $state<number | null>(null);
 
-  const status = $derived(capture ? badgeStatus(capture) : 'local');
   const isTimed = $derived(capture !== null && timed(capture));
   const isImage = $derived(capture !== null && !timed(capture));
-  const uploaded = $derived(status === 'ok');
-  const local = $derived(status === 'local');
-  const failed = $derived(status === 'failed');
-  const uploading = $derived(status === 'uploading');
+
+  function shareStatus(state: string | null | undefined): ShareStatus {
+    if (state === 'done') {
+      return 'uploaded';
+    }
+    if (state === 'failed') {
+      return 'failed';
+    }
+    if (state === 'queued' || state === 'uploading' || state === 'backingOff') {
+      return 'uploading';
+    }
+    return 'local';
+  }
+
+  function matchesLive(state: UploadState): boolean {
+    if (!capture) {
+      return false;
+    }
+    const known: number | undefined = queueIds[capture.id];
+    if (known !== undefined && known === state.id) {
+      return true;
+    }
+    if (state.captureId !== null && state.captureId === capture.id) {
+      return true;
+    }
+    if (state.runId !== null && state.runId === String(capture.id)) {
+      return true;
+    }
+    const url = capture.upload?.url;
+    return url !== undefined && url !== null && state.link === url;
+  }
+
+  const share = $derived.by<ShareView>(() => {
+    if (!capture) {
+      return {
+        status: 'local',
+        url: null,
+        deletionUrl: null,
+        error: null,
+        destId: null,
+        queueId: null,
+        retryInMs: null,
+        cancellable: false,
+      };
+    }
+    const upload = capture.upload;
+    const known = queueIds[capture.id] ?? null;
+    if (live !== null && matchesLive(live)) {
+      return {
+        status: shareStatus(live.status),
+        url: live.link ?? upload?.url ?? null,
+        deletionUrl: live.deletionLink ?? upload?.deletionUrl ?? null,
+        error: live.error ?? upload?.error ?? null,
+        destId: live.dest,
+        queueId: live.id,
+        retryInMs: live.retryInMs,
+        cancellable: live.status === 'queued' || live.status === 'backingOff',
+      };
+    }
+    if (upload) {
+      return {
+        status: shareStatus(upload.state),
+        url: upload.url,
+        deletionUrl: upload.deletionUrl,
+        error: upload.error,
+        destId: upload.destId,
+        queueId: known,
+        retryInMs: null,
+        cancellable: upload.state === 'queued' && known !== null,
+      };
+    }
+    return {
+      status: 'local',
+      url: null,
+      deletionUrl: null,
+      error: null,
+      destId: null,
+      queueId: null,
+      retryInMs: null,
+      cancellable: false,
+    };
+  });
+
   const dimensions = $derived(
     capture?.width !== null &&
       capture?.width !== undefined &&
@@ -55,15 +161,51 @@
       ? `${capture.width} × ${capture.height}`
       : '—',
   );
-  const destination = $derived(
-    capture?.upload ? hostLabel(capture.upload.destId) : '—',
+  const destination = $derived(share.destId === null ? '—' : hostLabel(share.destId));
+  const canDeleteFromHost = $derived(
+    share.status === 'uploaded' && (share.destId === 'imgur' || share.destId === 's3'),
   );
-  const deletion = $derived.by(() => {
-    const upload = capture?.upload;
-    if (!upload || !uploaded) {
-      return false;
+  const defaultUploadable = $derived(
+    defaultDestination !== '' &&
+      defaultDestination !== 'save_locally_only' &&
+      defaultDestination !== 'none',
+  );
+
+  $effect(() => {
+    const id = capture?.id ?? null;
+    if (id !== shownId) {
+      shownId = id;
+      live = null;
+      menuOpen = false;
+      actionError = '';
+      copyFailed = false;
     }
-    return upload.deletionUrl !== null || upload.destId === 'imgur' || upload.destId === 's3';
+  });
+
+  onMount(() => {
+    let unlisten: (() => void) | undefined;
+    const handler = (event: AppEvent): void => {
+      if (event.area !== 'upload' || event.event.kind !== 'stateChanged') {
+        return;
+      }
+      const state = event.event.data;
+      if (!capture || !matchesLive(state)) {
+        return;
+      }
+      live = state;
+      queueIds = { ...queueIds, [capture.id]: state.id };
+      if (state.status === 'done' || state.status === 'failed' || state.status === 'cancelled') {
+        actionError = '';
+      }
+    };
+    void onEvent(handler)
+      .then((stop) => {
+        unlisten = stop;
+      })
+      .catch(() => undefined);
+    return () => {
+      unlisten?.();
+    };
   });
 
   function hostLabel(id: string): string {
@@ -76,12 +218,143 @@
     return id;
   }
 
+  function destinationLabel(id: string): string {
+    if (id === 'save_locally_only') {
+      return 'Save locally only';
+    }
+    if (id === 'none') {
+      return 'None';
+    }
+    return hostLabel(id);
+  }
+
+  function describe(error: unknown): string {
+    if (
+      error !== null &&
+      typeof error === 'object' &&
+      'message' in error &&
+      typeof (error as { message: unknown }).message === 'string'
+    ) {
+      return (error as { message: string }).message;
+    }
+    return 'The upload could not be started.';
+  }
+
+  async function enqueue(destination: string): Promise<void> {
+    if (!capture || busy) {
+      return;
+    }
+    const id = capture.id;
+    busy = true;
+    actionError = '';
+    try {
+      const response = await call<UploadReq, UploadResp>('ipc_upload', {
+        kind: 'uploadElsewhere',
+        data: { capture_id: id, dest: destination },
+      });
+      if (response.kind !== 'accepted') {
+        throw new Error('The upload could not be started.');
+      }
+      queueIds = { ...queueIds, [id]: response.data.id };
+      live = {
+        id: response.data.id,
+        captureId: id,
+        dest: destination,
+        runId: null,
+        status: 'queued',
+        attempts: 0,
+        link: null,
+        pageLink: null,
+        deletionLink: null,
+        error: null,
+        retryInMs: null,
+      } satisfies UploadState;
+    } catch (error) {
+      actionError = describe(error);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function retry(): Promise<void> {
+    if (!capture || busy) {
+      return;
+    }
+    const queueId = share.queueId;
+    const liveQueueId = live !== null && live.id === queueId;
+    if (queueId !== null && liveQueueId) {
+      busy = true;
+      actionError = '';
+      try {
+        await call<UploadReq, UploadResp>('ipc_upload', {
+          kind: 'retry',
+          data: { id: queueId },
+        });
+        if (live !== null && live.id === queueId) {
+          live = { ...live, status: 'queued', error: null, retryInMs: null };
+        }
+      } catch (error) {
+        actionError = describe(error);
+      } finally {
+        busy = false;
+      }
+      return;
+    }
+    await enqueue(share.destId ?? defaultDestination);
+  }
+
+  async function cancel(): Promise<void> {
+    if (!capture || busy) {
+      return;
+    }
+    const queueId = share.queueId;
+    if (queueId === null) {
+      return;
+    }
+    busy = true;
+    actionError = '';
+    try {
+      await call<UploadReq, UploadResp>('ipc_upload', {
+        kind: 'cancel',
+        data: { id: queueId },
+      });
+      if (live !== null && live.id === queueId) {
+        live = { ...live, status: 'cancelled', retryInMs: null };
+      }
+    } catch (error) {
+      actionError = describe(error);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function toggleElsewhere(): Promise<void> {
+    if (menuOpen) {
+      menuOpen = false;
+      return;
+    }
+    menuOpen = true;
+    if (!destinationsLoaded) {
+      try {
+        destinations = (await listDestinations()).filter((item) => item.configured);
+      } catch {
+        destinations = [];
+      }
+      destinationsLoaded = true;
+    }
+  }
+
+  function chooseElsewhere(id: string): void {
+    menuOpen = false;
+    void enqueue(id);
+  }
+
   async function copyText(text: string | null | undefined): Promise<void> {
-    if (!text || !navigator.clipboard) {
+    if (!text) {
       return;
     }
     try {
-      await navigator.clipboard.writeText(text);
+      await copyLink(text);
       copyFailed = false;
     } catch {
       copyFailed = true;
@@ -172,57 +445,93 @@
     <section class="sharing" aria-label="Sharing">
       <div class="sharinghead">
         <h2 class="heading">Link</h2>
-        <Badge status={status} long />
+        <Badge status={share.status} long />
       </div>
 
-      {#if uploaded}
+      {#if share.status === 'uploaded'}
         <div class="linkrow">
-          <input readonly aria-label="Share link" value={capture.upload?.url ?? ''} />
+          <input readonly aria-label="Share link" value={share.url ?? ''} />
           <button
             type="button"
             class="hv linkbtn"
             aria-label="Copy link"
-            onclick={() => void copyText(capture.upload?.url)}
+            onclick={() => void copyText(share.url)}
           >
             <Icon name="copy" size={14} strokeWidth={1.8} />
           </button>
-          <button type="button" class="hv linkbtn" aria-label="Show QR code">
-            <Icon name="qr" size={14} strokeWidth={1.8} />
-          </button>
         </div>
-        {#if deletion}
+        {#if share.deletionUrl}
           <div class="deletion">
-            {#if capture.upload?.deletionUrl}
-              <span>Deletion link saved</span>
-              <button
-                type="button"
-                class="hv textbtn"
-                onclick={() => void copyText(capture.upload?.deletionUrl)}
-              >
-                Copy deletion link
-              </button>
-            {:else}
-              <span>Delete from {destination}</span>
-            {/if}
+            <span>Deletion link saved</span>
+            <button
+              type="button"
+              class="hv textbtn"
+              onclick={() => void copyText(share.deletionUrl)}
+            >
+              Copy deletion link
+            </button>
+          </div>
+        {:else if canDeleteFromHost}
+          <div class="deletion">
+            <span>Delete from {hostLabel(share.destId ?? '')}</span>
           </div>
         {/if}
-      {:else if local}
+      {:else if share.status === 'local'}
         <div class="note">Saved on this PC only. Upload it to get a shareable link.</div>
-        <button type="button" class="upload" onclick={() => onupload(capture.id)}>
-          Upload to {defaultDestination}
+        <button
+          type="button"
+          class="upload"
+          disabled={!defaultUploadable || busy}
+          onclick={() => void enqueue(defaultDestination)}
+        >
+          Upload to {destinationLabel(defaultDestination)}
         </button>
-      {:else if failed}
+      {:else if share.status === 'failed'}
         <div class="note">
-          Upload failed: {capture.upload?.error ?? 'the destination did not accept the file.'}
+          Upload failed: {share.error ?? 'the destination did not accept the file.'}
         </div>
         <div class="retry">
-          <button type="button" class="upload" onclick={() => onupload(capture.id)}>Retry</button>
-          <button type="button" class="hv secondary" onclick={() => onupload(capture.id)}>
+          <button type="button" class="upload" disabled={busy} onclick={() => void retry()}>
+            Retry
+          </button>
+          <button
+            type="button"
+            class="hv secondary"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onclick={() => void toggleElsewhere()}
+          >
             Upload elsewhere…
           </button>
+          {#if menuOpen}
+            <div class="menu" role="menu" aria-label="Upload elsewhere">
+              {#each destinations as item (item.id)}
+                <button
+                  type="button"
+                  class="menuitem"
+                  role="menuitem"
+                  onclick={() => chooseElsewhere(item.id)}
+                >
+                  {item.name}
+                </button>
+              {/each}
+              {#if destinations.length === 0}
+                <div class="menuempty">No destinations configured.</div>
+              {/if}
+            </div>
+          {/if}
         </div>
-      {:else if uploading}
+      {:else if share.status === 'uploading'}
         <div class="note">Uploading…</div>
+        <progress class="bar" aria-label="Uploading"></progress>
+        {#if share.cancellable}
+          <button type="button" class="hv secondary" disabled={busy} onclick={() => void cancel()}>
+            Cancel
+          </button>
+        {/if}
+      {/if}
+      {#if actionError}
+        <div class="note error" role="status">{actionError}</div>
       {/if}
       {#if copyFailed}
         <div class="note" role="status">The link could not be copied.</div>
@@ -401,10 +710,69 @@
     cursor: pointer;
   }
 
+  .upload:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
   .retry {
+    position: relative;
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
+  }
+
+  .menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 5;
+    min-width: 180px;
+    max-width: 260px;
+    padding: 4px;
+    border: 1px solid var(--stroke);
+    border-radius: 6px;
+    background: var(--layer);
+    box-shadow: 0 10px 24px var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .menuitem {
+    min-height: 30px;
+    padding: 0 8px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text);
+    font-size: 12px;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .menuitem:hover {
+    background: var(--subtle);
+  }
+
+  .menuempty {
+    padding: 6px 8px;
+    font-size: 12px;
+    color: var(--text3);
+  }
+
+  .bar {
+    width: 100%;
+    height: 4px;
+    border: none;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .error {
+    color: var(--err);
   }
 
   .secondary {

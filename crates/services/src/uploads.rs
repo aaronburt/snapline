@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use snapline_core::actions::ActionId;
 use snapline_core::ports::SecretStore as CoreSecretStore;
 use snapline_core::secret::SecretKey;
+use snapline_store::history::HistoryRepo;
+use snapline_store::history::{UploadState as HistoryUploadState, UploadUpdate};
 use snapline_store::settings::uploads::Retry;
 use snapline_upload::queue;
 use ts_rs::TS;
@@ -25,9 +27,81 @@ pub enum Event {
     StateChanged(UploadState),
 }
 
+pub const LAST_LINK_KEY: &str = "last_link";
+pub const TEST_RUN_ID: &str = "snapline-destination-test";
+
+pub fn last_link(services: &Services) -> Result<Option<String>, ServiceError> {
+    let settings = services.settings_snapshot()?;
+    Ok(settings
+        .uploads
+        .extra
+        .get(LAST_LINK_KEY)
+        .and_then(toml::Value::as_str)
+        .map(str::to_owned))
+}
+
+pub fn record_last_link(services: &Services, link: &str) -> Result<(), ServiceError> {
+    let mut uploads = serde_json::Map::new();
+    uploads.insert(
+        LAST_LINK_KEY.to_owned(),
+        serde_json::Value::String(link.to_owned()),
+    );
+    let mut patch = serde_json::Map::new();
+    patch.insert("uploads".to_owned(), serde_json::Value::Object(uploads));
+    services.update_settings(&serde_json::Value::Object(patch))?;
+    Ok(())
+}
+
+pub fn persist(services: &Services, state: &UploadState) {
+    let Some(capture_id) = state.capture_id else {
+        return;
+    };
+    if state.run_id.as_deref() == Some(TEST_RUN_ID) {
+        return;
+    }
+    let paths = match services.paths() {
+        Ok(paths) => paths,
+        Err(error) => {
+            tracing::warn!(%error, "the upload state could not be saved");
+            return;
+        }
+    };
+    let mut repo = match HistoryRepo::open_write(&paths.history_file) {
+        Ok(repo) => repo,
+        Err(error) => {
+            tracing::warn!(%error, "the upload state could not be saved");
+            return;
+        }
+    };
+    let updated_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or_default();
+    let update = UploadUpdate {
+        capture_id,
+        dest_id: state.dest.clone(),
+        state: match state.status {
+            UploadStatus::Queued => HistoryUploadState::Queued,
+            UploadStatus::Uploading | UploadStatus::BackingOff => HistoryUploadState::Uploading,
+            UploadStatus::Done => HistoryUploadState::Done,
+            UploadStatus::Failed => HistoryUploadState::Failed,
+            UploadStatus::Cancelled => HistoryUploadState::Cancelled,
+        },
+        url: state.link.clone(),
+        deletion_url: state.deletion_link.clone(),
+        error: state.error.clone(),
+        attempts: i64::from(state.attempts),
+        updated_at,
+    };
+    if let Err(error) = repo.set_upload(update) {
+        tracing::warn!(%error, "the upload state could not be saved");
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Job {
     Ping,
+    Persist(UploadState),
 }
 
 pub trait FileSource: Send + Sync {
@@ -51,21 +125,21 @@ pub struct UploadRuntime {
 
 #[derive(Clone)]
 pub struct UploadService {
-    _services: Services,
+    services: Services,
     runtime: Option<UploadRuntime>,
 }
 
 impl UploadService {
     pub(crate) fn new(services: &Services) -> Self {
         Self {
-            _services: services.clone(),
+            services: services.clone(),
             runtime: None,
         }
     }
 
     pub fn with_runtime(services: &Services, runtime: UploadRuntime) -> Self {
         Self {
-            _services: services.clone(),
+            services: services.clone(),
             runtime: Some(runtime),
         }
     }
@@ -103,6 +177,10 @@ impl UploadService {
                     snapshots.iter().map(UploadState::from).collect(),
                 ))
             }
+            UploadReq::LastLink => Ok(UploadResp::LastLink {
+                link: last_link(&self.services)?,
+            }),
+            UploadReq::CopyLink { .. } => Err(ServiceError::NotYet),
             UploadReq::UploadElsewhere { capture_id, dest } => {
                 if capture_id <= 0 {
                     return Err(ServiceError::Invalid(
@@ -124,7 +202,10 @@ impl UploadService {
                 })?;
                 let id = runtime
                     .queue
-                    .enqueue(queue::UploadJob::new(uploader, file, dest, None))
+                    .enqueue(
+                        queue::UploadJob::new(uploader, file, dest, None)
+                            .with_capture_id(capture_id),
+                    )
                     .map_err(queue_error)?;
                 Ok(UploadResp::Accepted { id: id.get() })
             }
@@ -164,7 +245,12 @@ impl UploadService {
                 let (uploader, file) = operations.test_uploader(&id)?;
                 let upload_id = runtime
                     .queue
-                    .enqueue(queue::UploadJob::new(uploader, file, id.clone(), None))
+                    .enqueue(queue::UploadJob::new(
+                        uploader,
+                        file,
+                        id.clone(),
+                        Some(TEST_RUN_ID.to_owned()),
+                    ))
                     .map_err(queue_error)?;
                 let deadline = Instant::now() + Duration::from_secs(120);
                 loop {
@@ -270,8 +356,16 @@ impl UploaderThread {
         destinations: Arc<dyn DestinationSource>,
         events: crossbeam_channel::Sender<AppEvent>,
     ) -> Result<Self, ServiceError> {
+        let sink_services = services.clone();
         let sink = move |event: queue::UploadEvent| {
             let state = UploadState::from(&event.0);
+            if state.status == UploadStatus::Done && state.run_id.as_deref() != Some(TEST_RUN_ID) {
+                if let Some(link) = state.link.as_deref() {
+                    if let Err(error) = record_last_link(&sink_services, link) {
+                        tracing::warn!(%error, "the last link could not be saved");
+                    }
+                }
+            }
             let _ = events.send(AppEvent::Upload(Event::StateChanged(state)));
         };
         let queue = queue::Queue::start_with_sink(Arc::new(CoreSecrets(secrets)), policy, sink)
@@ -372,6 +466,7 @@ impl From<&queue::UploadSnapshot> for UploadState {
         };
         Self {
             id: snapshot.id.get(),
+            capture_id: snapshot.capture_id,
             dest: snapshot.dest.clone(),
             run_id: snapshot.run_id.clone(),
             status: UploadStatus::from(&snapshot.status),
@@ -395,8 +490,11 @@ pub fn retry_policy(retry: Retry) -> queue::RetryPolicy {
     queue::RetryPolicy::new(retries)
 }
 
-pub fn run(_action: &ActionId, _services: &Services) -> Result<(), ServiceError> {
-    Err(ServiceError::NotYet)
+pub fn run(action: &ActionId, services: &Services) -> Result<(), ServiceError> {
+    match action.as_str() {
+        "upload_clipboard" => crate::clipboard_upload::run(services),
+        _ => Err(ServiceError::NotYet),
+    }
 }
 
 #[cfg(test)]
@@ -407,7 +505,9 @@ mod tests {
 
     use snapline_core::ports::{SecretError as CoreSecretError, SecretStore};
     use snapline_core::secret::Secret;
+    use snapline_store::io::Paths;
     use snapline_upload::error::UploadError;
+    use tempfile::TempDir;
 
     use super::*;
 
@@ -498,6 +598,28 @@ mod tests {
             Arc::new(TestDestinations { uploader }),
         )
         .expect("uploader thread")
+    }
+
+    struct SettingsFixture {
+        _directory: TempDir,
+        services: Services,
+    }
+
+    fn settings_fixture() -> SettingsFixture {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let root = directory.path();
+        let paths = Paths::resolve(
+            &root.join("app"),
+            &root.join("roaming"),
+            &root.join("local"),
+            &root.join("profile"),
+            false,
+        );
+        let services = Services::with_paths(paths).expect("services");
+        SettingsFixture {
+            _directory: directory,
+            services,
+        }
     }
 
     fn event(thread: &UploaderThread) -> AppEvent {
@@ -613,6 +735,137 @@ mod tests {
                 .handle(UploadReq::Retry { id: 99 })
                 .expect_err("retry"),
             ServiceError::NotFound
+        );
+        thread.join().expect("join");
+    }
+
+    #[test]
+    fn the_last_link_is_empty_until_an_upload_succeeds() {
+        let fixture = settings_fixture();
+        assert_eq!(
+            fixture.services.upload().handle(UploadReq::LastLink),
+            Ok(UploadResp::LastLink { link: None })
+        );
+    }
+
+    #[test]
+    fn a_successful_upload_saves_the_last_link_in_settings() {
+        let fixture = settings_fixture();
+        let uploader = Arc::new(TestUploader {
+            calls: Mutex::new(0),
+        });
+        let thread = UploaderThread::start(
+            &fixture.services,
+            Arc::new(TestSecrets),
+            queue::RetryPolicy::new(0),
+            Arc::new(TestFiles),
+            Arc::new(TestDestinations { uploader }),
+        )
+        .expect("uploader thread");
+        let accepted = thread
+            .service()
+            .handle(UploadReq::UploadElsewhere {
+                capture_id: 1,
+                dest: "test".to_owned(),
+            })
+            .expect("accepted");
+        let UploadResp::Accepted { id } = accepted else {
+            panic!("unexpected response");
+        };
+        loop {
+            match event(&thread) {
+                AppEvent::Upload(Event::StateChanged(state))
+                    if state.id == id && state.status == UploadStatus::Done =>
+                {
+                    break;
+                }
+                AppEvent::Upload(Event::StateChanged(_)) => continue,
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+        let expected = Some("https://example.test/shot.png".to_owned());
+        assert_eq!(
+            thread.service().handle(UploadReq::LastLink),
+            Ok(UploadResp::LastLink {
+                link: expected.clone()
+            })
+        );
+        let settings = fixture.services.settings_snapshot().expect("settings");
+        assert_eq!(
+            settings
+                .uploads
+                .extra
+                .get(LAST_LINK_KEY)
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned),
+            expected
+        );
+        let settings_file = fixture.services.paths().expect("paths").settings_file;
+        let saved = std::fs::read_to_string(settings_file).expect("settings file");
+        assert!(saved.contains("last_link"));
+        thread.join().expect("join");
+    }
+
+    #[test]
+    fn a_failed_upload_does_not_replace_the_last_link() {
+        struct FailingUploader;
+
+        impl queue::Uploader for FailingUploader {
+            fn upload(
+                &self,
+                _file: &queue::UploadFile,
+                _secrets: &dyn queue::SecretStore,
+            ) -> Result<queue::Uploaded, UploadError> {
+                Err(UploadError::Permanent("the host refused the file".to_owned()))
+            }
+
+            fn delete(
+                &self,
+                _link: &queue::DeletionLink,
+                _secrets: &dyn queue::SecretStore,
+            ) -> Result<(), UploadError> {
+                Ok(())
+            }
+        }
+
+        let fixture = settings_fixture();
+        record_last_link(&fixture.services, "https://example.test/previous.png").expect("last link");
+        let thread = UploaderThread::start(
+            &fixture.services,
+            Arc::new(TestSecrets),
+            queue::RetryPolicy::new(0),
+            Arc::new(TestFiles),
+            Arc::new(TestDestinations {
+                uploader: Arc::new(FailingUploader),
+            }),
+        )
+        .expect("uploader thread");
+        let accepted = thread
+            .service()
+            .handle(UploadReq::UploadElsewhere {
+                capture_id: 1,
+                dest: "test".to_owned(),
+            })
+            .expect("accepted");
+        let UploadResp::Accepted { id } = accepted else {
+            panic!("unexpected response");
+        };
+        loop {
+            match event(&thread) {
+                AppEvent::Upload(Event::StateChanged(state))
+                    if state.id == id && state.status == UploadStatus::Failed =>
+                {
+                    break;
+                }
+                AppEvent::Upload(Event::StateChanged(_)) => continue,
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+        assert_eq!(
+            thread.service().handle(UploadReq::LastLink),
+            Ok(UploadResp::LastLink {
+                link: Some("https://example.test/previous.png".to_owned())
+            })
         );
         thread.join().expect("join");
     }

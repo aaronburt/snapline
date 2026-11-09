@@ -170,7 +170,7 @@ fn handle_job(job: Job, services: &Services, events: &Sender<AppEvent>) {
                 tracing::debug!(%error, action = %action, "the worker could not run an action");
             }
         }
-        Job::Area(area) => send_area(area, events),
+        Job::Area(area) => send_area(area, services, events),
     }
 }
 
@@ -178,7 +178,7 @@ fn run_action(action: &ActionId, services: &Services) -> Result<(), ServiceError
     actions::dispatch(action, services)
 }
 
-fn send_area(area: AreaJob, events: &Sender<AppEvent>) {
+fn send_area(area: AreaJob, services: &Services, events: &Sender<AppEvent>) {
     match area {
         AreaJob::App(job) => match job {
             app::Job::Ping => drop(events.send(AppEvent::App(app::Event::Ping))),
@@ -194,6 +194,7 @@ fn send_area(area: AreaJob, events: &Sender<AppEvent>) {
         },
         AreaJob::Upload(job) => match job {
             uploads::Job::Ping => drop(events.send(AppEvent::Upload(uploads::Event::Ping))),
+            uploads::Job::Persist(state) => uploads::persist(services, &state),
         },
         AreaJob::Workflow(job) => match job {
             workflows::Job::Ping => drop(events.send(AppEvent::Workflow(workflows::Event::Ping))),

@@ -40,7 +40,26 @@ pub async fn ipc_app(
             return Ok(AppResp::PanelClose);
         }
         AppReq::PanelCopyLink => {
-            tracing::info!("copying the last link from the panel is not available yet");
+            let services = services.inner().clone();
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                let response = services
+                    .upload()
+                    .handle(snapline_services::dto::upload::UploadReq::LastLink)?;
+                if let snapline_services::dto::upload::UploadResp::LastLink {
+                    link: Some(link),
+                } = response
+                {
+                    snapline_win::clipboard::Clipboard::new()
+                        .set_text(&link)
+                        .map_err(|error| {
+                            snapline_services::ServiceError::Io(error.to_string())
+                        })?;
+                }
+                Ok::<(), snapline_services::ServiceError>(())
+            })
+            .await
+            .map_err(IpcError::join)?;
+            result.map_err(IpcError::from_service)?;
             return Ok(AppResp::PanelCopyLink);
         }
         AppReq::OpenMain { route } => {

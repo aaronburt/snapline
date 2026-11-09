@@ -17,6 +17,8 @@ pub enum UploadStatus {
 pub struct UploadState {
     #[ts(as = "u32")]
     pub id: u64,
+    #[ts(as = "Option<u32>")]
+    pub capture_id: Option<i64>,
     pub dest: String,
     pub run_id: Option<String>,
     pub status: UploadStatus,
@@ -46,6 +48,10 @@ pub enum UploadReq {
         id: u64,
     },
     List,
+    LastLink,
+    CopyLink {
+        link: String,
+    },
     UploadElsewhere {
         #[ts(as = "i32")]
         capture_id: i64,
@@ -60,6 +66,10 @@ pub enum UploadResp {
     Pong,
     State(UploadState),
     States(Vec<UploadState>),
+    LastLink {
+        link: Option<String>,
+    },
+    LinkCopied,
     Accepted {
         #[ts(as = "u32")]
         id: u64,
