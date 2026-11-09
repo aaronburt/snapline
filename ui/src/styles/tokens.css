@@ -1,0 +1,71 @@
+:root {
+  color-scheme: dark;
+  --bg: #202020;
+  --mica: #1c1c1c;
+  --layer: #272727;
+  --card: #2d2d2d;
+  --cardAlt: #343434;
+  --stroke: rgba(255,255,255,0.08);
+  --strokeHi: rgba(255,255,255,0.16);
+  --text: #ffffff;
+  --text2: #d0d0d0;
+  --text3: #a8a8a8;
+  --accent: #60cdff;
+  --onAccent: #002a40;
+  --accentSoft: rgba(96,205,255,0.15);
+  --subtle: rgba(255,255,255,0.06);
+  --ok: #6ccb5f;
+  --okSoft: rgba(108,203,95,0.15);
+  --err: #ff99a4;
+  --errSoft: rgba(255,153,164,0.14);
+  --shadow: rgba(0,0,0,0.5);
+  --menuLayer: #2c2c2c;
+  --red: #e5484d;
+  --orange: #f76b15;
+  --yellow: #ffd60a;
+  --green: #30a46c;
+  --blue: #0090ff;
+  --white: #ffffff;
+  --redHighlight: rgba(229,72,77,0.32);
+  --orangeHighlight: rgba(247,107,21,0.32);
+  --yellowHighlight: rgba(255,214,10,0.55);
+  --greenHighlight: rgba(48,164,108,0.32);
+  --blueHighlight: rgba(0,144,255,0.28);
+  --whiteHighlight: rgba(200,200,200,0.4);
+  --dim: rgba(0,0,0,0.55);
+  --hintPill: rgba(20,20,20,0.82);
+  --hintText: #e6e6e6;
+  --type-sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --type-sans-fallback: 'Segoe UI', system-ui, sans-serif;
+  --type-mono: 'Cascadia Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
+  --type-mono-fallback: Consolas, ui-monospace, monospace;
+  --type-base-size: 13px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f3f3f3;
+    --mica: #eeeeee;
+    --layer: #f9f9f9;
+    --card: #ffffff;
+    --cardAlt: #f5f5f5;
+    --stroke: rgba(0,0,0,0.09);
+    --strokeHi: rgba(0,0,0,0.18);
+    --text: #1a1a1a;
+    --text2: #3b3b3b;
+    --text3: #5f5f5f;
+    --accent: #005fb8;
+    --onAccent: #ffffff;
+    --accentSoft: rgba(0,95,184,0.10);
+    --subtle: rgba(0,0,0,0.045);
+    --ok: #0f7b0f;
+    --okSoft: rgba(15,123,15,0.10);
+    --err: #c42b1c;
+    --errSoft: rgba(196,43,28,0.10);
+    --shadow: rgba(0,0,0,0.18);
+    --menuLayer: #f9f9f9;
+  }
+}

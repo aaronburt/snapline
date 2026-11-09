@@ -1,4 +1,8 @@
+mod bindings;
+mod budget;
+mod icons;
 mod no_comments;
+mod tokens;
 
 use std::env;
 use std::fs;
@@ -14,11 +18,15 @@ fn main() -> Result<()> {
     let rest: Vec<String> = args.collect();
     match command.as_str() {
         "ui" => ui(&root),
+        "tokens" => tokens_command(&root, &rest),
+        "icons" => icons_command(&root, &rest),
+        "bindings" => bindings_command(&root, &rest),
         "check" => check(&root),
         "test" => test(&root),
+        "test-desktop" => test_desktop(&root),
         "ci" => ci(&root),
         "no-comments" => no_comments::run(&root),
-        "budget" => budget(&root, &rest),
+        "budget" => budget::run(&root, &rest),
         "help" | "--help" | "-h" => {
             help();
             Ok(())
@@ -29,7 +37,7 @@ fn main() -> Result<()> {
 
 fn help() {
     println!(
-        "cargo xtask <command>\n\ncommands:\n  ui           install and build the web frontend\n  check        run every static check\n  test         run unit and component tests\n  ci           check, test and budget\n  no-comments  scan for forbidden comments\n  budget       measure resource use"
+        "cargo xtask <command>\n\ncommands:\n  ui           install and build the web frontend\n  bindings     generate TypeScript types from the Rust DTOs\n  tokens       generate CSS and overlay tokens\n  icons        render tray menu icons\n  check        run every static check\n  test         run unit and component tests\n  test-desktop run the ignored desktop tests\n  ci           check, test and budget\n  no-comments  scan for forbidden comments\n  budget       measure resource use"
     );
 }
 
@@ -102,8 +110,35 @@ fn modified(path: &Path) -> Result<std::time::SystemTime> {
         .modified()?)
 }
 
+fn tokens_command(root: &Path, args: &[String]) -> Result<()> {
+    match args.first().map(String::as_str) {
+        None => tokens::generate(root),
+        Some("--check") if args.len() == 1 => tokens::check(root),
+        Some(other) => bail!("unknown tokens option: {other}"),
+    }
+}
+
+fn icons_command(root: &Path, args: &[String]) -> Result<()> {
+    match args.first().map(String::as_str) {
+        None => icons::generate(root),
+        Some("--check") if args.len() == 1 => icons::check(root),
+        Some(other) => bail!("unknown icons option: {other}"),
+    }
+}
+
+fn bindings_command(root: &Path, args: &[String]) -> Result<()> {
+    match args.first().map(String::as_str) {
+        None => bindings::generate(root),
+        Some("--check") if args.len() == 1 => bindings::check(root),
+        Some(other) => bail!("unknown bindings option: {other}"),
+    }
+}
+
 fn check(root: &Path) -> Result<()> {
     ui(root)?;
+    tokens::check(root)?;
+    bindings::check(root)?;
+    icons::check(root)?;
     no_comments::run(root)?;
     run(root, "cargo", &["fmt", "--all", "--", "--check"])?;
     run(
@@ -137,16 +172,16 @@ fn test(root: &Path) -> Result<()> {
     run_npm(root, &["run", "test"])
 }
 
+fn test_desktop(root: &Path) -> Result<()> {
+    run(
+        root,
+        "cargo",
+        &["nextest", "run", "--workspace", "--run-ignored", "only"],
+    )
+}
+
 fn ci(root: &Path) -> Result<()> {
     check(root)?;
     test(root)?;
-    budget(root, &[])
-}
-
-fn budget(root: &Path, _args: &[String]) -> Result<()> {
-    println!(
-        "budget: tray idle budget check is a stub in milestone 0; task 1.9 installs the full check (root {})",
-        root.display()
-    );
-    Ok(())
+    budget::run(root, &[])
 }

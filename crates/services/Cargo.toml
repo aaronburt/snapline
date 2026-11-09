@@ -10,6 +10,7 @@ snapline-store = { path = "../store" }
 snapline-upload = { path = "../upload" }
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 crossbeam-channel.workspace = true
 ts-rs.workspace = true
 thiserror.workspace = true

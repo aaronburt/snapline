@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 
 const SKIP_DIRS: &[&str] = &[
     "target",
-    "node_modules",
-    "dist",
+    "ui/node_modules",
+    "ui/dist",
     ".git",
     "third_party",
     "design/v2",

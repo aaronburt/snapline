@@ -981,12 +981,15 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 - `xtask bindings` command and the first generated bindings.
 - Tests: the router sends every catalogue action to a module; every route resolves; `ping` round trips for each area (Rust unit test on the handlers, vitest with a mocked `invoke`).
 - Owns: every file above.
+- Built: the full action catalogue, the services skeleton and router stubs, all eight DTO areas with `Ping`/`Pong`, all eight IPC commands registered once, the complete hash route table with placeholder pages, typed wrappers, event subscription, `cargo xtask bindings` with staleness checking, and the router/route/ping tests. Generated bindings include uniquely named area event types.
 
 **1.1 Webview lifecycle and the gate.** Needs 1.0.
 - `apps/snapline/src/windows.rs` (`WindowManager`) and `webview_tuning.rs` as in section 5.2, including the ready handshake, linger timer, exit prevention, and the release-build WebView2 settings.
 - Measure with Aaron's permission: tray idle, open main, close, after linger plus 10 s. Try the extra browser arguments one at a time and the memory target level; keep what helps; write the results and final settings into ADR 0004.
 - If the gate fails, try fallback A. If that fails, stop and report to Aaron with the numbers.
 - Owns: `apps/snapline/src/windows.rs`, `webview_tuning.rs`, `tauri.conf.json`, `capabilities/main.json`, `docs/adr/0004-webview2-settings.md`.
+- Built: WindowManager for panel and main, hidden creation with theme background and shared WebView2 data directory, ready handshake, destroy-on-close with 15 s linger and generation-based cancellation, exit prevention, release WebView2 hardening, main-window memory target on minimise, capability file, and a temporary Open Snapline tray entry plus `--open-main` single-instance path for the gate. Shared DTO additions: `AppReq::Ready`, `AppResp::Ready`, `App::Navigate`.
+- Gate measurement: PASS. Idle 1,605,632 bytes with 0 WebView2 processes; main window open 65,814,528 bytes across 6 processes; 25 s after close 3,600,384 bytes with 0 processes, 1,994,752 bytes above the first idle figure. `--disable-component-update` saved 3,342,336 bytes and is kept; `--disable-background-networking` was rejected; the optional memory target level saved 9,052,160 bytes, below the 10 MB threshold, and was removed. Results recorded in ADR 0004.
 
 **1.2 Tray and menu.** Needs 1.0.
 - `apps/snapline/src/tray.rs`: icon (normal, recording, paused variants), tooltip, left-click (panel), double-click (main), right-click menu exactly as section 7.3 with icons from `apps/snapline/icons/menu/` (task 1.3 generates them; until then, no icons), check items for System audio and Microphone bound to settings later (stub state now).
@@ -994,36 +997,44 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 - Second launch (single-instance callback): opens the main window, or runs the action given by `--action <id>`.
 - Check dark menus in dark mode (with Aaron's permission). If muda cannot, stop and ask (section 7.3).
 - Owns: `apps/snapline/src/tray.rs`, `assets/icons/`.
+- Built: full native menu in 7.3 order with `IconMenuItem` 16px theme-aware icons, chord labels from the action catalogue, Record screen submenu, System audio and Microphone check items, Open, Settings, Pause/Resume, Exit; left-click panel and double-click main; normal, recording and paused icons and the three tooltips; second launch opens main or runs `--action <id>`; tray state in a managed handle. Dark-menu rendering still needs a visual check with Aaron. Check items have no icon because Tauri's `CheckMenuItem` has no icon API.
 
 **1.3 Tokens, base styles, components, icons.** Needs 1.0.
 - Complete `design/tokens.toml` (section 7.1), `xtask tokens`, `ui/src/styles/base.css` (section 7.2), `ui/src/lib/icons.ts` (every icon path used in the boards, named by meaning: `region`, `window`, `screen`, `scroll`, `record`, `gif`, `ocr`, `colour`, `ruler`, `qr`, `edit`, `pin`, `copy`, `folder`, `upload`, `link`, `gear`, `open`, `search`, `cloud`, `server`, `code`, `trash`, `play`, `pause`, `power`, `check`, `chevronRight`, `back`, `minimise`, `maximise`, `restore`, `close`, `grid`, `list`, `drag`, `plus`, `eye`, `eyeOff`, `bell`, `speaker`, `mic`, `film`, `timer`, `cursor`, plus any other the boards use), `xtask icons`, every component in section 7.4 with a vitest test each (renders, labels, keyboard behaviour where it has any).
+- Built: token generator with `--check`; generated CSS and overlay palette; 86 design icons plus caption icons in `icons.ts`; 92 tray menu PNGs (23 names × 16/32 × dark/light) from an in-house SVG rasteriser and PNG writer; base styles; all 20 components with a test each. `restore` and `eyeOff` were not drawn in any v2 board; Aaron approved the standard two-square Restore glyph and an eye-with-slash eyeOff, both added.
 - Owns: `design/tokens.toml`, `xtask/src/tokens.rs`, `xtask/src/icons.rs`, `ui/src/styles/`, `ui/src/lib/icons.ts`, `ui/src/components/`, `crates/overlay-windows/src/tokens.rs`. Shared: one arm each in `xtask/src/main.rs`.
 
 **1.4 Quick panel.** Needs 1.1 and 1.3.
 - `ui/src/windows/panel/QuickPanel.svelte` exactly as section 7.3, with placeholder recents (three items shaped like the board) and a placeholder last link.
 - Rust: placement above the tray icon, `PanelResize`, close on blur and Esc, `skip_taskbar`, always on top, rounded corners.
 - Owns: `ui/src/windows/panel/`, `apps/snapline/src/panel.rs`, `crates/services/src/dto/app.rs` (panel requests), `crates/services/src/app.rs`.
+- Built: QuickPanel exactly from the board with tiles, recents, last-link footer, tooltips and Esc/action close; panel placement maths for all four taskbar edges, 344 logical width, fitted height from `PanelResize`, focus-loss destroy and Win11 rounded corners. DTO adds `PanelResize`, `PanelClose`, `PanelAction`, `PanelCopyLink`, `OpenMain`, `OpenCapture`; bindings regenerated. Tests written, not run.
 
 **1.5 Main window shell, History, Workflows and Tools with placeholder data.** Needs 1.1 and 1.3.
 - `MainShell`, `TitleBar` use, `Nav`, page headers, History grid with the board's sample items, detail pane, filters (client-side over the sample data for now), grid and list toggle, Workflows cards with the five design workflows, Tools grid with the eight cards (disabled state as in 7.3).
+- Built: MainShell with Mica-aware transparent root and settings routing; custom title bar with search, caption buttons and "Snapline Settings"; Nav with the fresh-install "Save locally only" destination; History grid/list, filters, detail pane and placeholder board data; five workflow cards; eight disabled tool cards. Tests written for filters, detail actions, default-workflow guard and tool cards.
 - Owns: `ui/src/windows/main/MainShell.svelte`, `Nav.svelte`, `TitleBar.svelte`, `ui/src/windows/main/history/`, `ui/src/windows/main/workflows/WorkflowsPage.svelte`, `ui/src/windows/main/tools/ToolsPage.svelte`.
 
 **1.6 Settings pages with placeholder values.** Needs 1.3.
 - `SettingsShell` and the four pages exactly as section 7.3 with the default values listed there, held in a local placeholder object (wired to Rust in milestone 2).
+- Built: SettingsShell with Back to Snapline, "Find a setting" filter and cross-page matches; General, Capture, Hotkeys and Uploads pages with every 7.3 row and default; local placeholder state; tests for token preview, defaults and filtering.
 - Owns: `ui/src/windows/main/settings/`.
 
 **1.7 Theme, Mica and title bar behaviour.** Needs 1.1.
 - Windows 11 detection (`RtlGetVersion` build ≥ 22000), Mica effect, Windows 10 solid background, `hasMica` in `ipc_app` → `Info`, theme change while open (CSS follows automatically; Rust updates the window background colour and Mica dark mode flag with `DwmSetWindowAttribute(DWMWA_USE_IMMERSIVE_DARK_MODE)`).
 - Owns: `apps/snapline/src/theme.rs`, `crates/platform-windows/src/theme.rs`. Shared: `crates/services/src/dto/app.rs` (`Info`, agreed with 1.4: 1.4 owns the file, 1.7 sends its variant to 1.4's owner or the integrator).
+- Built: dynamic `RtlGetVersion` through ntdll with a registry fallback; Windows build/theme types in `snapline-win`; Mica effect on Win11 main window, solid `--mica` on Win10 and `--layer` panel; `AppReq::Info`/`AppResp::Info { hasMica }`; theme refresh and `DWMWA_USE_IMMERSIVE_DARK_MODE`; MainShell transparent root when `hasMica`. The services `app.rs` match arm was added for the new DTO variant.
 
 **1.8 Logging and crash handling.** Needs 1.0.
 - As in "What it needs". Test: a forced panic in a test binary writes a report file (the message box is skipped when `SNAPLINE_TEST=1`).
+- Built: daily rolling logs in `%LOCALAPPDATA%\SnapLine\logs` with 7 kept and a non-blocking guard; bad-path console fallback; panic hook writing `crashes\<unix seconds>.txt` with message, location, backtrace, version and Windows build, native message box and exit, skipped under `SNAPLINE_TEST=1`. Wired before logging in `main`. Tests include a headless child-process panic test.
 - Owns: `apps/snapline/src/logging.rs`, `apps/snapline/src/crash.rs`.
 
 **1.9 Budget.** Needs 1.1, 1.4, 1.5.
 - Full `cargo xtask budget` from section 6, including `--budget-run` and `--budget-open` handling in the app (through the single-instance argument channel).
 - Check one sample against Task Manager with Aaron.
 - Owns: `xtask/src/budget.rs`, `apps/snapline/src/cli.rs`.
+- Built: typed CLI flags (`--budget-run`, `--budget-open`, `--action`, `--autostart`, `--uninstall-cleanup`); app opens budget windows through the normal WindowManager path; Rust budget runner samples private working set via GetProcessMemoryInfo with a QueryWorkingSet fallback, identifies real Snapline WebView2 descendants by creation time and data directory, samples CPU over 10 s, opens/closes panel and main, waits linger + 10 s, and enforces every M1 section 6 row. Tests written, not run. The Task Manager cross-check still needs Aaron.
 
 ### Milestone 2: Settings and hotkeys
 
@@ -1052,10 +1063,13 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **Order:** 2.1, 2.3, 2.6, 2.7, 2.8 together. Then 2.2, 2.4. Then 2.5.
 
 **2.1 Settings model and file.** Owns: `crates/store/src/settings/` (`mod.rs`, `general.rs`, `capture.rs`, `hotkeys.rs`, `uploads.rs`, `workflows.rs` with an empty list for now, `window.rs`, `migrate.rs`), `crates/store/src/io.rs` (paths including portable mode, atomic write). Tests: round trip, defaults, unknown keys kept, bad file kept aside, migration from version 1 to itself (the framework).
+- Built: portable/installed `Paths`; atomic settings write through `std::fs::rename` (MoveFileEx replace semantics) after `sync_all`; full version-1 Settings with every 7.3 default; unknown keys retained at every level; bad-file copy with the exact notice; migration framework with a 1→1 step; tests for defaults, round trip, unknown keys, bad file, portable paths and migration. `tempfile` added as a store dev-dependency.
 
 **2.2 Settings service, IPC and page binding.** Needs 2.1. Owns: `crates/services/src/settings.rs`, `crates/services/src/dto/settings.rs`, `ui/src/lib/ipc/settings.ts`, and the binding code in `ui/src/windows/main/settings/` pages (replacing the placeholder object). Includes `PreviewName` (calls 4.2's naming code once it exists; until then returns the pattern with the extension) and `BrowseFolder` (native `IFileOpenDialog` with `FOS_PICKFOLDERS`, in `crates/platform-windows/src/dialogs.rs`, which this task owns).
+- Built: `Services` now holds loaded settings behind a mutex with `with_paths`, snapshot/update and an optional folder-picker port; typed mirrored Settings DTO with ts-rs; Get/Update/PreviewName/BrowseFolder; deep JSON patch merge preserving unknown keys; Win32 folder dialog with cancel path; the four settings pages now load and save real values with 300 ms debounce on text fields. Bindings regenerated. Tests written, not run. `toml` was added to services (already a workspace dependency).
 
 **2.3 Chords and the plan.** Owns: `crates/core/src/chord.rs`, `crates/core/src/hotkey_plan.rs`. Tests: parsing every key name, normalising, display strings exactly as section 7.5 writes them, `proptest` no chord bound twice.
+- Built: `Modifiers`/`Key`/`Chord` with parsing, normalisation, display, reserved-key refusal, and the exact `Windows uses this shortcut.` message; `Owner`, `Blocked` with internal/external reasons, deterministic `HotkeyPlan`, `with_external`, and `preview`. Tests cover all listed key names, the 7.5 defaults, malformed input, internal/external clashes and two proptest properties. `proptest` added as a core dev-dependency. Aaron confirmed the common Windows-reserved Win+key set implemented.
 
 **2.4 Input thread and hotkeys service.** Needs 2.1, 2.3. Owns: `crates/platform-windows/src/input.rs` (message-only window, `RegisterHotKey`, `WM_HOTKEY`, power and setting-change messages), `crates/platform-windows/src/prtsc.rs`, `crates/services/src/hotkeys.rs`, `crates/services/src/dto/hotkeys.rs`, `ui/src/lib/ipc/hotkeys.ts`. Desktop tests (`#[ignore = "desktop"]`): register and unregister a throwaway chord; detect an externally registered chord.
 
@@ -1064,8 +1078,10 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **2.6 Launch at sign-in.** Owns: `crates/platform-windows/src/autostart.rs`, plus `--autostart` handling in `apps/snapline/src/cli.rs` (shared with 1.9's file: add the flag only).
 
 **2.7 Credential Manager.** Owns: `crates/platform-windows/src/credentials.rs`, `crates/core/src/secret.rs`. Desktop tests with `SnapLineTest:` targets, cleaned up after.
+- Built: zeroising `Secret` with `***` Debug and constant-time-style equality; validated `SecretKey` with target `SnapLine:<dest-id>:<field>` and user `SnapLine`; Win32 CredWrite/CredRead/CredDelete wrapper with `CRED_TYPE_GENERIC`, `CRED_PERSIST_LOCAL_MACHINE`, idempotent delete, zeroed CredFree guard and no secret in errors. Desktop tests written with RAII cleanup, not run.
 
 **2.8 Toasts and sounds.** Owns: `crates/platform-windows/src/notify.rs`, `crates/platform-windows/src/sound.rs` (`PlaySoundW` with `SND_ASYNC | SND_FILENAME` for `assets/sounds/shutter.wav` and `assets/sounds/done.wav`; the WAV files are Aaron's to provide; until then use `SND_ALIAS` with `SystemAsterisk`).
+- Built: WinRT toasts with the exact AUMID and ToastGeneric XML, HKCU AppUserModelId registration/removal, activation callback with a capture route, and typed errors. Sounds use the two WAV paths with the `SystemAsterisk` alias fallback when the files are absent. Tests written, not run.
 
 ### Milestone 3: Screenshot
 
@@ -1090,6 +1106,7 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **Order:** 3.1, 3.2, 3.5 together. Then 3.3. Then 3.4, 3.6.
 
 **3.1 Overlay state machine and geometry.** Owns: `crates/core/src/geometry.rs`, `crates/core/src/overlay/` (`mod.rs`, `state.rs`, `snap.rs`). Tests for every transition, handles and edges, keyboard nudges (arrow keys move the selection 1 px, Shift+arrow 10 px, Alt+arrow resizes).
+- Built: `Px`/`Point`/`Size`/`Rect`/`DpiScale`/`MonitorGeometry`; grips, handles, DPI conversions; `Overlay::on` with Hovering/Dragging/Adjusting/Annotating, all effects and inputs; window/control snapping and Tab cycling. 44 tests written including proptest properties, not run. Snap ordering and the active grip for Alt+arrow were the plan's ambiguities.
 
 **3.2 Capture backends.** Owns: `crates/platform-windows/src/capture/` (`mod.rs`, `dxgi.rs`, `gdi.rs`, `wgc.rs`), `crates/platform-windows/src/monitors.rs`. Desktop tests: freeze returns one image per monitor at physical size.
 
@@ -1124,8 +1141,10 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **4.1 WIC codec.** Owns: `crates/platform-windows/src/wic.rs`. Desktop tests: round trip each format; WebP availability detection.
 
 **4.2 Naming.** Owns: `crates/core/src/naming.rs`. Tests for every token, invalid characters, collisions, the sample preview in section 7.3.
+- Built: all naming tokens, Windows-invalid and control-character replacement, 80-character window title limit, 4-digit counter/wrap, deterministic random seam, collision suffixes, reserved device-name repair, sanitisation, and the exact sample preview. 19 tests written, not run. Choices reported: unknown braces stay literal, counter wraps at 9999 to 0000, reserved names get `_` appended.
 
 **4.3 History store.** Owns: `crates/store/src/history/` (`mod.rs`, `repo.rs`, `migrate.rs`), `crates/store/migrations/0001_init.sql`. Tests against temp files.
+- Built: exact 0001 schema, embedded numbered migrations with `PRAGMA user_version`, WAL/FK/busy timeout, read-write and read-only connections; `HistoryRepo` record/page/get/stats/delete/search/set_upload with 60-row keyset pagination, FTS5 prefix search and transactional FTS upkeep, Monday-local week stats and cascade delete. Tests written, not run. `busy_timeout = 5000 ms` is the only value the plan did not specify.
 
 **4.4 Thumbnails and the `thumb` scheme.** Needs 4.1, 4.3. Owns: `crates/services/src/thumbs.rs`, `apps/snapline/src/protocol.rs`. Tests: non-numeric and negative ids return 404; missing thumbnails are regenerated.
 
@@ -1200,6 +1219,7 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **6.5 Custom uploaders.** Needs 6.1. Owns: `crates/upload/src/custom/` (`mod.rs`, `sxcu.rs`, `template.rs`). Tests: ShareX example round trips, size and scheme limits, export blanks header values.
 
 **6.6 EXIF and link formats.** Owns: `crates/upload/src/exif.rs`, `crates/core/src/link_format.rs`.
+- Built: all five link formats with HTML attribute escaping and the Page-link fallback; JPEG APP1 EXIF/XMP and PNG eXIf/tEXt/zTXt/iTXt stripping without re-encoding, preserving pixels, ICC and comments; orientation reported rather than silently rotated. Tests written, not run.
 
 **6.7 Destinations page.** Needs 6.3, 6.4, 6.5. Owns: `crates/services/src/destinations.rs`, `crates/services/src/dto/upload.rs`, `ui/src/lib/ipc/upload.ts`, `ui/src/windows/main/settings/UploadsPage.svelte`, `ui/src/windows/main/settings/destinations/`.
 
@@ -1262,6 +1282,7 @@ Each milestone ends with a build that runs, and builds only on the ones before i
 **8.1 Fetch FFmpeg.** Owns: `xtask/src/ffmpeg.rs`, `xtask/ffmpeg.lock`.
 
 **8.2 Recording logic.** Owns: `crates/core/src/recording.rs`, `crates/core/src/ffmpeg_args.rs`. Tests for every state change and every argument set.
+- Built: `RecordingMachine` with Idle/Arming/Recording/Stopping/Encoding/Done/Failed, events, elapsed/target/output/error and a 5 s stop timeout constant; FFmpeg command builders for video (ddagrab, hardware candidates, quality presets, formats/fps, audio pipes and amix), GIF capture/convert, converter, encoder detection and one-frame probe. 54 tests written, not run. Encoder-specific flags and PCM defaults are implementation choices where the plan was silent.
 
 **8.3 FFmpeg runner.** Needs 8.1. Owns: `crates/platform-windows/src/ffmpeg.rs` (spawn by absolute path with `CREATE_NO_WINDOW`, encoder detection, progress from `-progress pipe:1`, stop and kill).
 
@@ -1401,7 +1422,7 @@ The executing agent must not answer these itself.
 | # | Milestone | Status | Commit |
 |---|-----------|--------|--------|
 | 0 | Foundations | Built, not tested | |
-| 1 | Basic UI shell (includes the webview gate) | Not started | |
+| 1 | Basic UI shell (includes the webview gate) | Built, not tested | |
 | 2 | Settings and hotkeys | Not started | |
 | 3 | Screenshot | Not started | |
 | 4 | Saving to disk and History | Not started | |
