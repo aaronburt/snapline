@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import Badge from '../../../components/Badge.svelte';
   import Icon from '../../../components/Icon.svelte';
   import Thumb from '../../../components/Thumb.svelte';
@@ -67,6 +67,8 @@
   let destinationsLoaded = $state(false);
   let menuOpen = $state(false);
   let shownId = $state<number | null>(null);
+  let menuTrigger = $state<HTMLButtonElement | null>(null);
+  let menuElement = $state<HTMLDivElement | null>(null);
 
   const isTimed = $derived(capture !== null && timed(capture));
   const isImage = $derived(capture !== null && !timed(capture));
@@ -169,6 +171,13 @@
     defaultDestination !== '' &&
       defaultDestination !== 'save_locally_only' &&
       defaultDestination !== 'none',
+  );
+  const uploadReason = $derived(
+    !defaultUploadable
+      ? 'No upload destination is configured.'
+      : busy
+        ? 'An upload is already being started.'
+        : '',
   );
 
   $effect(() => {
@@ -330,7 +339,7 @@
 
   async function toggleElsewhere(): Promise<void> {
     if (menuOpen) {
-      menuOpen = false;
+      closeMenu();
       return;
     }
     menuOpen = true;
@@ -342,11 +351,78 @@
       }
       destinationsLoaded = true;
     }
+    await tick();
+    const first = menuItems()[0];
+    if (first) {
+      first.focus();
+    } else {
+      menuElement?.focus();
+    }
+  }
+
+  function menuItems(): HTMLButtonElement[] {
+    return Array.from(menuElement?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+  }
+
+  function closeMenu(restore = true): void {
+    if (!menuOpen) {
+      return;
+    }
+    menuOpen = false;
+    if (restore) {
+      menuTrigger?.focus();
+    }
+  }
+
+  function onMenuKey(event: KeyboardEvent): void {
+    if (!menuOpen) {
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMenu();
+      return;
+    }
+    if (event.key === 'Tab') {
+      closeMenu(false);
+      return;
+    }
+    const items = menuItems();
+    if (items.length === 0) {
+      return;
+    }
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    let next = current;
+    if (event.key === 'ArrowDown') {
+      next = current < 0 ? 0 : (current + 1) % items.length;
+    } else if (event.key === 'ArrowUp') {
+      next = current < 0 ? items.length - 1 : (current + items.length - 1) % items.length;
+    } else if (event.key === 'Home') {
+      next = 0;
+    } else if (event.key === 'End') {
+      next = items.length - 1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    items[next].focus();
+  }
+
+  function onOutside(event: PointerEvent): void {
+    if (!menuOpen) {
+      return;
+    }
+    const target = event.target as Node;
+    if (menuElement?.contains(target) || menuTrigger?.contains(target)) {
+      return;
+    }
+    menuOpen = false;
   }
 
   function chooseElsewhere(id: string): void {
     menuOpen = false;
     void enqueue(id);
+    menuTrigger?.focus();
   }
 
   async function copyText(text: string | null | undefined): Promise<void> {
@@ -361,6 +437,8 @@
     }
   }
 </script>
+
+<svelte:window onpointerdown={onOutside} onkeydown={onMenuKey} />
 
 <aside aria-label="Capture details">
   {#if capture}
@@ -482,10 +560,12 @@
           type="button"
           class="upload"
           disabled={!defaultUploadable || busy}
+          aria-describedby={uploadReason === '' ? undefined : 'upload-reason'}
           onclick={() => void enqueue(defaultDestination)}
         >
           Upload to {destinationLabel(defaultDestination)}
         </button>
+        <span id="upload-reason" class="sr-only">{uploadReason}</span>
       {:else if share.status === 'failed'}
         <div class="note">
           Upload failed: {share.error ?? 'the destination did not accept the file.'}
@@ -499,26 +579,40 @@
             class="hv secondary"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
+            bind:this={menuTrigger}
             onclick={() => void toggleElsewhere()}
           >
             Upload elsewhere…
           </button>
           {#if menuOpen}
-            <div class="menu" role="menu" aria-label="Upload elsewhere">
-              {#each destinations as item (item.id)}
-                <button
-                  type="button"
-                  class="menuitem"
-                  role="menuitem"
-                  onclick={() => chooseElsewhere(item.id)}
-                >
-                  {item.name}
-                </button>
-              {/each}
-              {#if destinations.length === 0}
-                <div class="menuempty">No destinations configured.</div>
-              {/if}
-            </div>
+            {#if destinations.length === 0}
+              <div
+                class="menu menuempty"
+                role="status"
+                bind:this={menuElement}
+              >
+                No destinations configured.
+              </div>
+            {:else}
+              <div
+                class="menu"
+                role="menu"
+                aria-label="Upload elsewhere"
+                tabindex="-1"
+                bind:this={menuElement}
+              >
+                {#each destinations as item (item.id)}
+                  <button
+                    type="button"
+                    class="menuitem"
+                    role="menuitem"
+                    onclick={() => chooseElsewhere(item.id)}
+                  >
+                    {item.name}
+                  </button>
+                {/each}
+              </div>
+            {/if}
           {/if}
         </div>
       {:else if share.status === 'uploading'}

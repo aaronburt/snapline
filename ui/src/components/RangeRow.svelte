@@ -43,6 +43,7 @@
       {max}
       {step}
       aria-labelledby={id}
+      aria-valuetext={shown}
       bind:value
       oninput={(event) => onchange?.(event.currentTarget.valueAsNumber)}
     />

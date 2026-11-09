@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { expectAccessible } from '../../../test/axe';
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 
@@ -109,8 +110,9 @@ afterEach(() => {
 describe('Workflows page', () => {
   it('renders the real cards with names, chords and step pills', async () => {
     install();
-    render(WorkflowsPage);
-    expect(await screen.findByText('Screenshot to link (default)')).not.toBeNull();
+    const { container } = render(WorkflowsPage);
+    await screen.findByText('Screenshot to link (default)');
+    await expectAccessible(container);
     expect(screen.getByText('Annotate and share')).not.toBeNull();
     expect(screen.getByText('PrtSc')).not.toBeNull();
     expect(screen.getByText('Ctrl+Shift+A')).not.toBeNull();

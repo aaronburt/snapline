@@ -15,6 +15,8 @@
     onchange,
   }: Props = $props();
 
+  const id = $props.id();
+  const messageId = `${id}-message`;
   let capturing = $state(false);
   let message = $state('');
 
@@ -102,15 +104,26 @@
       type="text"
       readonly
       aria-label={label}
-      aria-live="polite"
+      aria-invalid={message !== '' || (clash ?? '') !== '' ? 'true' : undefined}
+      aria-describedby={message !== '' || (clash ?? '') !== '' ? messageId : undefined}
       value={capturing ? 'Press keys…' : value}
     />
-    <button type="button" class="hv" onclick={begin}>{buttonLabel}</button>
+    <button
+      type="button"
+      class="hv"
+      aria-label={`${buttonLabel} ${label}`}
+      onclick={begin}
+    >
+      {buttonLabel}
+    </button>
   </div>
+  <span class="sr-only" role="status">
+    {capturing ? 'Listening for a shortcut. Press Escape to cancel or Backspace to clear.' : ''}
+  </span>
   {#if message}
-    <span class="message" aria-live="polite">{message}</span>
+    <span id={messageId} class="message" role="status">{message}</span>
   {:else if clash}
-    <span class="message" aria-live="polite">{clash}</span>
+    <span id={messageId} class="message" role="status">{clash}</span>
   {/if}
 </div>
 

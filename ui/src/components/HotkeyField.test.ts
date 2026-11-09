@@ -10,7 +10,7 @@ describe('HotkeyField', () => {
     render(HotkeyField, {
       props: { label: 'Capture region', value: 'PrtSc', onchange },
     });
-    await fireEvent.click(screen.getByRole('button', { name: 'Change' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Change Capture region' }));
     expect((screen.getByLabelText('Capture region') as HTMLInputElement).value).toBe(
       'Press keys…',
     );
@@ -23,12 +23,12 @@ describe('HotkeyField', () => {
 
   it('cancels with Escape and clears with Backspace', async () => {
     render(HotkeyField, { props: { label: 'Record GIF', value: 'Ctrl+Shift+G' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Change' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Change Record GIF' }));
     await fireEvent.keyDown(window, { key: 'Escape' });
     expect((screen.getByLabelText('Record GIF') as HTMLInputElement).value).toBe(
       'Ctrl+Shift+G',
     );
-    await fireEvent.click(screen.getByRole('button', { name: 'Change' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Change Record GIF' }));
     await fireEvent.keyDown(window, { key: 'Backspace' });
     expect((screen.getByLabelText('Record GIF') as HTMLInputElement).value).toBe('');
   });
@@ -38,7 +38,7 @@ describe('HotkeyField', () => {
       props: { label: 'Capture window', value: 'Alt+PrtSc', clash: 'Ctrl+Alt+S is already used' },
     });
     expect(screen.getByText('Ctrl+Alt+S is already used')).not.toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Change' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Change Capture window' }));
     await fireEvent.keyDown(window, { key: 'l', metaKey: true });
     expect(screen.getByText('Windows uses this shortcut.')).not.toBeNull();
   });

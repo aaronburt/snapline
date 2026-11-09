@@ -23,6 +23,10 @@ enum Command {
         request: CaptureRequest,
         reply: Sender<Result<SaveOutcome, ServiceError>>,
     },
+    SaveRecording {
+        file: recording::RecordedFile,
+        reply: Sender<Result<recording::SavedRecording, ServiceError>>,
+    },
     Shutdown,
 }
 
@@ -50,6 +54,17 @@ impl Handle {
         let (reply, response) = bounded(1);
         self.commands
             .send(Command::Save { request, reply })
+            .map_err(|_| ServiceError::Busy)?;
+        response.recv().map_err(|_| ServiceError::Busy)?
+    }
+
+    pub fn save_recording(
+        &self,
+        file: recording::RecordedFile,
+    ) -> Result<recording::SavedRecording, ServiceError> {
+        let (reply, response) = bounded(1);
+        self.commands
+            .send(Command::SaveRecording { file, reply })
             .map_err(|_| ServiceError::Busy)?;
         response.recv().map_err(|_| ServiceError::Busy)?
     }
@@ -157,6 +172,19 @@ fn run(
                     tracing::warn!(%error, "a capture could not be saved");
                 }
                 let _ = reply.send(outcome.map_err(ServiceError::from));
+            }
+            Command::SaveRecording { file, reply } => {
+                let outcome = recording::store_recording(&services, file)
+                    .map_err(|error| ServiceError::Io(error.to_string()));
+                if let Ok(saved) = &outcome {
+                    if let Some(id) = saved.capture_id {
+                        let _ = events.send(AppEvent::History(history::Event::Added { id }));
+                    }
+                }
+                if let Err(error) = &outcome {
+                    tracing::warn!(%error, "a recording could not be saved");
+                }
+                let _ = reply.send(outcome);
             }
             Command::Shutdown => break,
         }

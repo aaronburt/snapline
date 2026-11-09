@@ -33,6 +33,8 @@
 
   const routeId = $derived($currentRoute.params.id ?? null);
   const nameId = $props.id();
+  const nameErrorId = `${nameId}-error`;
+  const deleteReasonId = `${nameId}-delete-reason`;
 
   let name = $state('');
   let hotkey = $state('');
@@ -239,11 +241,13 @@
             bind:value={name}
             disabled={isDefault}
             spellcheck="false"
+            aria-invalid={nameError === '' ? undefined : 'true'}
+            aria-describedby={nameError === '' ? undefined : nameErrorId}
           />
         </div>
       </div>
       {#if nameError}
-        <p class="error">{nameError}</p>
+        <p class="error" id={nameErrorId} role="status">{nameError}</p>
       {/if}
 
       {#if !isDefault}
@@ -285,7 +289,7 @@
           }}
         />
         {#if listError}
-          <p class="error">{listError}</p>
+          <p class="error" role="status">{listError}</p>
         {/if}
         <div class="add">
           <select aria-label="Add step" bind:value={addValue} onchange={addStep}>
@@ -314,9 +318,17 @@
       <span class="spacer"></span>
       {#if routeId !== null}
         <Button variant="secondary" height={34} onclick={duplicateFlow}>Duplicate</Button>
-        <Button variant="danger-text" height={34} disabled={isDefault} onclick={deleteFlow}
-          >Delete</Button
+        <Button
+          variant="danger-text"
+          height={34}
+          disabled={isDefault}
+          title={isDefault ? defaultWorkflowTooltip : undefined}
+          ariaDescribedby={isDefault ? deleteReasonId : undefined}
+          onclick={deleteFlow}>Delete</Button
         >
+        {#if isDefault}
+          <span id={deleteReasonId} class="sr-only">{defaultWorkflowTooltip}</span>
+        {/if}
       {/if}
     </div>
   {/if}

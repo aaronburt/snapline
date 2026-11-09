@@ -23,4 +23,30 @@ describe('Popover', () => {
     await fireEvent.pointerDown(document.body);
     expect(onclose).toHaveBeenCalledOnce();
   });
+
+  it('traps Tab inside the dialog and returns focus on close', async () => {
+    const children = createRawSnippet(() => ({
+      render: () => '<button type="button">First</button><button type="button">Last</button>',
+    }));
+    const trigger = document.createElement('button');
+    trigger.textContent = 'Open';
+    document.body.append(trigger);
+    trigger.focus();
+    const { unmount } = render(Popover, {
+      props: { open: true, label: 'QR code', children },
+    });
+    await Promise.resolve();
+    const first = screen.getByRole('button', { name: 'First' });
+    const last = screen.getByRole('button', { name: 'Last' });
+    expect(document.activeElement).toBe(first);
+    last.focus();
+    await fireEvent.keyDown(window, { key: 'Tab' });
+    expect(document.activeElement).toBe(first);
+    first.focus();
+    await fireEvent.keyDown(window, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(last);
+    unmount();
+    expect(document.activeElement).toBe(trigger);
+    trigger.remove();
+  });
 });

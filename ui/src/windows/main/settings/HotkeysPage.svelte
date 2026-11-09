@@ -424,7 +424,7 @@
           onchange={changePrtSc}
         />
         {#if prtscHint}
-          <p class="hint">{PRTSC_HINT}</p>
+          <p class="hint" role="status">{PRTSC_HINT}</p>
         {/if}
       {/if}
       {#if clashVisible}

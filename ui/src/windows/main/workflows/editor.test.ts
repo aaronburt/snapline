@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { expectAccessible } from '../../../test/axe';
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 
@@ -146,8 +147,9 @@ describe('Workflow editor', () => {
   it('renders the new workflow header and subtitle', async () => {
     route('/workflows/new');
     install();
-    render(WorkflowEditor);
-    expect(await screen.findByText('New workflow')).not.toBeNull();
+    const { container } = render(WorkflowEditor);
+    await screen.findByText('New workflow');
+    await expectAccessible(container);
     expect(screen.getByText('Steps run in order after the hotkey is pressed.')).not.toBeNull();
     expect(screen.getByLabelText('Name')).not.toBeNull();
     expect(screen.getByLabelText('Hotkey')).not.toBeNull();
@@ -254,7 +256,7 @@ describe('Workflow editor', () => {
     route('/workflows/new');
     install({ preview: 'external' });
     render(WorkflowEditor);
-    await fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Change Hotkey' }));
     await fireEvent.keyDown(window, { key: 'A', ctrlKey: true });
     expect(await screen.findByText('Off: another app is using this shortcut.')).not.toBeNull();
     expect(mocks.invoke).toHaveBeenCalledWith('ipc_hotkeys', {

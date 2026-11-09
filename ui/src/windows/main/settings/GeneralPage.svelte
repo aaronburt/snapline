@@ -234,7 +234,7 @@
               oninput={(event) => updateGeneral('namePattern', event.currentTarget.value)}
             />
           </label>
-          <div class="tokens" aria-label="Insert a token">
+          <div class="tokens" role="group" aria-label="Insert a token">
             {#each NAME_TOKENS as item}
               <button
                 type="button"
@@ -249,7 +249,7 @@
           </div>
           <div class="preview">
             <span class="preview-label">Preview</span>
-            <span class="preview-value">{preview}</span>
+            <span class="preview-value" aria-live="polite">{preview}</span>
           </div>
         </div>
       </Card>

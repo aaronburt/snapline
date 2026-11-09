@@ -9,6 +9,11 @@
     icon?: IconName;
     type?: 'button' | 'submit' | 'reset';
     disabled?: boolean;
+    title?: string;
+    ariaLabel?: string;
+    ariaDescribedby?: string;
+    ariaExpanded?: boolean;
+    ariaHaspopup?: 'menu' | 'dialog';
     onclick?: (event: MouseEvent) => void;
     children?: Snippet;
   }
@@ -19,6 +24,11 @@
     icon,
     type = 'button',
     disabled = false,
+    title,
+    ariaLabel,
+    ariaDescribedby,
+    ariaExpanded,
+    ariaHaspopup,
     onclick,
     children,
   }: Props = $props();
@@ -29,6 +39,11 @@
   style:height="{height}px"
   {type}
   {disabled}
+  {title}
+  aria-label={ariaLabel}
+  aria-describedby={ariaDescribedby}
+  aria-expanded={ariaExpanded}
+  aria-haspopup={ariaHaspopup}
   {onclick}
 >
   {#if icon}

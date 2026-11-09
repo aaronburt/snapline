@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
+import { expectAccessible } from '../../../test/axe';
 import type { AppEvent } from '../../../lib/ipc/bindings/AppEvent';
 import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
 import type { UploadState } from '../../../lib/ipc/bindings/UploadState';
@@ -188,6 +189,7 @@ describe('History page', () => {
   it('renders real captures and the stats subtitle', async () => {
     const { container } = render(HistoryPage);
     await flush();
+    await expectAccessible(container);
     expect(screen.getByRole('heading', { level: 1, name: 'History' })).not.toBeNull();
     expect(screen.getByText(/3 captures · 1.2 MB on disk · 1 uploaded this week/)).not.toBeNull();
     expect(screen.getByRole('heading', { level: 2, name: /Today/ })).not.toBeNull();
@@ -407,6 +409,30 @@ describe('History sharing', () => {
       kind: 'uploadElsewhere',
       data: { capture_id: 1, dest: 's3-prod' },
     });
+  });
+
+  it('operates the Upload elsewhere menu with the keyboard and returns focus', async () => {
+    mocks.page.mockResolvedValue(
+      page([
+        capture(1, {
+          upload: link({ state: 'failed', url: null, error: 'The upload failed.' }),
+        }),
+      ]),
+    );
+    render(HistoryPage);
+    await flush();
+    const trigger = screen.getByRole('button', { name: 'Upload elsewhere…' });
+    await fireEvent.click(trigger);
+    await flush();
+    const menu = screen.getByRole('menu', { name: 'Upload elsewhere' });
+    const items = screen.getAllByRole('menuitem');
+    expect(document.activeElement).toBe(items[0]);
+    await fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(items[1]);
+    await fireEvent.keyDown(menu, { key: 'Escape' });
+    await flush();
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 
   it('retries through the queue once a live upload is known', async () => {

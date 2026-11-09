@@ -108,7 +108,7 @@
             {/each}
           </div>
           {#if clash}
-            <p class="clash">{clash}</p>
+            <p class="clash" role="status">{clash}</p>
           {/if}
         </div>
         <div class="side">
@@ -125,6 +125,7 @@
               type="checkbox"
               class="tg"
               aria-label={`Enable ${displayName(workflow)}`}
+              aria-describedby={workflow.isDefault ? `default-note-${workflow.id}` : undefined}
               title={workflow.isDefault ? defaultWorkflowTooltip : undefined}
               checked={workflow.enabled}
               disabled={workflow.isDefault}
@@ -132,6 +133,9 @@
                 void toggle(workflow, (event.currentTarget as HTMLInputElement).checked);
               }}
             />
+            {#if workflow.isDefault}
+              <span id={`default-note-${workflow.id}`} class="sr-only">{defaultWorkflowTooltip}</span>
+            {/if}
           </label>
         </div>
       </article>

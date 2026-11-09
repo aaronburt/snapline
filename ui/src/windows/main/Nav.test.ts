@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
+import { expectAccessible } from '../../test/axe';
 import Nav from './Nav.svelte';
 
 const mocks = vi.hoisted(() => ({
@@ -26,6 +27,7 @@ describe('Nav', () => {
   it('shows the real capture count from the stats request', async () => {
     const { container } = render(Nav, { props: { page: 'history' } });
     await flush();
+    await expectAccessible(container);
     expect(mocks.call).toHaveBeenCalledWith('ipc_app', { kind: 'stats' });
     expect(container.querySelector('.count')?.textContent).toBe('12');
     expect(screen.getByRole('link', { name: /History/ })).not.toBeNull();

@@ -1,13 +1,11 @@
 use snapline_core::secret::SecretKey;
 use snapline_services::uninstall::{self, UninstallError, UninstallHost};
 use snapline_store::io::Paths;
+use snapline_win::task_dialog::{TaskDialog, TaskDialogChoice};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::ERROR_NOT_FOUND;
 use windows::Win32::Security::Credentials::{
     CredDeleteW, CredEnumerateW, CredFree, CREDENTIALW, CRED_TYPE_GENERIC,
-};
-use windows::Win32::UI::WindowsAndMessaging::{
-    MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONQUESTION, MB_YESNO, MESSAGEBOX_STYLE,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,25 +129,17 @@ impl UninstallHost for WindowsUninstallHost {
     }
 
     fn confirm(&self, message: &str, default_yes: bool) -> Result<bool, UninstallError> {
-        let message: Vec<u16> = message.encode_utf16().chain(std::iter::once(0)).collect();
-        let title: Vec<u16> = "Snapline"
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
-        let mut style: MESSAGEBOX_STYLE = MB_YESNO | MB_ICONQUESTION;
-        if !default_yes {
-            style |= MB_DEFBUTTON2;
-        }
-        // SAFETY: both strings are live null-terminated UTF-16 buffers that outlive the call.
-        let result = unsafe {
-            MessageBoxW(
-                None,
-                PCWSTR(message.as_ptr()),
-                PCWSTR(title.as_ptr()),
-                style,
-            )
+        let first_is_yes = !default_yes;
+        let (first, second) = if first_is_yes {
+            ("Yes", "No")
+        } else {
+            ("No", "Yes")
         };
-        Ok(result == IDYES)
+        let choice = TaskDialog::new(None)
+            .confirm(message, first, second)
+            .map_err(host_error)?;
+        let first_chosen = matches!(choice, TaskDialogChoice::Upload);
+        Ok(first_chosen == first_is_yes)
     }
 }
 

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { expectAccessible } from '../../../test/axe';
 import HotkeysPage from './HotkeysPage.svelte';
 import { resetSettings } from './settings';
 import { settingsDto } from './settingsDto';
@@ -56,7 +57,7 @@ function row(owner: string): HTMLElement {
 }
 
 async function begin(owner: string): Promise<void> {
-  await fireEvent.click(within(row(owner)).getByRole('button', { name: 'Change' }));
+  await fireEvent.click(within(row(owner)).getByRole('button', { name: /^Change / }));
 }
 
 beforeEach(() => {
@@ -77,7 +78,8 @@ afterEach(cleanup);
 
 describe('HotkeysPage', () => {
   it('gets the settings and hotkey bindings on mount and shows the page intro', async () => {
-    render(HotkeysPage);
+    const { container } = render(HotkeysPage);
+    await expectAccessible(container);
     expect(
       screen.getByText(
         'If two actions share a chord, or another app owns it, neither is bound and you are told.',

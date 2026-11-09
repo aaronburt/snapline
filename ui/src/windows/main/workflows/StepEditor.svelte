@@ -93,11 +93,11 @@
   }
 </script>
 
-<div class="steps" role="list">
+<div class="steps" role="group" aria-label="Steps">
   {#each steps as step, index (stepKey(step, index))}
     <div
       class="step"
-      role="listitem"
+      role="group"
       ondragover={(event) => event.preventDefault()}
       ondrop={(event) => drop(event, index)}
     >

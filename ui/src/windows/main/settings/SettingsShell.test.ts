@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { expectAccessible } from '../../../test/axe';
 import SettingsShell from './SettingsShell.svelte';
 import { currentRoute, resolve } from '../../../router';
 import { resetSettings } from './settings';
@@ -12,8 +13,9 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('SettingsShell', () => {
-  it('shows the settings navigation', () => {
-    render(SettingsShell);
+  it('shows the settings navigation', async () => {
+    const { container } = render(SettingsShell);
+    await expectAccessible(container);
     expect(screen.getByRole('link', { name: 'Back to Snapline' })).not.toBeNull();
     expect(screen.getByPlaceholderText('Find a setting')).not.toBeNull();
     expect(screen.getByRole('link', { name: 'General' })).not.toBeNull();

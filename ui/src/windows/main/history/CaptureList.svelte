@@ -65,13 +65,14 @@
 
 <div class="tablecard">
   <table>
+    <caption class="sr-only">Captures</caption>
     <thead>
       <tr>
-        <th>File</th>
-        <th>Type</th>
-        <th>Size</th>
-        <th>Captured</th>
-        <th>Status</th>
+        <th scope="col">File</th>
+        <th scope="col">Type</th>
+        <th scope="col">Size</th>
+        <th scope="col">Captured</th>
+        <th scope="col">Status</th>
       </tr>
     </thead>
     <tbody>
@@ -83,7 +84,7 @@
       {#each shown as capture (capture.id)}
         <tr
           class:selected={capture.id === selectedId}
-          aria-selected={capture.id === selectedId}
+          aria-current={capture.id === selectedId ? 'true' : undefined}
           data-capture-id={capture.id}
           tabindex="0"
           onclick={() => onselect(capture.id)}

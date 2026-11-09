@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { expectAccessible } from '../../../test/axe';
 import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
 import CombinerTool from './CombinerTool.svelte';
 
@@ -72,7 +73,9 @@ async function pick(name: string): Promise<void> {
 
 describe('CombinerTool', () => {
   it('renders the picker and the default controls', async () => {
-    render(CombinerTool);
+    const { container } = render(CombinerTool);
+    await screen.findByText('capture-1.png');
+    await expectAccessible(container);
     expect(screen.getByText('Image combiner')).not.toBeNull();
     expect(await screen.findByText('capture-1.png')).not.toBeNull();
     expect(screen.getByText('capture-2.png')).not.toBeNull();

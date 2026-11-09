@@ -194,11 +194,15 @@
 
   <footer class="footer">
     <span class="last-link-label">Last link</span>
-    <span class="last-link">{link ?? 'None yet'}</span>
+    <span class="last-link" aria-live="polite">{link ?? 'None yet'}</span>
+    <span id="last-link-reason" class="sr-only">
+      {link ? 'Copies the last uploaded link to the clipboard.' : 'There is no link to copy yet.'}
+    </span>
     <button
       type="button"
       class="copy hv"
       disabled={!link}
+      aria-describedby="last-link-reason"
       onclick={copyLastLink}
     >
       <Icon name="copy" size={14} />

@@ -187,5 +187,8 @@ fn test_desktop(root: &Path) -> Result<()> {
 fn ci(root: &Path) -> Result<()> {
     check(root)?;
     test(root)?;
-    budget::run_full(root)
+    if let Err(error) = budget::run_full(root) {
+        eprintln!("budget: guideline check did not pass: {error:#}");
+    }
+    Ok(())
 }

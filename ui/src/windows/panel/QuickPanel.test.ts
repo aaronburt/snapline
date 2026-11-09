@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
+import { expectAccessible } from '../../test/axe';
 import type { RecentCaptureDto } from '../../lib/ipc/bindings/RecentCaptureDto';
 import QuickPanel from './QuickPanel.svelte';
 import { relativeTime } from './data';
@@ -59,8 +60,9 @@ afterEach(cleanup);
 
 describe('QuickPanel', () => {
   it('renders the header, capture tiles, real recents and footer', async () => {
-    render(QuickPanel);
+    const { container } = render(QuickPanel);
     await flush();
+    await expectAccessible(container);
     expect(screen.getByRole('main', { name: 'Snapline quick panel' })).not.toBeNull();
     expect(screen.getByText('Snapline')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Open Snapline' })).not.toBeNull();
@@ -138,6 +140,7 @@ describe('QuickPanel', () => {
     await flush();
     const copy = screen.getByRole('button', { name: 'Copy' }) as HTMLButtonElement;
     expect(copy.disabled).toBe(true);
+    expect(copy.getAttribute('aria-describedby')).toBeTruthy();
     expect(screen.getByText('None yet')).not.toBeNull();
   });
 

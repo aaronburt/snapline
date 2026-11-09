@@ -241,6 +241,9 @@
   }
 
   function onkeydown(event: KeyboardEvent): void {
+    if (event.defaultPrevented) {
+      return;
+    }
     const target = event.target as HTMLElement | null;
     if (target && ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) {
       return;
@@ -285,7 +288,7 @@
   <div class="pagehead">
     <div class="titles">
       <h1>History</h1>
-      <div class="sub">
+      <div class="sub" aria-live="polite">
         {stats.count} captures · {formatBytes(stats.bytes)} on disk · {stats.uploadedThisWeek} uploaded
         this week
       </div>
@@ -365,7 +368,7 @@
       />
     {/if}
     {#if loading}
-      <div class="loading" aria-hidden="true"></div>
+      <div class="loading" role="status"><span class="sr-only">Loading captures</span></div>
     {/if}
   </div>
 </main>

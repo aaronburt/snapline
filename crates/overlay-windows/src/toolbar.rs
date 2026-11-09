@@ -35,6 +35,55 @@ pub(crate) enum ToolbarAction {
     Cancel,
 }
 
+pub(crate) const fn tool_name(tool: Tool) -> &'static str {
+    match tool {
+        Tool::Move => "Select and move",
+        Tool::Rect => "Rectangle",
+        Tool::Ellipse => "Ellipse",
+        Tool::Arrow => "Arrow",
+        Tool::Pen => "Pen",
+        Tool::Highlighter => "Highlighter",
+        Tool::Text => "Text",
+        Tool::Step => "Step number",
+        Tool::Blur => "Blur or pixelate",
+        Tool::Crop => "Crop",
+        Tool::Colour => "Pick colour from screen",
+    }
+}
+
+impl ToolbarAction {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Tool(tool) => tool_name(tool),
+            Self::Colour(colour) => colour.name(),
+            Self::Stroke(stroke) => stroke.name(),
+            Self::Undo => "Undo",
+            Self::Redo => "Redo",
+            Self::Copy => "Copy to clipboard",
+            Self::Save => "Save",
+            Self::Pin => "Pin to screen",
+            Self::Upload => "Upload",
+            Self::Cancel => "Cancel",
+        }
+    }
+
+    pub(crate) fn announcement(self, state: &ToolbarState) -> String {
+        match self {
+            Self::Tool(tool) if state.tool == tool => format!("{}, selected", tool_name(tool)),
+            Self::Colour(colour) if state.colour == colour => {
+                format!("{} colour, selected", colour.name())
+            }
+            Self::Stroke(stroke) if state.stroke == stroke => {
+                format!("{} stroke, selected", stroke.name())
+            }
+            Self::Undo if !state.can_undo => String::from("Undo, unavailable"),
+            Self::Redo if !state.can_redo => String::from("Redo, unavailable"),
+            _ => String::from(self.label()),
+        }
+    }
+}
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ToolbarHit {
     Outside,
@@ -79,6 +128,7 @@ pub(crate) struct ToolbarState {
     pub stroke: StrokeSize,
     pub can_undo: bool,
     pub can_redo: bool,
+    pub focus: Option<usize>,
 }
 
 pub(crate) const TOOLS: [(Tool, Icon); 11] = [
@@ -97,6 +147,18 @@ pub(crate) const TOOLS: [(Tool, Icon); 11] = [
 
 fn signed(scale: f32) -> f32 {
     scale.max(0.01)
+}
+
+pub(crate) fn next_focus(current: Option<usize>, count: usize, forward: bool) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    Some(match (current, forward) {
+        (Some(index), true) => (index + 1) % count,
+        (Some(index), false) => (index + count - 1) % count,
+        (None, true) => 0,
+        (None, false) => count - 1,
+    })
 }
 
 fn item(
@@ -343,9 +405,27 @@ pub(crate) fn draw(
             palette.stroke,
         );
     }
-    for button in &toolbar.buttons {
+    for (index, button) in toolbar.buttons.iter().enumerate() {
         draw_button(gpu, icons, palette, scale, origin, button, state);
+        if state.focus == Some(index) {
+            draw_focus(context, palette, scale, local(button.rect, origin));
+        }
     }
+}
+
+fn draw_focus(context: &ID2D1DeviceContext5, palette: &Palette, scale: f32, area: Rect) {
+    let x = area.x.get() as f32;
+    let y = area.y.get() as f32;
+    let width = area.width.get() as f32;
+    let height = area.height.get() as f32;
+    let inset = scale.max(1.0);
+    d2d::stroke_round(
+        context,
+        rect_f(x + inset, y + inset, width - inset * 2.0, height - inset * 2.0),
+        5.0 * scale,
+        2.0 * scale,
+        palette.text,
+    );
 }
 
 fn draw_button(
@@ -660,5 +740,72 @@ mod tests {
         );
         let padding = Point::new(Px(toolbar.rect.x.get() + 1), Px(toolbar.rect.y.get() + 1));
         assert_eq!(toolbar.hit(padding), ToolbarHit::Padding);
+    }
+
+    fn state() -> ToolbarState {
+        ToolbarState {
+            tool: Tool::Highlighter,
+            colour: AnnotationColour::Yellow,
+            stroke: StrokeSize::Medium,
+            can_undo: false,
+            can_redo: true,
+            focus: None,
+        }
+    }
+
+    #[test]
+    fn every_toolbar_button_has_a_screen_reader_name() {
+        let state = state();
+        let toolbar = layout(0, monitor(), 1.0, 47.0);
+        for button in &toolbar.buttons {
+            assert!(!button.action.label().is_empty());
+            assert!(!button.action.announcement(&state).is_empty());
+        }
+        assert_eq!(
+            ToolbarAction::Tool(Tool::Move).label(),
+            "Select and move"
+        );
+        assert_eq!(ToolbarAction::Tool(Tool::Colour).label(), "Pick colour from screen");
+        assert_eq!(ToolbarAction::Colour(AnnotationColour::Red).label(), "Red");
+        assert_eq!(ToolbarAction::Stroke(StrokeSize::Thin).label(), "Thin");
+        assert_eq!(ToolbarAction::Upload.label(), "Upload");
+        assert_eq!(ToolbarAction::Cancel.label(), "Cancel");
+    }
+
+    #[test]
+    fn tab_order_moves_through_buttons_in_visual_order_and_wraps() {
+        assert_eq!(next_focus(None, 4, true), Some(0));
+        assert_eq!(next_focus(None, 4, false), Some(3));
+        assert_eq!(next_focus(Some(0), 4, true), Some(1));
+        assert_eq!(next_focus(Some(2), 4, true), Some(3));
+        assert_eq!(next_focus(Some(3), 4, true), Some(0));
+        assert_eq!(next_focus(Some(0), 4, false), Some(3));
+        assert_eq!(next_focus(Some(1), 4, false), Some(0));
+        assert_eq!(next_focus(Some(0), 0, true), None);
+    }
+
+    #[test]
+    fn announcements_include_selection_and_unavailable_state() {        let state = state();
+        assert_eq!(
+            ToolbarAction::Tool(Tool::Highlighter).announcement(&state),
+            "Highlighter, selected"
+        );
+        assert_eq!(
+            ToolbarAction::Colour(AnnotationColour::Yellow).announcement(&state),
+            "Yellow colour, selected"
+        );
+        assert_eq!(
+            ToolbarAction::Stroke(StrokeSize::Medium).announcement(&state),
+            "Medium stroke, selected"
+        );
+        assert_eq!(
+            ToolbarAction::Undo.announcement(&state),
+            "Undo, unavailable"
+        );
+        assert_eq!(ToolbarAction::Redo.announcement(&state), "Redo");
+        assert_eq!(
+            ToolbarAction::Colour(AnnotationColour::Red).announcement(&state),
+            "Red"
+        );
     }
 }

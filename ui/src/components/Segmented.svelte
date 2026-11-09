@@ -14,14 +14,53 @@
     labelledby,
     onchange,
   }: Props = $props();
+
+  const active = $derived(options.includes(value) ? value : options[0]);
+
+  function onkeydown(event: KeyboardEvent) {
+    if (options.length === 0) {
+      return;
+    }
+    if (
+      !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)
+    ) {
+      return;
+    }
+    const current = Math.max(0, options.indexOf(active));
+    let next = current;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      next = (current + options.length - 1) % options.length;
+    } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      next = (current + 1) % options.length;
+    } else if (event.key === 'Home') {
+      next = 0;
+    } else {
+      next = options.length - 1;
+    }
+    event.preventDefault();
+    value = options[next];
+    onchange?.(value);
+    const buttons = (event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>(
+      '[role="radio"]',
+    );
+    buttons[next]?.focus();
+  }
 </script>
 
-<div class="segmented" role="radiogroup" aria-label={label} aria-labelledby={labelledby}>
+<div
+  class="segmented"
+  role="radiogroup"
+  aria-label={label}
+  aria-labelledby={labelledby}
+  tabindex="-1"
+  {onkeydown}
+>
   {#each options as option}
     <button
       type="button"
       role="radio"
       aria-checked={value === option}
+      tabindex={active === option ? 0 : -1}
       class:selected={value === option}
       onclick={() => {
         value = option;

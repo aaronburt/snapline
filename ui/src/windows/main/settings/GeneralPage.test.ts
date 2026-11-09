@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { expectAccessible } from '../../../test/axe';
 import GeneralPage from './GeneralPage.svelte';
 import { resetSettings } from './settings';
 import { settingsDto } from './settingsDto';
@@ -114,7 +115,8 @@ afterEach(cleanup);
 
 describe('GeneralPage', () => {
   it('gets the settings on mount and shows the defaults', async () => {
-    render(GeneralPage);
+    const { container } = render(GeneralPage);
+    await expectAccessible(container);
     expect(screen.getByText('General')).not.toBeNull();
     expect(screen.getByText('Snapline')).not.toBeNull();
     expect(screen.getByText('Version 0.1.0')).not.toBeNull();

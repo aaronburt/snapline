@@ -8,6 +8,8 @@
     size?: 32 | 34;
     pressed?: boolean;
     variant?: 'card' | 'plain';
+    disabled?: boolean;
+    title?: string;
     onclick?: (event: MouseEvent) => void;
   }
 
@@ -17,6 +19,8 @@
     size = 34,
     pressed,
     variant = 'card',
+    disabled = false,
+    title,
     onclick,
   }: Props = $props();
 </script>
@@ -28,6 +32,8 @@
   style:height="{size}px"
   aria-label={label}
   aria-pressed={pressed}
+  {disabled}
+  {title}
   {onclick}
 >
   <Icon name={icon} size={16} />
