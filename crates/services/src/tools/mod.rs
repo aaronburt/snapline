@@ -94,6 +94,9 @@ impl ToolService {
             ToolReq::EditorOpenClipboard => Ok(ToolResp::EditorOpened {
                 outcome: editor_outcome(EditorService::new(&self._services).open_clipboard()?),
             }),
+            ToolReq::PinHistory { capture_id } => {
+                PinService::new(&self._services).history(capture_id)
+            }
             ToolReq::PinFile => PinService::new(&self._services).file(),
             ToolReq::PinClipboard => PinService::new(&self._services).clipboard(),
             ToolReq::PinMenu => PinService::new(&self._services).menu(),

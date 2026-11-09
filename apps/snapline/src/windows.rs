@@ -95,7 +95,7 @@ impl WindowManager {
         let mut builder = WebviewWindowBuilder::new(app, kind.label(), url)
             .title("Snapline")
             .visible(false)
-            .decorations(false)
+            .decorations(matches!(kind, WindowKind::Main))
             .additional_browser_args(webview_tuning::ADDITIONAL_BROWSER_ARGS);
         if kind.uses_mica() {
             builder = builder.transparent(true);

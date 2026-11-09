@@ -267,6 +267,47 @@ impl Services {
             .map_err(|error| {
                 ServiceError::Invalid(format!("A settings value was not valid: {error}"))
             })?;
+        if object
+            .get("general")
+            .and_then(|value| value.get("default_workflow"))
+            .is_some()
+        {
+            let before =
+                workflow_runner::default_from_general(&state.settings.general.default_workflow);
+            let after = workflow_runner::default_from_general(&settings.general.default_workflow);
+            if let Some(default) = settings
+                .workflows
+                .list
+                .iter_mut()
+                .find(|workflow| workflow.is_default())
+            {
+                for step in &before.steps {
+                    if !after.steps.iter().any(|candidate| {
+                        std::mem::discriminant(candidate) == std::mem::discriminant(step)
+                    }) {
+                        default.steps.retain(|candidate| {
+                            std::mem::discriminant(candidate) != std::mem::discriminant(step)
+                        });
+                    }
+                }
+                for (index, step) in after.steps.iter().enumerate() {
+                    if !default.steps.iter().any(|candidate| {
+                        std::mem::discriminant(candidate) == std::mem::discriminant(step)
+                    }) {
+                        let position = after.steps[index + 1..]
+                            .iter()
+                            .find_map(|next| {
+                                default.steps.iter().position(|candidate| {
+                                    std::mem::discriminant(candidate)
+                                        == std::mem::discriminant(next)
+                                })
+                            })
+                            .unwrap_or(default.steps.len());
+                        default.steps.insert(position, step.clone());
+                    }
+                }
+            }
+        }
         settings.version = store_settings::CURRENT_VERSION;
         let paths = state.paths.as_ref().ok_or_else(|| {
             ServiceError::Io(

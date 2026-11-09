@@ -59,6 +59,10 @@ pub enum ToolReq {
     },
     EditorOpenFile,
     EditorOpenClipboard,
+    PinHistory {
+        #[ts(as = "i32")]
+        capture_id: i64,
+    },
     PinFile,
     PinClipboard,
     PinMenu,

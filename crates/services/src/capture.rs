@@ -71,6 +71,8 @@ pub trait CaptureContext: Send + Sync {
     fn capture_settings(&self) -> Result<Settings, ServiceError>;
     fn save_last_region(&self, region: LastRegion) -> Result<(), ServiceError>;
 
+    fn capture_complete(&self, _image: &Image, _sound: bool) {}
+
     fn foreground_window(&self) -> Option<WindowId> {
         None
     }
@@ -136,12 +138,27 @@ impl CaptureService {
     }
 
     pub fn capture_region(&self) -> Result<CaptureOutcome, ServiceError> {
+        match self.region_image(true)? {
+            Some(image) => self.copy(image),
+            None => Ok(CaptureOutcome::Cancelled),
+        }
+    }
+
+    pub(crate) fn region_image(&self, annotate: bool) -> Result<Option<Image>, ServiceError> {
+        Ok(self.region_result(annotate)?.map(|(image, _)| image))
+    }
+
+    pub(crate) fn region_result(
+        &self,
+        annotate: bool,
+    ) -> Result<Option<(Image, Option<snapline_core::ports::OverlayAction>)>, ServiceError> {
         let settings = self.inner.context.capture_settings()?;
         self.wait(settings.capture.capture_delay)?;
         let desktop = self.freeze()?;
         let request = OverlayRequest {
             desktop: desktop.clone(),
-            annotate: false,
+            annotate,
+            upload_on_finish: settings.uploads.images.is_upload(),
             snap: SnapSet::default(),
             magnifier: magnifier(&settings),
             full_screen_crosshair: settings.capture.fullscreen_crosshair,
@@ -149,13 +166,13 @@ impl CaptureService {
         };
         let result = match self.inner.overlay.select_region(request) {
             Ok(result) => result,
-            Err(OverlayError::Cancelled) => return Ok(CaptureOutcome::Cancelled),
+            Err(OverlayError::Cancelled) => return Ok(None),
             Err(error) => return Err(ServiceError::Invalid(error.to_string())),
         };
         let frozen = monitor_for(&desktop, result.monitor, result.selection.center())
             .or_else(|| desktop.monitors.first())
             .ok_or_else(no_monitor)?;
-        let (image, rect) = if let Some(image) = result.image.clone() {
+        let (image, rect) = if let Some(image) = result.image {
             (image, result.selection)
         } else {
             crop_to_monitor(frozen, result.selection)?
@@ -164,16 +181,30 @@ impl CaptureService {
             monitor: frozen.monitor.id,
             rect,
         });
-        self.copy(image)
+        self.inner
+            .context
+            .capture_complete(&image, settings.capture.shutter_sound);
+        Ok(Some((image, result.action)))
     }
 
     pub fn capture_window(&self) -> Result<CaptureOutcome, ServiceError> {
+        match self.window_image()? {
+            Some(image) => self.copy(image),
+            None => Ok(CaptureOutcome::Cancelled),
+        }
+    }
+
+    pub(crate) fn window_image(&self) -> Result<Option<Image>, ServiceError> {
         let settings = self.inner.context.capture_settings()?;
         self.wait(settings.capture.capture_delay)?;
         let Some(window) = self.inner.context.foreground_window() else {
             return Err(window_missing());
         };
-        self.capture_window_id(window, settings.capture.keep_window_shadow)
+        self.window_image_id(
+            window,
+            settings.capture.keep_window_shadow,
+            settings.capture.shutter_sound,
+        )
     }
 
     pub fn capture_window_under_cursor(&self) -> Result<CaptureOutcome, ServiceError> {
@@ -182,10 +213,25 @@ impl CaptureService {
         let Some(window) = self.inner.context.window_under_cursor() else {
             return Err(window_missing());
         };
-        self.capture_window_id(window, settings.capture.keep_window_shadow)
+        let image = self.window_image_id(
+            window,
+            settings.capture.keep_window_shadow,
+            settings.capture.shutter_sound,
+        )?;
+        match image {
+            Some(image) => self.copy(image),
+            None => Ok(CaptureOutcome::Cancelled),
+        }
     }
 
     pub fn capture_screen(&self) -> Result<CaptureOutcome, ServiceError> {
+        match self.screen_image()? {
+            Some(image) => self.copy(image),
+            None => Ok(CaptureOutcome::Cancelled),
+        }
+    }
+
+    pub(crate) fn screen_image(&self) -> Result<Option<Image>, ServiceError> {
         let settings = self.inner.context.capture_settings()?;
         self.wait(settings.capture.capture_delay)?;
         let mut desktop = self.freeze()?;
@@ -201,10 +247,20 @@ impl CaptureService {
                 take_monitor(&mut desktop, index)?
             }
         };
-        self.copy(image)
+        self.inner
+            .context
+            .capture_complete(&image, settings.capture.shutter_sound);
+        Ok(Some(image))
     }
 
     pub fn capture_last_region(&self) -> Result<CaptureOutcome, ServiceError> {
+        match self.last_region_image()? {
+            Some(image) => self.copy(image),
+            None => Ok(CaptureOutcome::Cancelled),
+        }
+    }
+
+    pub(crate) fn last_region_image(&self) -> Result<Option<Image>, ServiceError> {
         let settings = self.inner.context.capture_settings()?;
         let region = self.last_region()?;
         self.wait(settings.capture.capture_delay)?;
@@ -212,20 +268,25 @@ impl CaptureService {
         let frozen = monitor_for(&desktop, Some(region.monitor), region.rect.center())
             .ok_or_else(display_changed)?;
         let (image, _) = crop_to_monitor(frozen, region.rect)?;
-        self.copy(image)
+        self.inner
+            .context
+            .capture_complete(&image, settings.capture.shutter_sound);
+        Ok(Some(image))
     }
 
-    fn capture_window_id(
+    fn window_image_id(
         &self,
         window: WindowId,
         keep_shadow: bool,
-    ) -> Result<CaptureOutcome, ServiceError> {
+        sound: bool,
+    ) -> Result<Option<Image>, ServiceError> {
         let image = self
             .inner
             .capture
             .window(window, keep_shadow)
             .map_err(capture_error)?;
-        self.copy(image)
+        self.inner.context.capture_complete(&image, sound);
+        Ok(Some(image))
     }
 
     fn freeze(&self) -> Result<FrozenDesktop, ServiceError> {
@@ -502,9 +563,16 @@ mod tests {
         foreground: Mutex<Option<WindowId>>,
         under_cursor: Mutex<Option<WindowId>>,
         theme: OverlayTheme,
+        feedback: Mutex<Vec<(u32, u32, bool)>>,
     }
 
     impl CaptureContext for TestContext {
+        fn capture_complete(&self, image: &Image, sound: bool) {
+            self.feedback
+                .lock()
+                .expect("feedback")
+                .push((image.width(), image.height(), sound));
+        }
         fn capture_settings(&self) -> Result<Settings, ServiceError> {
             self.services.settings_snapshot()
         }
@@ -704,6 +772,7 @@ mod tests {
             foreground: Mutex::new(None),
             under_cursor: Mutex::new(None),
             theme: OverlayTheme::Dark,
+            feedback: Mutex::new(Vec::new()),
         });
         let log = Arc::new(Mutex::new(Vec::new()));
         let capture = Arc::new(FakeCapture {
@@ -775,6 +844,15 @@ mod tests {
 
         let copies = harness.clipboard.images.lock().expect("images");
         assert_eq!(copies.len(), 1);
+        assert_eq!(
+            harness
+                .context
+                .feedback
+                .lock()
+                .expect("feedback")
+                .as_slice(),
+            &[(300, 150, true)]
+        );
         let copied = &copies[0];
         assert_eq!(copied.width(), 300);
         assert_eq!(copied.height(), 150);
@@ -786,7 +864,7 @@ mod tests {
 
         let requests = harness.overlay.requests.lock().expect("requests");
         assert_eq!(requests.len(), 1);
-        assert!(!requests[0].annotate);
+        assert!(requests[0].annotate);
         assert!(requests[0].magnifier.enabled);
         assert_eq!(requests[0].magnifier.zoom, CoreMagnifierZoom::X4);
         assert!(!requests[0].full_screen_crosshair);
@@ -807,6 +885,44 @@ mod tests {
             table.get("height").and_then(toml::Value::as_integer),
             Some(150)
         );
+    }
+
+    #[test]
+    fn region_result_preserves_the_toolbar_output_choice() {
+        let directory = tempfile::tempdir().expect("temp");
+        let desktop = desktop_of(vec![(monitor(7, 0, 0, 10, 10, true), pattern(10, 10))]);
+        let mut result = selected(Rect::new(Px(1), Px(1), Px(5), Px(5)), 7).expect("selection");
+        result.action = Some(PortOverlayAction::Save);
+        let harness = harness(directory.path(), desktop, Ok(result));
+        let (image, action) = harness
+            .service
+            .region_result(true)
+            .expect("capture")
+            .expect("selection");
+        assert_eq!((image.width(), image.height()), (5, 5));
+        assert_eq!(action, Some(PortOverlayAction::Save));
+        assert!(harness
+            .clipboard
+            .images
+            .lock()
+            .expect("clipboard")
+            .is_empty());
+    }
+
+    #[test]
+    fn region_toolbar_matches_the_image_destination() {
+        let directory = tempfile::tempdir().expect("temp");
+        let desktop = desktop_of(vec![(monitor(7, 0, 0, 10, 10, true), pattern(10, 10))]);
+        let selection = Rect::new(Px(1), Px(1), Px(5), Px(5));
+        let harness = harness(directory.path(), desktop, selected(selection, 7));
+        harness.service.region_result(true).expect("local capture");
+        assert!(!harness.overlay.requests.lock().expect("requests")[0].upload_on_finish);
+        harness
+            .services
+            .update_settings(&serde_json::json!({ "uploads": { "images": "my-destination" } }))
+            .expect("settings");
+        harness.service.region_result(true).expect("upload capture");
+        assert!(harness.overlay.requests.lock().expect("requests")[1].upload_on_finish);
     }
 
     #[test]
@@ -1066,6 +1182,7 @@ mod tests {
             foreground: Mutex::new(None),
             under_cursor: Mutex::new(None),
             theme: OverlayTheme::Dark,
+            feedback: Mutex::new(Vec::new()),
         });
         let overlay = Arc::new(FakeOverlay {
             result: Mutex::new(Err(PortOverlayError::Cancelled)),

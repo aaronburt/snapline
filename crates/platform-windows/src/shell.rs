@@ -144,6 +144,7 @@ pub fn confirm_delete(message: &str) -> Result<bool, ShellError> {
         },
     ];
     let config = TASKDIALOGCONFIG {
+        cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
         pszWindowTitle: PCWSTR(title.as_ptr()),
         Anonymous1: TASKDIALOGCONFIG_0 {
             pszMainIcon: TD_WARNING_ICON,

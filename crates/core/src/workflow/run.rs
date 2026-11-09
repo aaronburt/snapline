@@ -11,6 +11,7 @@ use super::{Step, UploadId, Violation, Workflow, WorkflowError, WorkflowId, Work
 pub struct SaveRequest<'a> {
     pub image: Option<&'a Image>,
     pub recording: Option<&'a Path>,
+    pub recording_details: Option<RecordingDetails>,
     pub converted: Option<&'a Path>,
     pub file_name: Option<&'a str>,
 }
@@ -27,6 +28,14 @@ pub struct UploadRequest<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recorded {
     pub path: PathBuf,
+    pub details: Option<RecordingDetails>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecordingDetails {
+    pub width: u32,
+    pub height: u32,
+    pub duration_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +50,7 @@ pub struct Uploaded {
 pub struct RunContext {
     pub image: Option<Image>,
     pub recording: Option<PathBuf>,
+    pub recording_details: Option<RecordingDetails>,
     pub converted: Option<PathBuf>,
     pub saved_file: Option<PathBuf>,
     pub file_name: Option<String>,
@@ -49,6 +59,9 @@ pub struct RunContext {
     pub text: Option<String>,
     pub upload_id: Option<UploadId>,
     pub copied_image: bool,
+    pub capture_annotated: bool,
+    pub capture_action: Option<crate::ports::OverlayAction>,
+    pub explicit_capture_output: bool,
     pub copied_text: Option<String>,
 }
 
@@ -136,33 +149,73 @@ pub fn run(
             ),
         });
     }
+    let mut chosen: Vec<Step> = Vec::new();
+    let mut explicit = false;
+    let mut failed: Option<RunErrorKind> = None;
     for (index, step) in workflow.steps.iter().enumerate() {
-        match execute_step(index, step, workflow, ports, context) {
-            Ok(status) => {
-                if status == StepStatus::Deferred {
-                    deferred.push(index);
-                }
-                outcomes.push(StepOutcome {
-                    index,
-                    step: step.clone(),
-                    status,
-                });
+        if explicit && is_capture_output(step) {
+            let steps = std::mem::take(&mut chosen);
+            if let Err(kind) = run_steps(
+                index,
+                &steps,
+                workflow,
+                ports,
+                context,
+                &mut outcomes,
+                &mut deferred,
+            ) {
+                failed = Some(kind);
+                break;
             }
-            Err(kind) => {
-                let finished_at = ports.clock.now_local();
-                return Err(RunError {
-                    kind,
-                    report: build_report(
-                        workflow,
-                        started_at,
-                        finished_at,
-                        outcomes,
-                        deferred,
-                        context,
-                    ),
-                });
+            continue;
+        }
+        if let Err(kind) = run_steps(
+            index,
+            std::slice::from_ref(step),
+            workflow,
+            ports,
+            context,
+            &mut outcomes,
+            &mut deferred,
+        ) {
+            failed = Some(kind);
+            break;
+        }
+        if let Some(action) = context.capture_action.take() {
+            if let Some(steps) = steps_for_action(action) {
+                context.explicit_capture_output = true;
+                explicit = true;
+                chosen = steps;
             }
         }
+    }
+    if failed.is_none() && !chosen.is_empty() {
+        let steps = std::mem::take(&mut chosen);
+        if let Err(kind) = run_steps(
+            workflow.steps.len(),
+            &steps,
+            workflow,
+            ports,
+            context,
+            &mut outcomes,
+            &mut deferred,
+        ) {
+            failed = Some(kind);
+        }
+    }
+    if let Some(kind) = failed {
+        let finished_at = ports.clock.now_local();
+        return Err(RunError {
+            kind,
+            report: build_report(
+                workflow,
+                started_at,
+                finished_at,
+                outcomes,
+                deferred,
+                context,
+            ),
+        });
     }
     let finished_at = ports.clock.now_local();
     Ok(build_report(
@@ -173,6 +226,50 @@ pub fn run(
         deferred,
         context,
     ))
+}
+
+fn is_capture_output(step: &Step) -> bool {
+    matches!(
+        step,
+        Step::CopyImage
+            | Step::Save
+            | Step::Upload { .. }
+            | Step::CopyLink { .. }
+            | Step::PlaySound
+    )
+}
+
+fn steps_for_action(action: crate::ports::OverlayAction) -> Option<Vec<Step>> {
+    use crate::ports::OverlayAction;
+    match action {
+        OverlayAction::Copy => Some(vec![Step::CopyImage]),
+        OverlayAction::Save => Some(vec![Step::Save]),
+        OverlayAction::Upload => Some(vec![Step::Save, Step::Upload { dest: None }]),
+        OverlayAction::Pin => None,
+    }
+}
+
+fn run_steps(
+    index: usize,
+    steps: &[Step],
+    workflow: &Workflow,
+    ports: &WorkflowPorts<'_>,
+    context: &mut RunContext,
+    outcomes: &mut Vec<StepOutcome>,
+    deferred: &mut Vec<usize>,
+) -> Result<(), RunErrorKind> {
+    for step in steps {
+        let status = execute_step(index, step, workflow, ports, context)?;
+        if status == StepStatus::Deferred {
+            deferred.push(index);
+        }
+        outcomes.push(StepOutcome {
+            index,
+            step: step.clone(),
+            status,
+        });
+    }
+    Ok(())
 }
 
 pub fn resume_after_upload(
@@ -255,11 +352,14 @@ fn execute_step(
 ) -> Result<StepStatus, RunErrorKind> {
     match step {
         Step::Capture { kind } => {
-            let image = ports
+            let annotate = workflow.annotates_inline(index);
+            let captured = ports
                 .capture
-                .capture(*kind)
+                .capture_for_workflow(*kind, annotate)
                 .map_err(|error| port_error(index, step, error))?;
-            context.image = Some(image);
+            context.image = Some(captured.image);
+            context.capture_annotated = captured.annotated;
+            context.capture_action = captured.action;
             Ok(StepStatus::Done)
         }
         Step::Record { kind } => {
@@ -268,6 +368,7 @@ fn execute_step(
                 .record(*kind)
                 .map_err(|error| port_error(index, step, error))?;
             context.recording = Some(recorded.path);
+            context.recording_details = recorded.details;
             Ok(StepStatus::Done)
         }
         Step::CopyImage => {
@@ -283,6 +384,9 @@ fn execute_step(
             Ok(StepStatus::Done)
         }
         Step::Annotate => {
+            if std::mem::take(&mut context.capture_annotated) {
+                return Ok(StepStatus::Done);
+            }
             let annotated = {
                 let image = context
                     .image
@@ -300,6 +404,7 @@ fn execute_step(
             let request = SaveRequest {
                 image: context.image.as_ref(),
                 recording: context.recording.as_deref(),
+                recording_details: context.recording_details,
                 converted: context.converted.as_deref(),
                 file_name: context.file_name.as_deref(),
             };
@@ -480,6 +585,9 @@ mod tests {
         capture_calls: RefCell<Vec<CaptureKind>>,
         record_calls: RefCell<Vec<RecordKind>>,
         annotate_calls: Cell<u32>,
+        capture_has_annotation: Cell<bool>,
+        capture_action: Cell<Option<crate::ports::OverlayAction>>,
+        capture_annotation_requested: Cell<bool>,
         save_calls: Cell<u32>,
         save_had_image: Cell<bool>,
         upload_calls: RefCell<Vec<(Option<DestId>, bool)>>,
@@ -507,6 +615,9 @@ mod tests {
                 capture_calls: RefCell::new(Vec::new()),
                 record_calls: RefCell::new(Vec::new()),
                 annotate_calls: Cell::new(0),
+                capture_has_annotation: Cell::new(false),
+                capture_action: Cell::new(None),
+                capture_annotation_requested: Cell::new(false),
                 save_calls: Cell::new(0),
                 save_had_image: Cell::new(false),
                 upload_calls: RefCell::new(Vec::new()),
@@ -546,6 +657,23 @@ mod tests {
     }
 
     impl CapturePort for Fake {
+        fn capture_for_workflow(
+            &self,
+            kind: CaptureKind,
+            annotate: bool,
+        ) -> Result<crate::workflow::Captured, WorkflowError> {
+            self.capture_annotation_requested.set(annotate);
+            Ok(crate::workflow::Captured {
+                image: self.capture(kind)?,
+                annotated: self.capture_has_annotation.get(),
+                action: self.capture_action.get(),
+            })
+        }
+
+        fn includes_annotation(&self, _kind: CaptureKind) -> bool {
+            self.capture_has_annotation.get()
+        }
+
         fn capture(&self, kind: CaptureKind) -> Result<Image, WorkflowError> {
             self.capture_calls.borrow_mut().push(kind);
             match self.capture_mode.get() {
@@ -561,6 +689,7 @@ mod tests {
             self.record_calls.borrow_mut().push(kind);
             match self.record_mode.get() {
                 Mode::Ready => Ok(Recorded {
+                    details: None,
                     path: PathBuf::from("C:/Temp/recording.mp4"),
                 }),
                 Mode::NotAvailable => Err(WorkflowError::NotAvailableYet),
@@ -709,6 +838,93 @@ mod tests {
         assert_eq!(fake.clipboard_images.borrow().len(), 1);
         assert!(report.image);
         assert!(report.copied_image);
+    }
+
+    #[test]
+    fn annotation_already_done_during_capture_does_not_open_another_editor() {
+        let fake = Fake::new();
+        fake.capture_has_annotation.set(true);
+        let workflow = flow(
+            "Capture",
+            vec![
+                capture(CaptureKind::Region),
+                Step::Annotate,
+                Step::CopyImage,
+            ],
+        );
+        let mut context = RunContext::default();
+        run(&workflow, &fake.ports(), &mut context).expect("run");
+        assert_eq!(fake.annotate_calls.get(), 0);
+        assert_eq!(fake.clipboard_images.borrow().len(), 1);
+    }
+
+    #[test]
+    fn capture_save_and_upload_actions_run_the_chosen_output() {
+        for action in [
+            crate::ports::OverlayAction::Copy,
+            crate::ports::OverlayAction::Save,
+            crate::ports::OverlayAction::Upload,
+        ] {
+            let fake = Fake::new();
+            fake.capture_action.set(Some(action));
+            let workflow = flow(
+                "Capture",
+                vec![capture(CaptureKind::Region), Step::PlaySound],
+            );
+            let mut context = RunContext::default();
+            run(&workflow, &fake.ports(), &mut context).expect("run");
+            assert_eq!(
+                fake.clipboard_images.borrow().len(),
+                usize::from(action == crate::ports::OverlayAction::Copy)
+            );
+            assert_eq!(
+                fake.save_calls.get(),
+                u32::from(action != crate::ports::OverlayAction::Copy)
+            );
+            assert_eq!(
+                fake.upload_calls.borrow().len(),
+                usize::from(action == crate::ports::OverlayAction::Upload)
+            );
+            assert!(fake.sounds.borrow().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_chosen_capture_output_keeps_the_other_configured_steps() {
+        let fake = Fake::new();
+        fake.capture_action
+            .set(Some(crate::ports::OverlayAction::Save));
+        let workflow = flow(
+            "Capture",
+            vec![capture(CaptureKind::Region), Step::CopyImage, Step::Notify],
+        );
+        let mut context = RunContext::default();
+        let report = run(&workflow, &fake.ports(), &mut context).expect("run");
+        assert_eq!(fake.save_calls.get(), 1);
+        assert!(fake.clipboard_images.borrow().is_empty());
+        assert_eq!(fake.notices.borrow().len(), 1);
+        let indexes: Vec<usize> = report
+            .outcomes
+            .iter()
+            .map(|outcome| outcome.index)
+            .collect();
+        assert_eq!(indexes, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn annotation_stays_at_its_configured_workflow_position() {
+        let fake = Fake::new();
+        let mut workflow = Workflow::new(DEFAULT_WORKFLOW_ID, DEFAULT_WORKFLOW_NAME);
+        workflow.steps = vec![
+            capture(CaptureKind::Region),
+            Step::CopyImage,
+            Step::Annotate,
+        ];
+        let mut context = RunContext::default();
+        run(&workflow, &fake.ports(), &mut context).expect("run");
+        assert!(!fake.capture_annotation_requested.get());
+        assert_eq!(fake.clipboard_images.borrow().len(), 1);
+        assert_eq!(fake.annotate_calls.get(), 1);
     }
 
     #[test]

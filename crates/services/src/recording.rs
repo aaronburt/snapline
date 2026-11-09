@@ -240,6 +240,7 @@ pub struct SavedRecording {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionOutcome {
+    details: snapline_core::workflow::RecordingDetails,
     pub path: PathBuf,
 }
 
@@ -666,6 +667,11 @@ fn run_session(
         plan.output.clone()
     };
 
+    let details = snapline_core::workflow::RecordingDetails {
+        width: plan.target.width(),
+        height: plan.target.height(),
+        duration_ms,
+    };
     match plan.mode {
         SessionMode::Temporary => {
             update_status(status, |current| {
@@ -677,7 +683,10 @@ fn run_session(
                 ports.events.as_ref(),
                 RecordingEvent::Encoded,
             )?;
-            Ok(SessionOutcome { path: media })
+            Ok(SessionOutcome {
+                path: media,
+                details,
+            })
         }
         SessionMode::Save => {
             let first_frame = ports
@@ -718,7 +727,10 @@ fn run_session(
                     .events
                     .emit(AppEvent::History(crate::history::Event::Added { id }));
             }
-            Ok(SessionOutcome { path: saved.path })
+            Ok(SessionOutcome {
+                path: saved.path,
+                details,
+            })
         }
     }
 }
@@ -909,7 +921,10 @@ pub fn start_recording(
     Ok(status)
 }
 
-pub fn record_blocking(services: &Services, kind: RecordKind) -> Result<PathBuf, RecordError> {
+pub fn record_blocking(
+    services: &Services,
+    kind: RecordKind,
+) -> Result<snapline_core::workflow::Recorded, RecordError> {
     if current_control().is_some_and(|control| control.is_active()) {
         return Err(RecordError::Busy);
     }
@@ -923,7 +938,10 @@ pub fn record_blocking(services: &Services, kind: RecordKind) -> Result<PathBuf,
     };
     install_control(session.control());
     let outcome = session.wait()?;
-    Ok(outcome.path)
+    Ok(snapline_core::workflow::Recorded {
+        path: outcome.path,
+        details: Some(outcome.details),
+    })
 }
 
 fn begin(

@@ -14,8 +14,8 @@ mod run;
 mod step;
 
 pub use run::{
-    resume_after_upload, run, Recorded, RunContext, RunError, RunErrorKind, RunReport, SaveRequest,
-    StepOutcome, StepStatus, UploadRequest, Uploaded,
+    resume_after_upload, run, Recorded, RecordingDetails, RunContext, RunError, RunErrorKind,
+    RunReport, SaveRequest, StepOutcome, StepStatus, UploadRequest, Uploaded,
 };
 pub use step::{CaptureKind, RecordKind, Step};
 
@@ -53,6 +53,14 @@ impl Workflow {
 
     pub fn is_default(&self) -> bool {
         self.id.as_str() == DEFAULT_WORKFLOW_ID
+    }
+
+    pub fn annotates_inline(&self, capture_index: usize) -> bool {
+        let next_is_annotate = matches!(self.steps.get(capture_index + 1), Some(Step::Annotate));
+        if next_is_annotate {
+            return true;
+        }
+        self.is_default() && !self.steps.iter().any(|step| matches!(step, Step::Annotate))
     }
 
     pub fn validate(&self) -> Vec<Violation> {
@@ -159,6 +167,28 @@ impl UploadId {
 
 pub trait CapturePort {
     fn capture(&self, kind: CaptureKind) -> Result<Image, WorkflowError>;
+
+    fn capture_for_workflow(
+        &self,
+        kind: CaptureKind,
+        _annotate: bool,
+    ) -> Result<Captured, WorkflowError> {
+        Ok(Captured {
+            image: self.capture(kind)?,
+            annotated: self.includes_annotation(kind),
+            action: None,
+        })
+    }
+
+    fn includes_annotation(&self, _kind: CaptureKind) -> bool {
+        false
+    }
+}
+
+pub struct Captured {
+    pub image: Image,
+    pub annotated: bool,
+    pub action: Option<crate::ports::OverlayAction>,
 }
 
 pub trait RecordPort {
@@ -494,6 +524,37 @@ mod tests {
         assert!(flow.is_default());
         assert!(flow.hotkey.is_none());
         assert!(!Workflow::new("other", "Other").is_default());
+    }
+
+    #[test]
+    fn inline_annotation_follows_the_step_after_capture() {
+        let mut custom = Workflow::new("custom", "Custom");
+        custom.steps = vec![
+            Step::Capture {
+                kind: CaptureKind::Region,
+            },
+            Step::Annotate,
+            Step::Save,
+        ];
+        assert!(custom.annotates_inline(0));
+        custom.steps = vec![
+            Step::Capture {
+                kind: CaptureKind::Region,
+            },
+            Step::Save,
+            Step::Annotate,
+        ];
+        assert!(!custom.annotates_inline(0));
+        let mut default = Workflow::new(DEFAULT_WORKFLOW_ID, DEFAULT_WORKFLOW_NAME);
+        default.steps = vec![
+            Step::Capture {
+                kind: CaptureKind::Region,
+            },
+            Step::Save,
+        ];
+        assert!(default.annotates_inline(0));
+        default.steps.push(Step::Annotate);
+        assert!(!default.annotates_inline(0));
     }
 
     #[test]

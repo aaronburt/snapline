@@ -196,7 +196,14 @@ impl WorkflowService {
 }
 
 fn workflows_of(settings: &Settings) -> Vec<Workflow> {
-    settings.workflows.list.clone()
+    let mut workflows = settings.workflows.list.clone();
+    if !workflows.iter().any(Workflow::is_default) {
+        workflows.insert(
+            0,
+            crate::workflow_runner::default_from_general(&settings.general.default_workflow),
+        );
+    }
+    workflows
 }
 
 fn destinations_of(settings: &Settings) -> Vec<DestinationOption> {
@@ -421,7 +428,8 @@ mod tests {
         assert_eq!(created.steps.len(), 4);
 
         let list = listed(services.workflow().handle(WorkflowReq::List).expect("list"));
-        assert_eq!(list, vec![created.clone()]);
+        assert!(list[0].is_default);
+        assert_eq!(&list[1..], std::slice::from_ref(&created));
 
         let fetched = info_of(
             services
@@ -455,7 +463,11 @@ mod tests {
                 id: created.id.clone(),
             })
             .expect("delete");
-        assert!(listed(services.workflow().handle(WorkflowReq::List).expect("list")).is_empty());
+        assert!(
+            listed(services.workflow().handle(WorkflowReq::List).expect("list"))
+                .iter()
+                .all(|item| item.is_default)
+        );
         assert_eq!(
             services
                 .workflow()
@@ -496,7 +508,7 @@ mod tests {
         assert_eq!(copy.steps, source.steps);
         assert_eq!(
             listed(services.workflow().handle(WorkflowReq::List).expect("list")).len(),
-            2
+            3
         );
     }
 
@@ -602,7 +614,11 @@ mod tests {
                 .expect_err("invalid");
             assert_eq!(error, ServiceError::Invalid(message.to_owned()));
         }
-        assert!(listed(services.workflow().handle(WorkflowReq::List).expect("list")).is_empty());
+        assert!(
+            listed(services.workflow().handle(WorkflowReq::List).expect("list"))
+                .iter()
+                .all(|item| item.is_default)
+        );
     }
 
     #[test]
@@ -656,7 +672,7 @@ mod tests {
         }
         assert_eq!(
             listed(services.workflow().handle(WorkflowReq::List).expect("list")).len(),
-            3
+            4
         );
     }
 
@@ -805,7 +821,7 @@ mod tests {
             .into_iter()
             .map(|workflow| workflow.id)
             .collect();
-        assert_eq!(ids, vec!["save-quietly", "save-quietly-2"]);
+        assert_eq!(ids, vec!["default", "save-quietly", "save-quietly-2"]);
     }
 
     #[test]

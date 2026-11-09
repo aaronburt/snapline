@@ -49,7 +49,18 @@ impl ScreenCapture for CaptureBackend {
 
     fn freeze_all(&self) -> Result<FrozenDesktop, CaptureError> {
         match dxgi::freeze_all(self.options) {
-            Ok(desktop) => Ok(desktop),
+            Ok(desktop)
+                if desktop
+                    .monitors
+                    .iter()
+                    .all(|monitor| usable_frame(&monitor.image)) =>
+            {
+                Ok(desktop)
+            }
+            Ok(_) => {
+                tracing::warn!("desktop duplication returned an empty frame; falling back to GDI");
+                gdi::freeze_all(self.options)
+            }
             Err(error) => {
                 tracing::debug!(%error, "desktop duplication failed; falling back to GDI");
                 gdi::freeze_all(self.options)
@@ -62,9 +73,26 @@ impl ScreenCapture for CaptureBackend {
     }
 }
 
+fn usable_frame(image: &Image) -> bool {
+    image
+        .pixels()
+        .chunks_exact(4)
+        .any(|pixel| pixel.iter().any(|channel| *channel != 0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_duplication_frames_are_rejected() {
+        let empty = Image::new(2, 1, 8, vec![0; 8]).expect("image");
+        let black = Image::new(1, 1, 4, vec![0, 0, 0, 255]).expect("image");
+        let coloured = Image::new(1, 1, 4, vec![7, 0, 0, 0]).expect("image");
+        assert!(!usable_frame(&empty));
+        assert!(usable_frame(&black));
+        assert!(usable_frame(&coloured));
+    }
 
     #[test]
     #[ignore = "desktop"]
@@ -74,6 +102,7 @@ mod tests {
         let frozen = backend.freeze_all().expect("freeze");
         assert_eq!(frozen.monitors.len(), monitors.len());
         for frozen_monitor in &frozen.monitors {
+            assert!(usable_frame(&frozen_monitor.image));
             assert_eq!(
                 frozen_monitor.image.width(),
                 u32::try_from(frozen_monitor.monitor.bounds.width.0).expect("width")

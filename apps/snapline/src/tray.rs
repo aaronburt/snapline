@@ -122,6 +122,15 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
                 };
                 if recording {
                     run_action(app, "record_stop");
+                } else if app
+                    .state::<Services>()
+                    .settings_snapshot()
+                    .is_ok_and(|settings| settings.general.tray_click_capture)
+                {
+                    let app = app.clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        run_action(&app, "capture_region")
+                    });
                 } else {
                     let rect = crate::panel::TrayRect::from_tauri(rect);
                     crate::panel::show(app, rect.x, rect.y, rect.width, rect.height);

@@ -83,10 +83,7 @@ impl ClipboardUploadRequest {
     }
 
     fn has_destination(&self) -> bool {
-        let destination = self.destination.trim();
-        !destination.is_empty()
-            && destination != DestinationRef::SAVE_LOCALLY_ONLY
-            && destination != DestinationRef::NONE
+        DestinationRef::is_upload_id(&self.destination)
     }
 }
 

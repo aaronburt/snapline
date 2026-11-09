@@ -15,7 +15,7 @@ use snapline_store::settings::uploads::DestinationRef;
 use snapline_store::settings::workflows::default_workflow;
 use snapline_upload::queue::{self, UploadFile};
 
-use crate::capture::{self, CaptureOutcome};
+use crate::capture;
 use crate::dto::hotkeys::{HotkeysReq, HotkeysResp};
 use crate::recording::RecordError;
 use crate::saver::{CaptureRequest, SystemClock};
@@ -44,6 +44,14 @@ pub struct UnavailableAnnotate;
 impl AnnotatePort for UnavailableAnnotate {
     fn annotate(&self, _image: &Image) -> Result<Image, WorkflowError> {
         Err(WorkflowError::NotAvailableYet)
+    }
+}
+
+pub struct ServiceAnnotate;
+
+impl AnnotatePort for ServiceAnnotate {
+    fn annotate(&self, image: &Image) -> Result<Image, WorkflowError> {
+        crate::editor::annotate_image(image)
     }
 }
 
@@ -175,14 +183,14 @@ impl RunnerPorts {
             options.queue,
             options.destinations,
         ));
-        let capture = Arc::new(CaptureServicePort::new(Arc::clone(&options.clipboard)));
+        let capture = Arc::new(CaptureServicePort);
         let text = options
             .ocr
             .map(|ocr| Arc::new(ServiceTextPort::new(ocr)) as Arc<dyn TextPort + Send + Sync>)
             .unwrap_or_else(|| Arc::new(UnavailableText));
         let annotate = options
             .annotate
-            .unwrap_or_else(|| Arc::new(UnavailableAnnotate));
+            .unwrap_or_else(|| Arc::new(ServiceAnnotate));
         Self {
             capture,
             record: Arc::new(ServiceRecordPort::new(services)),
@@ -199,41 +207,72 @@ impl RunnerPorts {
     }
 }
 
-pub struct CaptureServicePort {
-    clipboard: Arc<dyn Clipboard + Send + Sync>,
+pub(crate) fn default_from_general(
+    steps: &[snapline_store::settings::general::WorkflowStep],
+) -> Workflow {
+    use snapline_store::settings::general::WorkflowStepKind;
+    let mut workflow = default_workflow();
+    workflow.steps = steps
+        .iter()
+        .filter(|step| step.enabled)
+        .map(|step| match step.kind {
+            WorkflowStepKind::CopyImage => Step::CopyImage,
+            WorkflowStepKind::Annotate => Step::Annotate,
+            WorkflowStepKind::Save => Step::Save,
+            WorkflowStepKind::Upload => Step::Upload { dest: None },
+            WorkflowStepKind::CopyLink => Step::CopyLink {
+                format: snapline_core::link_format::LinkFormat::Direct,
+            },
+            WorkflowStepKind::PlaySound => Step::PlaySound,
+        })
+        .collect();
+    workflow
 }
 
-impl CaptureServicePort {
-    pub fn new(clipboard: Arc<dyn Clipboard + Send + Sync>) -> Self {
-        Self { clipboard }
-    }
-}
+pub struct CaptureServicePort;
 
 impl CapturePort for CaptureServicePort {
+    fn includes_annotation(&self, kind: CaptureKind) -> bool {
+        kind == CaptureKind::Region
+    }
+
     fn capture(&self, kind: CaptureKind) -> Result<Image, WorkflowError> {
-        if kind == CaptureKind::Scrolling {
-            return Err(WorkflowError::NotAvailableYet);
+        let service =
+            capture::installed().map_err(|error| WorkflowError::Failed(error.to_string()))?;
+        match kind {
+            CaptureKind::Region => service.region_image(true),
+            CaptureKind::Window => service.window_image(),
+            CaptureKind::Screen => service.screen_image(),
+            CaptureKind::LastRegion => service.last_region_image(),
+            CaptureKind::Scrolling => return Err(WorkflowError::NotAvailableYet),
+        }
+        .map_err(|error| WorkflowError::Failed(error.to_string()))?
+        .ok_or(WorkflowError::Cancelled)
+    }
+
+    fn capture_for_workflow(
+        &self,
+        kind: CaptureKind,
+        annotate: bool,
+    ) -> Result<workflow::Captured, WorkflowError> {
+        if kind != CaptureKind::Region {
+            return Ok(workflow::Captured {
+                image: self.capture(kind)?,
+                annotated: false,
+                action: None,
+            });
         }
         let service =
             capture::installed().map_err(|error| WorkflowError::Failed(error.to_string()))?;
-        let outcome = match kind {
-            CaptureKind::Region => service.capture_region(),
-            CaptureKind::Window => service.capture_window(),
-            CaptureKind::Screen => service.capture_screen(),
-            CaptureKind::LastRegion => service.capture_last_region(),
-            CaptureKind::Scrolling => return Err(WorkflowError::NotAvailableYet),
-        }
-        .map_err(|error| WorkflowError::Failed(error.to_string()))?;
-        match outcome {
-            CaptureOutcome::Cancelled => Err(WorkflowError::Cancelled),
-            CaptureOutcome::Copied { .. } => self
-                .clipboard
-                .get_image()
-                .map_err(|error| WorkflowError::Failed(error.to_string()))?
-                .ok_or_else(|| {
-                    WorkflowError::Failed("The captured image could not be read back.".to_owned())
-                }),
-        }
+        let (image, action) = service
+            .region_result(annotate)
+            .map_err(|error| WorkflowError::Failed(error.to_string()))?
+            .ok_or(WorkflowError::Cancelled)?;
+        Ok(workflow::Captured {
+            image,
+            annotated: annotate,
+            action,
+        })
     }
 }
 
@@ -250,12 +289,45 @@ impl WorkerSavePort {
 impl SavePort for WorkerSavePort {
     fn save(&self, request: SaveRequest<'_>) -> Result<PathBuf, WorkflowError> {
         let Some(image) = request.image else {
-            return Err(WorkflowError::NotAvailableYet);
+            let source = request
+                .converted
+                .or(request.recording)
+                .ok_or(WorkflowError::NotAvailableYet)?;
+            let details = request
+                .recording_details
+                .ok_or(WorkflowError::NotAvailableYet)?;
+            let staging =
+                tempfile::tempdir().map_err(|error| WorkflowError::Failed(error.to_string()))?;
+            let name = source.file_name().ok_or(WorkflowError::NotAvailableYet)?;
+            let media = staging.path().join(name);
+            std::fs::copy(source, &media)
+                .map_err(|error| WorkflowError::Failed(error.to_string()))?;
+            let kind = if content_type(source) == "image/gif" {
+                crate::recording::RecordedKind::Gif
+            } else {
+                crate::recording::RecordedKind::Video
+            };
+            return self
+                .worker
+                .save_recording(crate::recording::RecordedFile {
+                    media,
+                    first_frame: None,
+                    kind,
+                    width: details.width,
+                    height: details.height,
+                    duration_ms: details.duration_ms,
+                    source_app: None,
+                    window_title: request.file_name.unwrap_or_default().to_owned(),
+                })
+                .map(|saved| saved.path)
+                .map_err(|error| WorkflowError::Failed(error.to_string()));
         };
         let window_title = request.file_name.unwrap_or_default();
+        let mut capture = CaptureRequest::new(image.clone(), None, window_title);
+        capture.workflow_save = true;
         let outcome = self
             .worker
-            .save_capture(CaptureRequest::new(image.clone(), None, window_title))
+            .save_capture(capture)
             .map_err(|error| WorkflowError::Failed(error.to_string()))?;
         outcome
             .path
@@ -277,9 +349,7 @@ impl ServiceRecordPort {
 
 impl RecordPort for ServiceRecordPort {
     fn record(&self, kind: RecordKind) -> Result<Recorded, WorkflowError> {
-        crate::recording::record_blocking(&self.services, kind)
-            .map(|path| Recorded { path })
-            .map_err(record_error)
+        crate::recording::record_blocking(&self.services, kind).map_err(record_error)
     }
 }
 
@@ -356,10 +426,7 @@ impl WorkflowUploadHandOff for QueueUploadHandOff {
             },
             ToOwned::to_owned,
         );
-        if dest.trim().is_empty()
-            || dest == DestinationRef::SAVE_LOCALLY_ONLY
-            || dest == DestinationRef::NONE
-        {
+        if !DestinationRef::is_upload_id(&dest) {
             return Err(ServiceError::Invalid(
                 "Choose an upload destination for images in Settings.".to_owned(),
             ));
@@ -412,6 +479,7 @@ impl UploadPort for QueueUploadPort {
                     self.save.save(SaveRequest {
                         image: Some(image),
                         recording: request.recording,
+                        recording_details: None,
                         converted: request.converted,
                         file_name: request.file_name,
                     })?
@@ -509,6 +577,24 @@ struct Pending {
     context: RunContext,
 }
 
+struct RunUpload<'a> {
+    port: &'a dyn UploadPort,
+    pending: &'a Mutex<HashMap<u64, Pending>>,
+    guard: std::cell::RefCell<Option<std::sync::MutexGuard<'a, HashMap<u64, Pending>>>>,
+}
+
+impl UploadPort for RunUpload<'_> {
+    fn hand_off(&self, request: UploadRequest<'_>) -> Result<UploadId, WorkflowError> {
+        let mut guard = self.guard.borrow_mut();
+        if guard.is_none() {
+            *guard = Some(self.pending.lock().map_err(|_| {
+                WorkflowError::Failed("The workflow state is unavailable.".to_owned())
+            })?);
+        }
+        self.port.hand_off(request)
+    }
+}
+
 struct Inner {
     services: Services,
     ports: RunnerPorts,
@@ -583,6 +669,9 @@ impl WorkflowRunner {
         if !self.allowed(&owner)? {
             return Ok(RunOutcome::Skipped);
         }
+        if id == snapline_core::workflow::DEFAULT_WORKFLOW_ID {
+            return self.run_default_from_capture();
+        }
         let workflow = self.load_workflow(id)?;
         self.execute(&workflow)
     }
@@ -637,14 +726,38 @@ impl WorkflowRunner {
             .ok_or(ServiceError::NotFound)
     }
 
-    fn run_default_from_capture(&self) -> Result<RunOutcome, ServiceError> {
+    pub fn run_default_from_capture(&self) -> Result<RunOutcome, ServiceError> {
         let settings = self.inner.services.settings_snapshot()?;
         let mut workflow = settings
             .workflows
             .list
             .into_iter()
             .find(Workflow::is_default)
-            .unwrap_or_else(default_workflow);
+            .unwrap_or_else(|| default_from_general(&settings.general.default_workflow));
+        if !settings.uploads.images.is_upload() {
+            let mut skipped_upload = false;
+            workflow.steps.retain(|step| match step {
+                Step::Upload { dest: None } => {
+                    skipped_upload = true;
+                    false
+                }
+                Step::Upload { .. } => {
+                    skipped_upload = false;
+                    true
+                }
+                Step::CopyLink { .. } if skipped_upload => false,
+                _ => true,
+            });
+        }
+        let mut has_upload = false;
+        workflow.steps.retain(|step| match step {
+            Step::Upload { .. } => {
+                has_upload = true;
+                true
+            }
+            Step::CopyLink { .. } => has_upload,
+            _ => true,
+        });
         if !workflow
             .steps
             .first()
@@ -664,32 +777,46 @@ impl WorkflowRunner {
         if !workflow.enabled {
             return Ok(RunOutcome::Skipped);
         }
-        let ports = self.inner.ports.core();
+        let upload = RunUpload {
+            port: self.inner.ports.upload.as_ref(),
+            pending: &self.inner.pending,
+            guard: std::cell::RefCell::new(None),
+        };
+        let mut ports = self.inner.ports.core();
+        ports.upload = &upload;
         let mut context = RunContext::default();
         match workflow::run(workflow, &ports, &mut context) {
             Ok(report) => {
                 if let Some(upload_id) = report.upload_id {
                     if !report.deferred.is_empty() {
-                        self.inner
-                            .pending
-                            .lock()
-                            .map_err(|_| {
-                                ServiceError::Internal(
-                                    "The workflow state is unavailable.".to_owned(),
-                                )
-                            })?
-                            .insert(
+                        if let Some(pending) = upload.guard.borrow_mut().as_mut() {
+                            context.image = None;
+                            pending.insert(
                                 upload_id.get(),
                                 Pending {
                                     workflow: workflow.clone(),
                                     context,
                                 },
                             );
+                        }
                     }
                 }
                 Ok(RunOutcome::Ran(report))
             }
-            Err(error) => Err(map_run_error(error)),
+            Err(error) => {
+                if context.explicit_capture_output
+                    && !matches!(error.kind, workflow::RunErrorKind::Cancelled { .. })
+                {
+                    self.inner
+                        .ports
+                        .notify
+                        .toast(snapline_core::ports::Notice::new(
+                            "Workflow could not be completed",
+                            error.to_string(),
+                        ));
+                }
+                Err(map_run_error(error))
+            }
         }
     }
 }
@@ -1100,6 +1227,29 @@ mod tests {
             ]
         );
         assert_eq!(ports.images.lock().expect("images").len(), 1);
+    }
+
+    #[test]
+    fn default_settings_skip_upload_and_apply_annotation_toggle() {
+        let directory = tempfile::tempdir().expect("temp");
+        let services = services(directory.path());
+        let ports = Arc::new(FakePorts::default());
+        let mut steps = snapline_store::settings::general::default_workflow();
+        steps
+            .iter_mut()
+            .find(|step| step.kind == snapline_store::settings::general::WorkflowStepKind::Annotate)
+            .expect("annotate")
+            .enabled = true;
+        services
+            .update_settings(&serde_json::json!({ "general": { "default_workflow": steps } }))
+            .expect("settings");
+        let result = runner(&services, &ports, true)
+            .run_action(&ActionId::new("capture_region"))
+            .expect("run");
+        assert!(matches!(result, RunOutcome::Ran(_)));
+        let entries = ports.entries();
+        assert!(entries.iter().any(|entry| entry == "annotate"));
+        assert!(!entries.iter().any(|entry| entry.starts_with("upload")));
     }
 
     #[test]

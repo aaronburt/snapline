@@ -99,6 +99,7 @@ pub struct CaptureRequest {
     pub image: Image,
     pub source_app: Option<String>,
     pub window_title: String,
+    pub(crate) workflow_save: bool,
 }
 
 impl CaptureRequest {
@@ -107,6 +108,7 @@ impl CaptureRequest {
             image,
             source_app,
             window_title: window_title.into(),
+            workflow_save: false,
         }
     }
 }
@@ -204,7 +206,9 @@ impl Saver {
         let general = &settings.general;
         let now = self.ports.clock.now_local();
         let image = request.image;
-        let copied = if step_enabled(&general.default_workflow, WorkflowStepKind::CopyImage) {
+        let copied = if !request.workflow_save
+            && step_enabled(&general.default_workflow, WorkflowStepKind::CopyImage)
+        {
             match self.ports.clipboard.set_image(&image) {
                 Ok(()) => true,
                 Err(error) => {
@@ -216,7 +220,9 @@ impl Saver {
             false
         };
 
-        if !step_enabled(&general.default_workflow, WorkflowStepKind::Save) {
+        if !request.workflow_save
+            && !step_enabled(&general.default_workflow, WorkflowStepKind::Save)
+        {
             return Ok(SaveOutcome::unsaved(copied, image.width(), image.height()));
         }
 

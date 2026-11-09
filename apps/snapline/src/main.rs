@@ -126,11 +126,11 @@ impl snapline_services::tools::combine::CombineHost for CombineHostImpl {
         &self,
         image: snapline_core::image::Image,
     ) -> Result<Option<i64>, ServiceError> {
-        let outcome = self.worker.save_capture(CaptureRequest {
+        let outcome = self.worker.save_capture(CaptureRequest::new(
             image,
-            source_app: Some("Snapline".to_string()),
-            window_title: "Combined image".to_string(),
-        })?;
+            Some("Snapline".to_string()),
+            "Combined image".to_string(),
+        ))?;
         Ok(outcome.capture_id)
     }
 }
@@ -291,6 +291,42 @@ struct AppCaptureContext {
 }
 
 impl CaptureContext for AppCaptureContext {
+    fn capture_complete(&self, image: &snapline_core::image::Image, sound: bool) {
+        if sound {
+            snapline_win::sound::play(snapline_win::sound::SoundId::Shutter);
+        }
+        let image = image.clone();
+        let _ = std::thread::Builder::new()
+            .name("snapline-preview".to_owned())
+            .spawn(move || {
+                let Some(monitor) = snapline_win::monitors::enumerate()
+                    .into_iter()
+                    .find(|monitor| monitor.primary)
+                else {
+                    return;
+                };
+                let target = 320_u32.min(
+                    ((u64::from(image.width()) * 200) / u64::from(image.height().max(1))).max(1)
+                        as u32,
+                );
+                let Ok(preview) = snapline_services::saver::scale_to_width(&image, target) else {
+                    return;
+                };
+                let area = monitor.work_area;
+                let origin = Point::new(
+                    Px(area.right().0 - preview.width() as i32 - 24),
+                    Px(area.bottom().0 - preview.height() as i32 - 24),
+                );
+                let mut request =
+                    snapline_overlay::pin::PinRequest::new(preview).with_capture_origin(origin);
+                request.preview = true;
+                if let Ok(handle) = snapline_overlay::pin::open(request) {
+                    std::thread::sleep(std::time::Duration::from_secs(4));
+                    drop(handle);
+                }
+            });
+    }
+
     fn capture_settings(&self) -> Result<Settings, ServiceError> {
         self.services.settings_snapshot()
     }
@@ -833,11 +869,19 @@ impl snapline_services::clipboard_upload::ConfirmHost for ClipboardConfirm {
 fn forward_input(app: &tauri::AppHandle, event: InputEvent) {
     match event {
         InputEvent::Action(action) => {
-            let services = app.state::<Services>();
-            if let Err(error) = snapline_services::actions::dispatch(&action, services.inner()) {
-                if !matches!(error, ServiceError::NotYet) {
-                    tracing::warn!(%action, %error, "hotkey action failed");
+            let services = app.state::<Services>().inner().clone();
+            let background = action.as_str().starts_with("workflow:");
+            let run = move || {
+                if let Err(error) = snapline_services::actions::dispatch(&action, &services) {
+                    if !matches!(error, ServiceError::NotYet) {
+                        tracing::warn!(%action, %error, "hotkey action failed");
+                    }
                 }
+            };
+            if background {
+                tauri::async_runtime::spawn_blocking(run);
+            } else {
+                run();
             }
         }
         InputEvent::Resumed => {
@@ -992,6 +1036,22 @@ fn main() -> anyhow::Result<()> {
             tray::handle_second_instance(app, &argv);
         }))
         .setup(move |app| {
+            if let Err(error) =
+                snapline_services::uploads::maintain_history(&startup_services, true)
+            {
+                tracing::warn!(%error, "upload history could not be maintained");
+            }
+            let maintenance_services = startup_services.clone();
+            let _ = std::thread::Builder::new()
+                .name("snapline-history-maintenance".to_owned())
+                .spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_secs(3600));
+                    if let Err(error) =
+                        snapline_services::uploads::maintain_history(&maintenance_services, false)
+                    {
+                        tracing::warn!(%error, "upload history could not be expired");
+                    }
+                });
             let app_handle = app.handle().clone();
             let input =
                 snapline_win::input::spawn_with(move |event| forward_input(&app_handle, event))?;
@@ -1012,32 +1072,25 @@ fn main() -> anyhow::Result<()> {
             });
             if let Some(upload_events) = upload_events {
                 let upload_app = app.handle().clone();
-                let persist_worker = app
-                    .state::<snapline_services::worker::Handle>()
-                    .inner()
-                    .clone();
+                let persist_services = services.clone();
                 std::thread::spawn(move || {
                     while let Ok(event) = upload_events.recv() {
                         if let snapline_services::AppEvent::Upload(
                             snapline_services::uploads::Event::StateChanged(state),
                         ) = &event
                         {
-                            let _ = persist_worker.enqueue(snapline_services::Job::Area(
-                                snapline_services::AreaJob::Upload(
-                                    snapline_services::uploads::Job::Persist(state.clone()),
-                                ),
-                            ));
+                            snapline_services::uploads::persist(&persist_services, state);
                             if state.status == snapline_services::dto::upload::UploadStatus::Done {
                                 if let Some(link) = &state.link {
                                     if let Ok(runner) =
                                         snapline_services::workflows::installed_runner()
                                     {
-                                        let _ = runner.resume_upload(
-                                            state.id,
-                                            link.clone(),
-                                            state.page_link.clone(),
-                                            None,
-                                        );
+                                        let id = state.id;
+                                        let link = link.clone();
+                                        let page_link = state.page_link.clone();
+                                        tauri::async_runtime::spawn_blocking(move || {
+                                            let _ = runner.resume_upload(id, link, page_link, None);
+                                        });
                                     }
                                 }
                             }

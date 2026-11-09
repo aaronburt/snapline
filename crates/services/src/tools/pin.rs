@@ -36,6 +36,10 @@ impl PinService {
         self.editor.pin_available()
     }
 
+    pub fn history(&self, id: i64) -> Result<ToolResp, ServiceError> {
+        Ok(response(self.editor.pin_history(id)?))
+    }
+
     pub fn file(&self) -> Result<ToolResp, ServiceError> {
         Ok(response(self.editor.pin_file()?))
     }

@@ -16,8 +16,6 @@ ts-rs.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 time.workspace = true
-
-[dev-dependencies]
 tempfile.workspace = true
 
 [lints]

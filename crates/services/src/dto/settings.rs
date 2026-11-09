@@ -49,6 +49,7 @@ pub struct SettingsDto {
 pub struct GeneralDto {
     pub launch_at_signin: bool,
     pub start_minimised: bool,
+    pub tray_click_capture: bool,
     pub notifications: bool,
     pub save_folder: String,
     pub subfolders: SubfoldersDto,
@@ -335,6 +336,7 @@ impl From<&store::General> for GeneralDto {
         Self {
             launch_at_signin: value.launch_at_signin,
             start_minimised: value.start_minimised,
+            tray_click_capture: value.tray_click_capture,
             notifications: value.notifications,
             save_folder: value.save_folder.clone(),
             subfolders: SubfoldersDto::from(value.subfolders),

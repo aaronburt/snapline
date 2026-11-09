@@ -66,6 +66,15 @@ impl DestinationRef {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn is_upload(&self) -> bool {
+        Self::is_upload_id(&self.0)
+    }
+
+    pub fn is_upload_id(id: &str) -> bool {
+        let id = id.trim();
+        !id.is_empty() && id != Self::SAVE_LOCALLY_ONLY && id != Self::NONE
+    }
 }
 
 impl Default for DestinationRef {

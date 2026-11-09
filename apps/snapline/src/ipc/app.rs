@@ -89,9 +89,17 @@ pub async fn ipc_app(
         AppReq::PanelAction { action } => {
             let services = services.inner().clone();
             let action = ActionId::new(action);
-            let result = tauri::async_runtime::spawn_blocking(move || dispatch(&action, &services))
-                .await
-                .map_err(IpcError::join)?;
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                if action.as_str() == "capture_region" {
+                    snapline_services::workflows::installed_runner()?
+                        .run_default_from_capture()
+                        .map(|_| ())
+                } else {
+                    dispatch(&action, &services)
+                }
+            })
+            .await
+            .map_err(IpcError::join)?;
             if from_panel {
                 manager.close_panel(window.app_handle());
             }
@@ -101,7 +109,7 @@ pub async fn ipc_app(
                     tracing::info!("the panel action is not available yet");
                 }
                 Err(error) => {
-                    tracing::warn!(%error, "the panel action failed");
+                    return Err(IpcError::from_service(error));
                 }
             }
             return Ok(AppResp::PanelAction);

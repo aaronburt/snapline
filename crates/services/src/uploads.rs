@@ -52,6 +52,34 @@ pub fn record_last_link(services: &Services, link: &str) -> Result<(), ServiceEr
     Ok(())
 }
 
+pub fn maintain_history(services: &Services, startup: bool) -> Result<(), ServiceError> {
+    use snapline_store::settings::uploads::KeepHistory;
+
+    let settings = services.settings_snapshot()?;
+    let days = match settings.uploads.keep_history {
+        KeepHistory::Forever => None,
+        KeepHistory::OneYear => Some(365),
+        KeepHistory::Days90 => Some(90),
+        KeepHistory::Days30 => Some(30),
+    };
+    let path = services.paths()?.history_file;
+    if !path.is_file() || (!startup && days.is_none()) {
+        return Ok(());
+    }
+    let repo =
+        HistoryRepo::open_write(&path).map_err(|error| ServiceError::Io(error.to_string()))?;
+    if startup {
+        repo.mark_uploads_interrupted()
+            .map_err(|error| ServiceError::Io(error.to_string()))?;
+    }
+    if let Some(days) = days {
+        let cutoff = time::OffsetDateTime::now_utc().unix_timestamp() * 1000 - days * 86_400_000;
+        repo.expire_uploads(cutoff)
+            .map_err(|error| ServiceError::Io(error.to_string()))?;
+    }
+    Ok(())
+}
+
 pub fn persist(services: &Services, state: &UploadState) {
     let Some(capture_id) = state.capture_id else {
         return;

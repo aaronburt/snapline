@@ -111,11 +111,11 @@ pub trait EditorPin: Send + Sync {
 
 impl EditorSaver for crate::worker::Handle {
     fn save(&self, image: Image, title: String) -> Result<SaveOutcome, ServiceError> {
-        self.save_capture(CaptureRequest {
+        self.save_capture(CaptureRequest::new(
             image,
-            source_app: Some(String::from("Snapline")),
-            window_title: title,
-        })
+            Some(String::from("Snapline")),
+            title,
+        ))
     }
 }
 
@@ -150,6 +150,17 @@ pub fn install(ports: EditorPorts) -> Result<(), ServiceError> {
     PORTS
         .set(Arc::new(ports))
         .map_err(|_| ServiceError::Internal("The image editor is already available.".to_owned()))
+}
+
+pub fn annotate_image(image: &Image) -> Result<Image, snapline_core::workflow::WorkflowError> {
+    let ports = installed().ok_or(snapline_core::workflow::WorkflowError::NotAvailableYet)?;
+    let result = ports
+        .host
+        .open(image.clone())
+        .map_err(|error| snapline_core::workflow::WorkflowError::Failed(error.to_string()))?;
+    result
+        .image
+        .ok_or(snapline_core::workflow::WorkflowError::Cancelled)
 }
 
 pub fn is_available() -> bool {
@@ -214,6 +225,12 @@ impl EditorService {
             return Ok(PinOutcome::Cancelled);
         };
         let (image, _title) = file_image(&path, self.services.codec()?)?;
+        self.ports()?.pin.pin(image)?;
+        Ok(PinOutcome::Pinned(PinSource::File))
+    }
+
+    pub fn pin_history(&self, capture_id: i64) -> Result<PinOutcome, ServiceError> {
+        let (image, _) = self.history_image(capture_id)?;
         self.ports()?.pin.pin(image)?;
         Ok(PinOutcome::Pinned(PinSource::File))
     }
@@ -295,10 +312,7 @@ impl EditorService {
     fn default_destination(&self) -> Result<String, ServiceError> {
         let settings = self.services.settings_snapshot()?;
         let destination = settings.uploads.images.as_str().trim().to_owned();
-        if destination.is_empty()
-            || destination == DestinationRef::SAVE_LOCALLY_ONLY
-            || destination == DestinationRef::NONE
-        {
+        if !DestinationRef::is_upload_id(&destination) {
             return Err(ServiceError::Invalid(
                 "Choose an upload destination for images in Settings.".to_owned(),
             ));
