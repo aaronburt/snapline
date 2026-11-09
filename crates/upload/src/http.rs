@@ -406,6 +406,7 @@ impl HttpClient {
         };
         let config = Agent::config_builder()
             .http_status_as_error(false)
+            .max_redirects(0)
             .user_agent(USER_AGENT)
             .timeout_global(Some(timeout))
             .tls_config(tls)
@@ -457,8 +458,12 @@ impl HttpTransport for HttpClient {
         response
             .into_body()
             .into_reader()
+            .take(8 * 1024 * 1024 + 1)
             .read_to_end(&mut body)
             .map_err(|error| UploadError::from_io(&error))?;
+        if body.len() > 8 * 1024 * 1024 {
+            return Err(UploadError::TooLarge);
+        }
         Ok(Response {
             status,
             headers,

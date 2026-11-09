@@ -22,6 +22,9 @@ impl UploadError {
     pub fn from_status_with_retry_after(status: u16, retry_after: Option<Duration>) -> Self {
         match status {
             408 | 429 | 500..=599 => Self::retryable_status(status, retry_after),
+            301 | 302 | 303 | 307 | 308 => Self::Permanent(format!(
+                "The server redirected the request (HTTP {status}). Check the destination address, including http versus https."
+            )),
             413 => Self::TooLarge,
             401 | 403 => Self::Auth,
             _ => Self::Permanent(format!("The server returned HTTP {status}.")),

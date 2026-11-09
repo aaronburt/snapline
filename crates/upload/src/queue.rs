@@ -258,7 +258,9 @@ impl RetryPolicy {
     }
 
     pub fn delay_for(&self, attempt: u32, error: &UploadError) -> Duration {
-        retry_after(error).unwrap_or_else(|| self.delay(attempt))
+        retry_after(error)
+            .map(|delay| delay.min(Duration::from_secs(3600)))
+            .unwrap_or_else(|| self.delay(attempt))
     }
 }
 
@@ -659,6 +661,7 @@ fn run_job(
             Ok(uploaded) => {
                 if let Some(record) = state.records.get_mut(&id) {
                     record.status = Status::Done;
+                    record.job.file.bytes = Vec::new();
                     record.link = Some(uploaded.link);
                     record.page_link = uploaded.page_link;
                     record.deletion_link = uploaded.deletion_link.map(|link| link.url);
