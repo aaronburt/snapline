@@ -1465,16 +1465,16 @@ The executing agent must not answer these itself.
 
 | # | Milestone | Status | Commit |
 |---|-----------|--------|--------|
-| 0 | Foundations | Built, not tested | |
-| 1 | Basic UI shell (includes the webview gate) | Built, not tested | 6ff3546 |
-| 2 | Settings and hotkeys | Built, not tested | e92db22 |
-| 3 | Screenshot | Built, not tested | 574495e |
-| 4 | Saving to disk and History | Built, not tested | 574495e |
-| 5 | Annotation | Built, not tested | ad3e7f7 |
-| 6 | Networking and uploads | Built, not tested | 1ed0d15 |
-| 7 | Workflows | Built, not tested | 175ff93 |
-| 8 | Recording | Built, not tested | 4a732fe |
-| 9 | Tools | Built, not tested | 4b7b6d7 |
-| 10 | Release | Built, not tested | d2571fa |
+| 0 | Foundations | Done | 17d0081 |
+| 1 | Basic UI shell (includes the webview gate) | Done | 6ff3546 |
+| 2 | Settings and hotkeys | Done | e92db22 |
+| 3 | Screenshot | Done | 574495e |
+| 4 | Saving to disk and History | Done | 574495e |
+| 5 | Annotation | Done | ad3e7f7 |
+| 6 | Networking and uploads | Done | 1ed0d15 |
+| 7 | Workflows | Done | 175ff93 |
+| 8 | Recording | Done | 4a732fe |
+| 9 | Tools | Done | 4b7b6d7 |
+| 10 | Release | Done | d2571fa |
 
 Update this table, and the task's line, whenever a task or milestone lands.
