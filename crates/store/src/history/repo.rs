@@ -4,17 +4,18 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use time::{Duration, OffsetDateTime, PrimitiveDateTime, Time};
 
 use super::{
-    capture_name, Capture, CaptureId, CaptureKind, Cursor, DeletedCapture, HistoryError,
-    HistoryFilter, HistoryPage, HistoryStats, NewCapture, UploadRecord, UploadState, UploadUpdate,
+    capture_name, BorrowedFile, Capture, CaptureId, CaptureKind, Cursor, DeletedCapture,
+    HistoryError, HistoryFilter, HistoryPage, HistoryStats, NewCapture, Origin, UploadRecord,
+    UploadState, UploadUpdate,
 };
 
 const PAGE_SIZE: usize = 60;
 
 const CAPTURE_SELECT: &str = "
-SELECT c.id, c.kind, c.path, c.bytes, c.width, c.height, c.duration_ms, c.source_app,
-       c.created_at, c.ocr_text,
+SELECT c.id, c.kind, c.origin, c.owned, c.path, c.bytes, c.source_modified_ms,
+       c.width, c.height, c.duration_ms, c.source_app, c.created_at, c.ocr_text,
        u.id, u.capture_id, u.dest_id, u.state, u.url, u.deletion_url, u.error, u.attempts,
-       u.updated_at, u.etag
+       u.updated_at, u.etag, u.sent, u.total
 FROM capture c
 LEFT JOIN upload u ON u.id = (
     SELECT u2.id
@@ -37,6 +38,7 @@ WHERE (
     OR (?1 = 5 AND NOT EXISTS (
         SELECT 1 FROM upload u4 WHERE u4.capture_id = c.id
     ))
+    OR (?1 = 6 AND c.kind IN ('text','file'))
 )
 AND (
     ?2 IS NULL
@@ -69,7 +71,7 @@ VALUES ('delete', ?1, ?2, ?3, ?4)
 ";
 
 const SELECT_UPLOAD: &str = "
-SELECT id, capture_id, dest_id, state, url, deletion_url, error, attempts, updated_at, etag
+SELECT id, capture_id, dest_id, state, url, deletion_url, error, attempts, updated_at, etag, sent, total
 FROM upload
 WHERE id = ?1
 ";
@@ -124,6 +126,37 @@ impl HistoryRepo {
         )?;
         transaction.commit()?;
         Ok(id)
+    }
+
+    pub fn record_borrowed_files(
+        &mut self,
+        files: &[BorrowedFile],
+    ) -> Result<Vec<CaptureId>, HistoryError> {
+        let transaction = self.conn.transaction()?;
+        let mut ids = Vec::with_capacity(files.len());
+        for file in files {
+            let id: CaptureId = transaction.query_row(
+                "UPDATE capture_sequence SET last_id = last_id + 1 RETURNING last_id",
+                [],
+                |row| row.get(0),
+            )?;
+            transaction.execute(
+                "INSERT INTO capture (kind, origin, owned, path, bytes, source_modified_ms, created_at, id) VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6, ?7)",
+                params![file.kind.as_str(), file.origin.as_str(), file.path, file.bytes, file.source_modified_ms, file.created_at, id],
+            )?;
+            transaction.execute(
+                INSERT_FTS,
+                params![
+                    id,
+                    capture_name(&file.path),
+                    Option::<String>::None,
+                    Option::<String>::None
+                ],
+            )?;
+            ids.push(id);
+        }
+        transaction.commit()?;
+        Ok(ids)
     }
 
     pub fn page(
@@ -205,9 +238,9 @@ impl HistoryRepo {
 
     pub fn delete(&mut self, id: CaptureId) -> Result<Option<DeletedCapture>, HistoryError> {
         let transaction = self.conn.transaction()?;
-        let found: Option<(String, String, i64, Option<String>, Option<String>)> = transaction
+        let found: Option<(String, bool, String, i64, Option<String>, Option<String>)> = transaction
             .query_row(
-                "SELECT kind, path, created_at, source_app, ocr_text FROM capture WHERE id = ?1",
+                "SELECT kind, owned, path, created_at, source_app, ocr_text FROM capture WHERE id = ?1",
                 [id],
                 |row| {
                     Ok((
@@ -216,11 +249,12 @@ impl HistoryRepo {
                         row.get(2)?,
                         row.get(3)?,
                         row.get(4)?,
+                        row.get(5)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((kind, path, created_at, source_app, ocr_text)) = found else {
+        let Some((kind, owned, path, created_at, source_app, ocr_text)) = found else {
             return Ok(None);
         };
         let kind = CaptureKind::parse(&kind)?;
@@ -233,6 +267,7 @@ impl HistoryRepo {
         Ok(Some(DeletedCapture {
             id,
             kind,
+            owned,
             path,
             created_at,
         }))
@@ -276,7 +311,7 @@ impl HistoryRepo {
         let id = match existing {
             Some(id) => {
                 transaction.execute(
-                    "UPDATE upload SET state = ?1, url = ?2, deletion_url = ?3, error = ?4, attempts = ?5, updated_at = ?6 WHERE id = ?7",
+                    "UPDATE upload SET state = ?1, url = ?2, deletion_url = ?3, error = ?4, attempts = ?5, updated_at = ?6, sent = ?7, total = ?8 WHERE id = ?9",
                     params![
                         update.state.as_str(),
                         update.url,
@@ -284,6 +319,8 @@ impl HistoryRepo {
                         update.error,
                         update.attempts,
                         update.updated_at,
+                        update.sent,
+                        update.total,
                         id,
                     ],
                 )?;
@@ -291,7 +328,7 @@ impl HistoryRepo {
             }
             None => {
                 transaction.execute(
-                    "INSERT INTO upload (capture_id, dest_id, state, url, deletion_url, error, attempts, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    "INSERT INTO upload (capture_id, dest_id, state, url, deletion_url, error, attempts, updated_at, sent, total) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     params![
                         update.capture_id,
                         update.dest_id,
@@ -301,6 +338,8 @@ impl HistoryRepo {
                         update.error,
                         update.attempts,
                         update.updated_at,
+                        update.sent,
+                        update.total,
                     ],
                 )?;
                 transaction.last_insert_rowid()
@@ -318,6 +357,8 @@ impl HistoryRepo {
                 row.get::<_, i64>(7)?,
                 row.get::<_, i64>(8)?,
                 row.get::<_, Option<String>>(9)?,
+                row.get::<_, i64>(10)?,
+                row.get::<_, i64>(11)?,
             ))
         })?;
         let state = UploadState::parse(&raw.3)?;
@@ -333,6 +374,8 @@ impl HistoryRepo {
             error: raw.6,
             attempts: raw.7,
             updated_at: raw.8,
+            sent: raw.10,
+            total: raw.11,
         })
     }
 
@@ -386,21 +429,24 @@ pub fn week_start_millis(now: OffsetDateTime) -> i64 {
 
 fn capture_from_row(row: &Row<'_>) -> Result<Capture, HistoryError> {
     let kind = CaptureKind::parse(&row.get::<_, String>(1)?)?;
-    let upload_id: Option<i64> = row.get(10)?;
+    let origin = Origin::parse(&row.get::<_, String>(2)?)?;
+    let upload_id: Option<i64> = row.get(13)?;
     let upload = match upload_id {
         Some(id) => {
-            let state = UploadState::parse(&row.get::<_, String>(13)?)?;
+            let state = UploadState::parse(&row.get::<_, String>(16)?)?;
             Some(UploadRecord {
                 id,
-                capture_id: row.get(11)?,
-                dest_id: row.get(12)?,
+                capture_id: row.get(14)?,
+                dest_id: row.get(15)?,
                 state,
-                url: row.get(14)?,
-                deletion_url: row.get(15)?,
-                error: row.get(16)?,
-                attempts: row.get(17)?,
-                updated_at: row.get(18)?,
-                etag: row.get(19)?,
+                url: row.get(17)?,
+                deletion_url: row.get(18)?,
+                error: row.get(19)?,
+                attempts: row.get(20)?,
+                updated_at: row.get(21)?,
+                etag: row.get(22)?,
+                sent: row.get(23)?,
+                total: row.get(24)?,
             })
         }
         None => None,
@@ -408,14 +454,17 @@ fn capture_from_row(row: &Row<'_>) -> Result<Capture, HistoryError> {
     Ok(Capture {
         id: row.get(0)?,
         kind,
-        path: row.get(2)?,
-        bytes: row.get(3)?,
-        width: row.get(4)?,
-        height: row.get(5)?,
-        duration_ms: row.get(6)?,
-        source_app: row.get(7)?,
-        created_at: row.get(8)?,
-        ocr_text: row.get(9)?,
+        origin,
+        owned: row.get(3)?,
+        path: row.get(4)?,
+        bytes: row.get(5)?,
+        source_modified_ms: row.get(6)?,
+        width: row.get(7)?,
+        height: row.get(8)?,
+        duration_ms: row.get(9)?,
+        source_app: row.get(10)?,
+        created_at: row.get(11)?,
+        ocr_text: row.get(12)?,
         upload,
     })
 }
@@ -476,6 +525,8 @@ mod tests {
 
     fn upload(capture_id: CaptureId, state: UploadState, updated_at: i64) -> UploadUpdate {
         UploadUpdate {
+            sent: 0,
+            total: 0,
             capture_id,
             dest_id: "imgur".to_owned(),
             state,

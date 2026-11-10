@@ -46,6 +46,24 @@ impl SettingsService {
             SettingsReq::PreviewName { pattern, format } => Ok(SettingsResp::PreviewName {
                 name: preview_name(&pattern, &format),
             }),
+            SettingsReq::PickFfmpeg => {
+                if let Some(path) = self.services.pick_ffmpeg()? {
+                    let settings = self.services.update_ffmpeg_path(Some(path))?;
+                    return Ok(SettingsResp::Updated {
+                        settings: SettingsDto::from(&settings),
+                    });
+                }
+                let settings = self.services.settings_snapshot()?;
+                Ok(SettingsResp::Updated {
+                    settings: SettingsDto::from(&settings),
+                })
+            }
+            SettingsReq::ResetFfmpegPath => {
+                let settings = self.services.update_ffmpeg_path(None)?;
+                Ok(SettingsResp::Updated {
+                    settings: SettingsDto::from(&settings),
+                })
+            }
             SettingsReq::BrowseFolder { current } => {
                 let path = self.services.pick_folder(current.as_deref())?;
                 Ok(SettingsResp::BrowseFolder { path })

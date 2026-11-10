@@ -772,6 +772,10 @@ impl DestinationSource for Registry {
         self.factory.build(&config, timeout, proxy).ok()
     }
 
+    fn streams_files(&self, dest: &str) -> bool {
+        matches!(self.resolve(dest), Some(DestinationConfig::Sftp { .. }))
+    }
+
     fn operations(&self) -> Option<Arc<dyn DestinationOperations>> {
         Some(Arc::new(self.clone()))
     }
@@ -2278,7 +2282,7 @@ mod tests {
         assert!(body_value("XML").is_err());
         assert_eq!(safe_file_name("My server"), "My server");
         assert_eq!(safe_file_name("a/b:c"), "a_b_c");
-        assert_eq!(test_file().bytes.len(), TEST_PNG.len());
+        assert_eq!(test_file().len as usize, TEST_PNG.len());
     }
 
     fn gist_input(id: &str, token: Option<&str>, public: bool) -> DestinationInput {

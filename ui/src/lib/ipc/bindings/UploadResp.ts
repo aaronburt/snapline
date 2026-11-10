@@ -2,4 +2,4 @@
 import type { DestinationResp } from "./DestinationResp";
 import type { UploadState } from "./UploadState";
 
-export type UploadResp = { "kind": "pong" } | { "kind": "state", "data": UploadState } | { "kind": "states", "data": Array<UploadState> } | { "kind": "lastLink", "data": { link: string | null, } } | { "kind": "linkCopied" } | { "kind": "accepted", "data": { id: number, } } | { "kind": "cancelled", "data": { id: number, } } | { "kind": "retried", "data": { id: number, } } | { "kind": "destination", "data": DestinationResp };
+export type UploadResp = { "kind": "pong" } | { "kind": "state", "data": UploadState } | { "kind": "states", "data": Array<UploadState> } | { "kind": "lastLink", "data": { link: string | null, } } | { "kind": "linkCopied" } | { "kind": "accepted", "data": { id: number, } } | { "kind": "acceptedMany", "data": { ids: Array<number>, } } | { "kind": "cancelled", "data": { id: number, } } | { "kind": "retried", "data": { id: number, } } | { "kind": "destination", "data": DestinationResp };

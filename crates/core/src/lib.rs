@@ -13,6 +13,7 @@ pub mod hotkey_plan;
 pub mod ids;
 pub mod image;
 pub mod link_format;
+pub mod media;
 pub mod naming;
 pub mod overlay;
 pub mod ports;

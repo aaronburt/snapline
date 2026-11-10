@@ -17,7 +17,8 @@ const uploads = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../lib/ipc/core', () => ({ call: uploads.call }));
-vi.mock('../../../lib/ipc/upload', () => ({
+vi.mock('../../../lib/ipc/upload', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../lib/ipc/upload')>()),
   listDestinations: uploads.destinations,
   copyLink: uploads.copyLink,
 }));
@@ -56,6 +57,8 @@ function capture(id: number, overrides: Partial<HistoryCaptureDto> = {}): Histor
   return {
     id,
     kind: 'image',
+    owned: true,
+    missing: false,
     name: `capture-${id}.png`,
     bytes: 412 * 1024,
     width: 1280,
@@ -73,6 +76,8 @@ function link(overrides: Partial<NonNullable<HistoryCaptureDto['upload']>> = {})
   return {
     destId: 'imgur',
     state: 'done' as const,
+    sent: 0,
+    total: 0,
     url: 'https://i.imgur.com/abc123.png',
     deletionUrl: null,
     error: null,
@@ -86,15 +91,21 @@ function uploadState(id: number, overrides: Partial<UploadState> = {}): UploadSt
   return {
     id,
     captureId: null,
+    fileName: `upload-${id}.png`,
     dest: 'Imgur',
     runId: null,
     status: 'queued' as const,
+    cancellable: true,
+    progressAvailable: false,
     attempts: 0,
     link: null,
     pageLink: null,
     deletionLink: null,
     error: null,
     retryInMs: null,
+    sent: 0,
+    total: 0,
+    linkBatch: null,
     ...overrides,
   };
 }
@@ -316,16 +327,43 @@ describe('History page', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'List view' }));
     await flush();
     expect(container.querySelector('table')).not.toBeNull();
-    expect(screen.getByRole('columnheader', { name: 'Captured' })).not.toBeNull();
+    expect(screen.getByRole('columnheader', { name: 'Status' })).not.toBeNull();
     expect(container.querySelectorAll('[data-capture-id]').length).toBe(3);
   });
 
-  it('shows the empty state when nothing matches', async () => {
+  it('offers an upload action when History is empty', async () => {
     mocks.page.mockResolvedValue(page([]));
+    uploads.call.mockResolvedValue({ kind: 'acceptedMany', data: { ids: [] } });
     render(HistoryPage);
     await flush();
     expect(screen.getByText('No captures yet')).not.toBeNull();
     expect(screen.getByText('Press PrtSc to capture a region.')).not.toBeNull();
+    const actions = screen.getAllByRole('button', { name: 'Upload file…' });
+    expect(actions).toHaveLength(2);
+    await fireEvent.click(actions[1]);
+    expect(uploads.call).toHaveBeenCalledWith('ipc_upload', { kind: 'pickAndUpload' });
+  });
+
+  it('lets an empty search return to the current filter', async () => {
+    mocks.search.mockResolvedValue(page([]));
+    searchQuery.set('no such file');
+    render(HistoryPage);
+    await flush();
+    expect(screen.getByText('No matching items')).not.toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    await flush();
+    expect(screen.queryByText('No matching items')).toBeNull();
+    expect(mocks.page).toHaveBeenCalledWith('all', null);
+  });
+
+  it('closes Details and restores focus to the selected item', async () => {
+    const { container } = render(HistoryPage);
+    await flush();
+    await selectFirst();
+    await fireEvent.click(screen.getByRole('button', { name: 'Close details' }));
+    await flush();
+    expect(screen.queryByRole('complementary', { name: 'Capture details' })).toBeNull();
+    expect(document.activeElement).toBe(container.querySelector('[data-capture-id="1"]'));
   });
 
   it('opens the selected file with Enter and copies it with Ctrl+C', async () => {

@@ -19,9 +19,17 @@ pub struct UploadState {
     pub id: u64,
     #[ts(as = "Option<u32>")]
     pub capture_id: Option<i64>,
+    pub file_name: String,
     pub dest: String,
     pub run_id: Option<String>,
     pub status: UploadStatus,
+    pub cancellable: bool,
+    pub progress_available: bool,
+    #[ts(as = "u32")]
+    pub sent: u64,
+    #[ts(as = "u32")]
+    pub total: u64,
+    pub link_batch: Option<UploadLinkBatch>,
     pub attempts: u32,
     pub link: Option<String>,
     pub page_link: Option<String>,
@@ -29,6 +37,16 @@ pub struct UploadState {
     pub error: Option<String>,
     #[ts(as = "Option<u32>")]
     pub retry_in_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadLinkBatch {
+    pub id: String,
+    #[ts(as = "u32")]
+    pub index: u32,
+    #[ts(as = "u32")]
+    pub size: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -49,6 +67,7 @@ pub enum UploadReq {
     },
     List,
     LastLink,
+    PickAndUpload,
     CopyLink {
         link: String,
     },
@@ -73,6 +92,10 @@ pub enum UploadResp {
     Accepted {
         #[ts(as = "u32")]
         id: u64,
+    },
+    AcceptedMany {
+        #[ts(as = "Vec<u32>")]
+        ids: Vec<u64>,
     },
     Cancelled {
         #[ts(as = "u32")]

@@ -17,6 +17,8 @@ pub enum SettingsReq {
         pattern: String,
         format: String,
     },
+    PickFfmpeg,
+    ResetFfmpegPath,
     BrowseFolder {
         current: Option<String>,
     },

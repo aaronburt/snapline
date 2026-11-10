@@ -88,6 +88,8 @@ fn recent_dto(capture: &Capture) -> RecentCaptureDto {
             CaptureKind::Image => CaptureKindDto::Image,
             CaptureKind::Video => CaptureKindDto::Video,
             CaptureKind::Gif => CaptureKindDto::Gif,
+            CaptureKind::Text => CaptureKindDto::Text,
+            CaptureKind::File => CaptureKindDto::File,
         },
         status,
         created_at: capture.created_at,
@@ -184,6 +186,8 @@ mod tests {
         fn upload(&self, id: CaptureId, state: StoreUploadState, url: Option<&str>) {
             self.repo()
                 .set_upload(UploadUpdate {
+                    sent: 0,
+                    total: 0,
                     capture_id: id,
                     dest_id: "imgur".to_owned(),
                     state,

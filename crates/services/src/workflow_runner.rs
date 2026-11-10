@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use snapline_core::actions::{ActionId, WORKFLOW_PREFIX};
 use snapline_core::ids::DestId;
 use snapline_core::image::Image;
+use snapline_core::media::{classify, content_type, MediaKind};
 use snapline_core::ports::{Clipboard, ClipboardError, Clock, Notifier, Ocr, Sound};
 use snapline_core::workflow::{
     self, AnnotatePort, CaptureKind, CapturePort, GifPort, RecordKind, RecordPort, Recorded,
@@ -418,20 +420,30 @@ impl WorkflowUploadHandOff for QueueUploadHandOff {
         run_id: Option<String>,
     ) -> Result<u64, ServiceError> {
         let settings = self.services.settings_snapshot()?;
+        let mut first_bytes = [0_u8; 512];
+        let first_len = std::fs::File::open(&file.path)
+            .ok()
+            .and_then(|mut input| input.read(&mut first_bytes).ok())
+            .unwrap_or_default();
+        let media = classify(&file.file_name, &first_bytes[..first_len]);
         let dest = dest.map_or_else(
             || {
-                if file.content_type.contains("video") || file.content_type.contains("gif") {
-                    settings.uploads.videos_and_gifs.as_str().to_owned()
-                } else {
-                    settings.uploads.images.as_str().to_owned()
-                }
+                crate::uploads::destination_for(&settings.uploads, media)
+                    .as_str()
+                    .to_owned()
             },
             ToOwned::to_owned,
         );
         if !DestinationRef::is_upload_id(&dest) {
-            return Err(ServiceError::Invalid(
-                "Choose an upload destination for images in Settings.".to_owned(),
-            ));
+            let setting = match media {
+                MediaKind::Image => "uploads.images",
+                MediaKind::Video | MediaKind::Gif => "uploads.videos_and_gifs",
+                MediaKind::Text => "uploads.text_and_code",
+                MediaKind::File => "uploads.other_files",
+            };
+            return Err(ServiceError::Invalid(format!(
+                "Choose an upload destination in Settings for {setting}."
+            )));
         }
         let uploader = self.destinations.uploader(&dest).ok_or_else(|| {
             ServiceError::Invalid("The upload destination was not found.".to_owned())
@@ -513,24 +525,6 @@ impl ServiceTextPort {
 impl TextPort for ServiceTextPort {
     fn extract(&self, image: &Image) -> Result<String, WorkflowError> {
         crate::tools::ocr::OcrTextPort::new(self.ocr.as_ref()).extract(image)
-    }
-}
-
-fn content_type(path: &Path) -> &'static str {
-    match path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("png") => "image/png",
-        Some("jpg" | "jpeg") => "image/jpeg",
-        Some("webp") => "image/webp",
-        Some("gif") => "image/gif",
-        Some("mp4") => "video/mp4",
-        Some("webm") => "video/webm",
-        Some("mkv") => "video/x-matroska",
-        _ => "application/octet-stream",
     }
 }
 

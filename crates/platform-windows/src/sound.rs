@@ -7,7 +7,7 @@ use windows::Win32::Media::Audio::{PlaySoundW, SND_ALIAS, SND_ASYNC, SND_FILENAM
 pub const SOUNDS_DIR: &str = "assets/sounds";
 pub const SHUTTER_FILE: &str = "shutter.wav";
 pub const DONE_FILE: &str = "done.wav";
-pub const FALLBACK_ALIAS: &str = "SystemAsterisk";
+pub const FALLBACK_ALIAS: &str = "SystemDefault";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SoundId {
@@ -45,10 +45,24 @@ impl SoundPaths {
     }
 
     pub fn beside_exe() -> Self {
-        let root = std::env::current_exe()
+        let executable_dir = std::env::current_exe()
             .ok()
-            .and_then(|path| path.parent().map(|parent| parent.join(SOUNDS_DIR)))
-            .unwrap_or_else(|| PathBuf::from(SOUNDS_DIR));
+            .and_then(|path| path.parent().map(PathBuf::from));
+        let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/sounds");
+        let roots = executable_dir
+            .map(|directory| {
+                vec![
+                    directory.join("resources").join(SOUNDS_DIR),
+                    directory.join(SOUNDS_DIR),
+                    source_root.clone(),
+                ]
+            })
+            .unwrap_or_else(|| vec![source_root]);
+        let root = roots
+            .iter()
+            .find(|root| root.is_dir())
+            .cloned()
+            .unwrap_or_else(|| roots[0].clone());
         Self::new(root)
     }
 
@@ -126,13 +140,13 @@ mod tests {
         let paths = SoundPaths::new(directory.path());
         assert_eq!(
             paths.selection(SoundId::Shutter),
-            Playback::Alias("SystemAsterisk")
+            Playback::Alias("SystemDefault")
         );
         assert_eq!(
             paths.selection(SoundId::Done),
-            Playback::Alias("SystemAsterisk")
+            Playback::Alias("SystemDefault")
         );
-        assert_eq!(FALLBACK_ALIAS, "SystemAsterisk");
+        assert_eq!(FALLBACK_ALIAS, "SystemDefault");
     }
 
     #[test]

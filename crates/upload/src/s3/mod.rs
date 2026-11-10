@@ -7,7 +7,9 @@ use ureq::{Agent, Proxy};
 
 use crate::error::UploadError;
 use crate::http::{HttpTimeout, ProxySetting, USER_AGENT};
-use crate::queue::{DeletionLink, SecretStore, UploadFile, Uploaded, Uploader};
+use crate::queue::{
+    DeletionLink, SecretStore, UploadFile, Uploaded, Uploader, MAX_BUFFERED_UPLOAD_BYTES,
+};
 
 pub mod sigv4;
 
@@ -313,11 +315,12 @@ impl Uploader for S3Uploader {
         file: &UploadFile,
         secrets: &dyn SecretStore,
     ) -> Result<Uploaded, UploadError> {
+        let bytes = file.read_all(MAX_BUFFERED_UPLOAD_BYTES)?;
         let credentials = self.credentials(secrets)?;
         let key = self.config.object_key(&file.file_name);
         let target = self.target(&key)?;
         let amz_date = sigv4::format_amz_date(now_seconds());
-        let payload_hash = sigv4::sha256_hex(&file.bytes);
+        let payload_hash = sigv4::sha256_hex(&bytes);
         let content_type = if file.content_type.trim().is_empty() {
             "application/octet-stream"
         } else {
@@ -356,7 +359,7 @@ impl Uploader for S3Uploader {
             method: S3Method::Put,
             url: target.url(),
             headers: request_headers,
-            body: file.bytes.clone(),
+            body: bytes,
         })?;
         if !response.is_success() {
             return Err(map_status(response.status));
@@ -869,6 +872,7 @@ mod tests {
             let kind = match error {
                 UploadError::Auth => "auth",
                 UploadError::TooLarge => "too large",
+                UploadError::Cancelled => "cancelled",
                 UploadError::Retryable(_) => "retryable",
                 UploadError::Permanent(_) => "permanent",
             };

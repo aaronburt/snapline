@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use snapline_core::actions::{find, ActionId};
 use snapline_services::actions::dispatch;
@@ -101,19 +101,27 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
     }
     let menu = build_menu(app, state)?;
     let icon = icon_for_state(state.icon_state())?;
+    let capture_click = Arc::new(AtomicU64::new(0));
+    let double_click = AtomicBool::new(false);
     let tray = TrayIconBuilder::with_id("main")
         .icon(icon)
         .tooltip(tooltip(state))
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| handle_menu(app, event.id().as_ref()))
-        .on_tray_icon_event(|tray, event| match event {
+        .on_tray_icon_event(move |tray, event| match event {
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Down,
+                ..
+            } => double_click.store(false, Ordering::SeqCst),
             TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
                 rect,
                 ..
             } => {
+                let follows_double_click = double_click.swap(false, Ordering::SeqCst);
                 let app = tray.app_handle();
                 let recording = {
                     let handle = app.state::<TrayHandle>();
@@ -127,9 +135,27 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
                     .settings_snapshot()
                     .is_ok_and(|settings| settings.general.tray_click_capture)
                 {
+                    if follows_double_click {
+                        return;
+                    }
+                    let ticket = capture_click.fetch_add(1, Ordering::SeqCst) + 1;
+                    let capture_click = Arc::clone(&capture_click);
                     let app = app.clone();
                     tauri::async_runtime::spawn_blocking(move || {
-                        run_action(&app, "capture_region")
+                        std::thread::sleep(snapline_win::input::double_click_interval());
+                        if capture_click.load(Ordering::SeqCst) == ticket
+                            && app
+                                .state::<TrayHandle>()
+                                .state()
+                                .recording_seconds
+                                .is_none()
+                            && app
+                                .state::<Services>()
+                                .settings_snapshot()
+                                .is_ok_and(|settings| settings.general.tray_click_capture)
+                        {
+                            run_action(&app, "capture_region");
+                        }
                     });
                 } else {
                     let rect = crate::panel::TrayRect::from_tauri(rect);
@@ -140,6 +166,8 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
                 button: MouseButton::Left,
                 ..
             } => {
+                capture_click.fetch_add(1, Ordering::SeqCst);
+                double_click.store(true, Ordering::SeqCst);
                 let app = tray.app_handle();
                 let manager = app.state::<WindowManager>();
                 if let Err(error) = manager.open_main(app, "/history") {
@@ -232,6 +260,10 @@ fn handle_menu(app: &AppHandle, id: &str) {
         }
         "record_system_audio" => toggle_check(app, CheckKind::SystemAudio),
         "record_microphone" => toggle_check(app, CheckKind::Microphone),
+        "upload_file" => {
+            let app = app.clone();
+            tauri::async_runtime::spawn_blocking(move || run_action(&app, "upload_file"));
+        }
         action => run_action(app, action),
     }
 }
@@ -405,6 +437,7 @@ fn build_menu(app: &AppHandle, state: TrayState) -> tauri::Result<Menu<Wry>> {
         "window",
     )?;
     let record_separator = PredefinedMenuItem::separator(app)?;
+    let upload_file = icon_item(app, "upload_file", "Upload file…".to_string(), "open")?;
     let system_audio = CheckMenuItem::with_id(
         app,
         "record_system_audio",
@@ -452,6 +485,7 @@ fn build_menu(app: &AppHandle, state: TrayState) -> tauri::Result<Menu<Wry>> {
                 &capture_screen,
                 &capture_scrolling,
                 &stop,
+                &upload_file,
                 &separator_one,
                 &open,
                 &settings,
@@ -482,6 +516,7 @@ fn build_menu(app: &AppHandle, state: TrayState) -> tauri::Result<Menu<Wry>> {
                 &capture_screen,
                 &capture_scrolling,
                 &record,
+                &upload_file,
                 &separator_one,
                 &open,
                 &settings,

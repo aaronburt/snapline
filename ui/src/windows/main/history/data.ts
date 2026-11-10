@@ -2,7 +2,7 @@ import type { CaptureKindDto } from '../../../lib/ipc/bindings/CaptureKindDto';
 import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
 import type { HistoryFilter } from '../../../lib/ipc/bindings/HistoryFilter';
 
-export const historyFilters = ['All', 'Images', 'Videos', 'GIFs'];
+export const historyFilters = ['All', 'Images', 'Videos', 'GIFs', 'Files'];
 export const captureCardWidth = 200;
 export const captureCardGap = 12;
 
@@ -17,6 +17,9 @@ export function filterValue(label: string): HistoryFilter {
   }
   if (label === 'GIFs') {
     return 'gifs';
+  }
+  if (label === 'Files') {
+    return 'files';
   }
   return 'all';
 }
@@ -134,6 +137,12 @@ export function typeLabel(kind: CaptureKindDto, name: string): string {
   if (kind === 'video') {
     return `${extension.toUpperCase()} video`;
   }
+  if (kind === 'text') {
+    return extension ? `${extension.toUpperCase()} text` : 'Text file';
+  }
+  if (kind === 'file') {
+    return extension ? `${extension.toUpperCase()} file` : 'File';
+  }
   const image =
     extension === 'jpg' ? 'JPEG' : extension === 'webp' ? 'WebP' : extension.toUpperCase();
   return `${image || 'Image'} image`;
@@ -142,6 +151,12 @@ export function typeLabel(kind: CaptureKindDto, name: string): string {
 export function typeTag(kind: CaptureKindDto, name: string): string {
   if (kind === 'gif') {
     return 'GIF';
+  }
+  if (kind === 'file') {
+    return fileExtension(name).toUpperCase() || 'FILE';
+  }
+  if (kind === 'text') {
+    return fileExtension(name).toUpperCase() || 'TXT';
   }
   return fileExtension(name).toUpperCase() || (kind === 'video' ? 'VIDEO' : 'IMAGE');
 }
@@ -170,8 +185,13 @@ export function badgeStatus(capture: HistoryCaptureDto): BadgeStatus {
   return 'local';
 }
 
+export function pendingUploadLabel(phase: string | undefined): string | undefined {
+  if (phase === 'queued') return 'Queued';
+  if (phase === 'backingOff') return 'Waiting to retry';
+}
+
 export function timed(capture: HistoryCaptureDto): boolean {
-  return capture.kind !== 'image';
+  return capture.kind === 'video' || capture.kind === 'gif';
 }
 
 export function isSameDay(left: Date, right: Date): boolean {

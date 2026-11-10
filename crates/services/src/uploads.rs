@@ -4,18 +4,20 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{unbounded, Receiver};
 use serde::{Deserialize, Serialize};
 use snapline_core::actions::ActionId;
+use snapline_core::media::MediaKind;
 use snapline_core::ports::SecretStore as CoreSecretStore;
 use snapline_core::secret::SecretKey;
 use snapline_store::history::HistoryRepo;
 use snapline_store::history::{UploadState as HistoryUploadState, UploadUpdate};
 use snapline_store::settings::uploads::Retry;
+use snapline_store::settings::uploads::{DestinationRef, Uploads};
 use snapline_upload::queue;
 use ts_rs::TS;
 
 use crate::destinations::DestinationOperations;
 use crate::dto::upload::{
     DestinationReq, DestinationResp, DestinationTestOutcomeDto, DestinationTestStatusDto,
-    UploadReq, UploadResp, UploadState, UploadStatus,
+    UploadLinkBatch, UploadReq, UploadResp, UploadState, UploadStatus,
 };
 use crate::{AppEvent, ServiceError, Services};
 
@@ -29,6 +31,15 @@ pub enum Event {
 
 pub const LAST_LINK_KEY: &str = "last_link";
 pub const TEST_RUN_ID: &str = "snapline-destination-test";
+
+pub fn destination_for(uploads: &Uploads, media: MediaKind) -> &DestinationRef {
+    match media {
+        MediaKind::Image => &uploads.images,
+        MediaKind::Video | MediaKind::Gif => &uploads.videos_and_gifs,
+        MediaKind::Text => &uploads.text_and_code,
+        MediaKind::File => &uploads.other_files,
+    }
+}
 
 pub fn last_link(services: &Services) -> Result<Option<String>, ServiceError> {
     let settings = services.settings_snapshot()?;
@@ -106,6 +117,8 @@ pub fn persist(services: &Services, state: &UploadState) {
         .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or_default();
     let update = UploadUpdate {
+        sent: i64::try_from(state.sent).unwrap_or(i64::MAX),
+        total: i64::try_from(state.total).unwrap_or(i64::MAX),
         capture_id,
         dest_id: state.dest.clone(),
         state: match state.status {
@@ -139,6 +152,10 @@ pub trait FileSource: Send + Sync {
 pub trait DestinationSource: Send + Sync {
     fn uploader(&self, dest: &str) -> Option<Arc<dyn queue::Uploader>>;
 
+    fn streams_files(&self, _dest: &str) -> bool {
+        false
+    }
+
     fn operations(&self) -> Option<Arc<dyn DestinationOperations>> {
         None
     }
@@ -146,9 +163,9 @@ pub trait DestinationSource: Send + Sync {
 
 #[derive(Clone)]
 pub struct UploadRuntime {
-    queue: queue::Handle,
-    files: Arc<dyn FileSource>,
-    destinations: Arc<dyn DestinationSource>,
+    pub(crate) queue: queue::Handle,
+    pub(crate) files: Arc<dyn FileSource>,
+    pub(crate) destinations: Arc<dyn DestinationSource>,
 }
 
 #[derive(Clone)]
@@ -208,6 +225,11 @@ impl UploadService {
             UploadReq::LastLink => Ok(UploadResp::LastLink {
                 link: last_link(&self.services)?,
             }),
+            UploadReq::PickAndUpload => crate::intake::Intake::new(&self.services, self.runtime()?)
+                .pick_and_upload()
+                .map(|queued| UploadResp::AcceptedMany {
+                    ids: queued.into_iter().map(|item| item.upload_id).collect(),
+                }),
             UploadReq::CopyLink { .. } => Err(ServiceError::NotYet),
             UploadReq::UploadElsewhere { capture_id, dest } => {
                 if capture_id <= 0 {
@@ -489,9 +511,19 @@ impl From<&queue::UploadSnapshot> for UploadState {
         Self {
             id: snapshot.id.get(),
             capture_id: snapshot.capture_id,
+            file_name: snapshot.file_name.clone(),
             dest: snapshot.dest.clone(),
             run_id: snapshot.run_id.clone(),
             status: UploadStatus::from(&snapshot.status),
+            cancellable: snapshot.cancellable,
+            progress_available: snapshot.progress_available,
+            sent: snapshot.sent,
+            total: snapshot.total,
+            link_batch: snapshot.link_batch.as_ref().map(|batch| UploadLinkBatch {
+                id: batch.id.clone(),
+                index: batch.index,
+                size: batch.size,
+            }),
             attempts: snapshot.attempts,
             link: snapshot.link.clone(),
             page_link: snapshot.page_link.clone(),
@@ -515,6 +547,10 @@ pub fn retry_policy(retry: Retry) -> queue::RetryPolicy {
 pub fn run(action: &ActionId, services: &Services) -> Result<(), ServiceError> {
     match action.as_str() {
         "upload_clipboard" => crate::clipboard_upload::run(services),
+        "upload_file" => services
+            .upload()
+            .handle(UploadReq::PickAndUpload)
+            .map(|_| ()),
         _ => Err(ServiceError::NotYet),
     }
 }

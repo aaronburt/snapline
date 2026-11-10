@@ -2,31 +2,42 @@
   import { untrack } from 'svelte';
   import Badge from '../../../components/Badge.svelte';
   import Thumb from '../../../components/Thumb.svelte';
+  import UploadProgress from '../../../components/UploadProgress.svelte';
   import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
-  import { badgeStatus, formatBytes, formatCaptured, formatDuration, typeLabel } from './data';
+  import type { UploadState } from '../../../lib/ipc/bindings/UploadState';
+  import { badgeStatus, formatBytes, formatCaptured, formatDuration, pendingUploadLabel, typeLabel, typeTag } from './data';
 
   interface Props {
     items: HistoryCaptureDto[];
+    activeUploads?: Record<number, UploadState>;
     selectedId: number | null;
     viewportHeight: number;
+    viewportWidth?: number;
     scrollTop?: number;
     scroller?: HTMLDivElement;
     onselect: (id: number) => void;
     onopen: (id: number) => void;
+    oncancel?: (id: number) => void;
   }
 
   let {
     items,
+    activeUploads = {},
     selectedId,
     viewportHeight,
+    viewportWidth = 800,
     scrollTop = $bindable(0),
     scroller,
     onselect,
     onopen,
+    oncancel,
   }: Props = $props();
 
   const HEADER = 38;
-  const ROW = 52;
+  const ROW = 72;
+  const compact = $derived(viewportWidth < 740);
+  const inlineSize = $derived(viewportWidth < 460);
+  const columnCount = $derived(compact ? (inlineSize ? 2 : 3) : 5);
 
   const offset = $derived(Math.max(0, scrollTop - HEADER));
   const first = $derived(Math.floor(offset / ROW));
@@ -47,7 +58,7 @@
       return;
     }
     const rowTop = HEADER + index * ROW;
-    const height = Math.max(viewportHeight, 320);
+    const height = viewportHeight || 320;
     const currentScrollTop = untrack(() => scrollTop);
     if (rowTop < currentScrollTop || rowTop + ROW > currentScrollTop + height) {
       const target = Math.max(0, rowTop - 12);
@@ -65,19 +76,24 @@
     <thead>
       <tr>
         <th scope="col">File</th>
-        <th scope="col">Type</th>
-        <th scope="col">Size</th>
-        <th scope="col">Captured</th>
-        <th scope="col">Status</th>
+        {#if !compact}<th scope="col" class="type-col">Type</th>{/if}
+        {#if !inlineSize}<th scope="col" class="size-col">Size</th>{/if}
+        {#if !compact}<th scope="col" class="captured-col">Captured</th>{/if}
+        <th scope="col" class="status-col">Status</th>
       </tr>
     </thead>
     <tbody>
       {#if topPad > 0}
         <tr class="spacer" aria-hidden="true">
-          <td colspan="5" style:height="{topPad}px"></td>
+          <td colspan={columnCount} style:height="{topPad}px"></td>
         </tr>
       {/if}
       {#each shown as capture (capture.id)}
+        {@const active = activeUploads[capture.id]}
+        {@const phase = active?.status ?? capture.upload?.state}
+        {@const type = typeLabel(capture.kind, capture.name)}
+        {@const captured = formatCaptured(capture.createdAt)}
+        {@const duration = capture.durationMs !== null ? formatDuration(capture.durationMs) : null}
         <tr
           class:selected={capture.id === selectedId}
           aria-current={capture.id === selectedId ? 'true' : undefined}
@@ -85,6 +101,9 @@
           tabindex="0"
           onclick={() => onselect(capture.id)}
           onkeydown={(event) => {
+            if (event.target instanceof HTMLElement && event.target.closest('button')) {
+              return;
+            }
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault();
               onselect(capture.id);
@@ -94,24 +113,59 @@
         >
           <td>
             <span class="file">
-              <span class="thumb"><Thumb id={capture.id} alt="" /></span>
-              <span class="filename">{capture.name}</span>
+              {#if capture.kind === 'text' || capture.kind === 'file'}
+                <span class="thumb file-type" aria-hidden="true">{typeTag(capture.kind, capture.name)}</span>
+              {:else}
+                <span class="thumb"><Thumb id={capture.id} alt="" /></span>
+              {/if}
+              <span class="file-label">
+                <span class="filename" title={capture.name}>{capture.name}</span>
+                {#if compact}
+                  <span class="metadata">
+                    {type} · {captured}{#if duration} · {duration}{/if}{#if inlineSize} · {formatBytes(capture.bytes)}{/if}
+                  </span>
+                {/if}
+              </span>
             </span>
           </td>
-          <td class="muted">{typeLabel(capture.kind, capture.name)}</td>
-          <td class="muted">{formatBytes(capture.bytes)}</td>
-          <td class="muted">
-            {formatCaptured(capture.createdAt)}
-            {#if capture.durationMs !== null}
-              <span class="duration">· {formatDuration(capture.durationMs)}</span>
-            {/if}
+          {#if !compact}<td class="muted" title={type}>{type}</td>{/if}
+          {#if !inlineSize}<td class="muted">{formatBytes(capture.bytes)}</td>{/if}
+          {#if !compact}
+            <td class="muted" title={duration ? `${captured} · ${duration}` : captured}>
+              {captured}
+              {#if duration}<span class="duration">· {duration}</span>{/if}
+            </td>
+          {/if}
+          <td>
+            <div class="upload-status">
+              <Badge status={active ? 'uploading' : badgeStatus(capture)} label={pendingUploadLabel(phase)} />
+              {#if phase === 'uploading' || (active?.cancellable && oncancel)}
+                <div class="progress-row">
+                  {#if phase === 'uploading'}
+                    <div class="progress-meter">
+                      <UploadProgress determinate={active?.progressAvailable} sent={active?.sent} total={active?.total} />
+                    </div>
+                  {/if}
+                  {#if active?.cancellable && oncancel}
+                    <button
+                      type="button"
+                      class="cancel hv"
+                      aria-label={`Cancel upload of ${capture.name}`}
+                      onclick={(event) => {
+                        event.stopPropagation();
+                        oncancel?.(capture.id);
+                      }}
+                    >Cancel</button>
+                  {/if}
+                </div>
+              {/if}
+            </div>
           </td>
-          <td><Badge status={badgeStatus(capture)} /></td>
         </tr>
       {/each}
       {#if bottomPad > 0}
         <tr class="spacer" aria-hidden="true">
-          <td colspan="5" style:height="{bottomPad}px"></td>
+          <td colspan={columnCount} style:height="{bottomPad}px"></td>
         </tr>
       {/if}
     </tbody>
@@ -123,14 +177,18 @@
     background: var(--card);
     border: 1px solid var(--stroke);
     border-radius: 6px;
-    overflow-x: auto;
   }
 
   table {
     width: 100%;
     border-collapse: collapse;
-    min-width: 720px;
+    table-layout: fixed;
   }
+
+  .type-col { width: 108px; }
+  .size-col { width: 84px; }
+  .captured-col { width: 162px; }
+  .status-col { width: 148px; }
 
   thead th {
     position: sticky;
@@ -150,7 +208,7 @@
   }
 
   td {
-    height: 52px;
+    height: 72px;
     padding: 0 16px;
     font-size: 12px;
     border-top: 1px solid var(--stroke);
@@ -191,10 +249,34 @@
     display: block;
   }
 
-  .filename {
+  .file-label {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
+  }
+
+  .file-type {
+    display: grid;
+    place-items: center;
+    height: 25px;
+    border: 1px solid var(--stroke);
+    border-radius: 4px;
+    background: var(--subtle);
+    color: var(--text2);
+    font-size: 10px;
+  }
+
+  .filename,
+  .metadata,
+  .muted {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .metadata {
+    color: var(--text3);
+    font-size: 11px;
   }
 
   .muted {
@@ -204,5 +286,35 @@
 
   .duration {
     color: var(--text3);
+  }
+
+  .upload-status {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .progress-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .progress-meter {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .cancel {
+    flex: none;
+    min-height: 24px;
+    padding: 0 6px;
+    border: 1px solid var(--strokeHi);
+    border-radius: 4px;
+    background: var(--layer);
+    color: var(--text);
+    font-size: 11px;
   }
 </style>

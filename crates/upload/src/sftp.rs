@@ -1,16 +1,18 @@
 use std::fmt;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
-use ssh2::{ErrorCode, HostKeyType, Session, Sftp};
+use ssh2::{ErrorCode, HostKeyType, OpenFlags, OpenType, RenameFlags, Session, Sftp};
 
 use crate::error::UploadError;
 use crate::http::HttpTimeout;
-use crate::queue::{DeletionLink, SecretStore, UploadFile, Uploaded, Uploader};
+use crate::queue::{
+    DeletionLink, NoopUploadControl, SecretStore, UploadControl, UploadFile, Uploaded, Uploader,
+};
 
 pub const PASSWORD_FIELD: &str = "password";
 pub const PASSPHRASE_FIELD: &str = "passphrase";
@@ -219,7 +221,9 @@ pub trait SftpConnection: Send {
         &mut self,
         folder: &str,
         file_name: &str,
-        bytes: &[u8],
+        source: &mut dyn Read,
+        len: u64,
+        control: &dyn UploadControl,
     ) -> Result<String, UploadError>;
 
     fn remove_file(&mut self, path: &str) -> Result<(), UploadError>;
@@ -328,22 +332,73 @@ impl SftpConnection for Ssh2Connection {
         &mut self,
         folder: &str,
         file_name: &str,
-        bytes: &[u8],
+        source: &mut dyn Read,
+        len: u64,
+        control: &dyn UploadControl,
     ) -> Result<String, UploadError> {
-        let path = {
-            let sftp = self.sftp()?;
-            ensure_dirs(sftp, folder)?;
-            available_path(sftp, folder, file_name)?
-        };
-        let sftp = self.sftp()?;
-        let mut file = sftp
-            .create(Path::new(&path))
-            .map_err(|error| map_sftp_error(&error))?;
-        if let Err(error) = file.write_all(bytes) {
-            let _ = file.close();
-            return Err(map_io_error(&error));
+        if control.cancelled() {
+            return Err(UploadError::Cancelled);
         }
-        file.close().map_err(|error| map_sftp_error(&error))?;
+        let sftp = self.sftp()?;
+        ensure_dirs(sftp, folder)?;
+        let path = available_path(sftp, folder, file_name)?;
+        let partial_path = format!("{path}.part");
+        let mut output = sftp
+            .open_mode(
+                Path::new(&partial_path),
+                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUSIVE,
+                0o644,
+                OpenType::File,
+            )
+            .map_err(|error| map_sftp_error(&error))?;
+        let mut sent = 0_u64;
+        let result = (|| {
+            let mut buffer = [0_u8; 32 * 1024];
+            while sent < len {
+                if control.cancelled() {
+                    return Err(UploadError::Cancelled);
+                }
+                let limit =
+                    usize::try_from((len - sent).min(buffer.len() as u64)).unwrap_or(buffer.len());
+                let read = source.read(&mut buffer[..limit]).map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::UnexpectedEof {
+                        UploadError::permanent(
+                            "The file became shorter while it was being uploaded.",
+                        )
+                    } else {
+                        UploadError::permanent("The file could not be read.")
+                    }
+                })?;
+                if read == 0 {
+                    return Err(UploadError::permanent(
+                        "The file became shorter while it was being uploaded.",
+                    ));
+                }
+                output
+                    .write_all(&buffer[..read])
+                    .map_err(|error| map_io_error(&error))?;
+                sent = sent.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
+                control.sent(sent);
+            }
+            output.close().map_err(|error| map_sftp_error(&error))?;
+            if control.cancelled() {
+                return Err(UploadError::Cancelled);
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            let _ = output.close();
+            let _ = sftp.unlink(Path::new(&partial_path));
+            return Err(error);
+        }
+        if let Err(error) = sftp.rename(
+            Path::new(&partial_path),
+            Path::new(&path),
+            Some(RenameFlags::empty()),
+        ) {
+            let _ = sftp.unlink(Path::new(&partial_path));
+            return Err(map_sftp_error(&error));
+        }
         Ok(path)
     }
 
@@ -515,16 +570,42 @@ impl fmt::Debug for SftpUploader {
 }
 
 impl Uploader for SftpUploader {
+    fn supports_in_flight_cancel(&self) -> bool {
+        true
+    }
+
+    fn reports_progress(&self) -> bool {
+        true
+    }
+
     fn upload(
         &self,
         file: &UploadFile,
         secrets: &dyn SecretStore,
     ) -> Result<Uploaded, UploadError> {
+        self.upload_controlled(file, secrets, &NoopUploadControl)
+    }
+
+    fn upload_controlled(
+        &self,
+        file: &UploadFile,
+        secrets: &dyn SecretStore,
+        control: &dyn UploadControl,
+    ) -> Result<Uploaded, UploadError> {
         let file_name = safe_file_name(&file.file_name);
         self.config.public_url(&file_name)?;
+        if control.cancelled() {
+            return Err(UploadError::Cancelled);
+        }
+        let mut source = file.open()?;
         let mut connection = self.connect(secrets)?;
-        let remote_path =
-            connection.write_file(&self.config.remote_folder, &file_name, &file.bytes)?;
+        let remote_path = connection.write_file(
+            &self.config.remote_folder,
+            &file_name,
+            source.as_mut(),
+            file.len,
+            control,
+        )?;
         let uploaded_name = remote_path
             .rsplit('/')
             .next()
@@ -638,7 +719,12 @@ fn available_path(sftp: &Sftp, folder: &str, file_name: &str) -> Result<String, 
             format!("{stem}-{index}{extension}")
         };
         let path = join_remote(folder, &candidate);
-        match sftp.stat(Path::new(&path)) {
+        match sftp.lstat(Path::new(&path)) {
+            Ok(_) => continue,
+            Err(error) if is_missing(&error) => {}
+            Err(error) => return Err(map_sftp_error(&error)),
+        }
+        match sftp.lstat(Path::new(&format!("{path}.part"))) {
             Ok(_) => continue,
             Err(error) if is_missing(&error) => return Ok(path),
             Err(error) => return Err(map_sftp_error(&error)),
@@ -1001,12 +1087,27 @@ mod tests {
             &mut self,
             folder: &str,
             file_name: &str,
-            bytes: &[u8],
+            source: &mut dyn Read,
+            len: u64,
+            control: &dyn UploadControl,
         ) -> Result<String, UploadError> {
+            let mut bytes = Vec::new();
+            source
+                .read_to_end(&mut bytes)
+                .map_err(|error| map_io_error(&error))?;
+            if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != len {
+                return Err(UploadError::permanent(
+                    "The file became shorter while it was being uploaded.",
+                ));
+            }
+            if control.cancelled() {
+                return Err(UploadError::Cancelled);
+            }
+            control.sent(len);
             let mut state = self.state.lock().expect("state");
             state
                 .writes
-                .push((folder.to_owned(), file_name.to_owned(), bytes.to_vec()));
+                .push((folder.to_owned(), file_name.to_owned(), bytes));
             if let Some(error) = &state.write_error {
                 return Err(error.clone());
             }

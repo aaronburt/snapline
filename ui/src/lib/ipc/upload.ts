@@ -1,5 +1,6 @@
 import type { UploadReq } from './bindings/UploadReq';
 import type { UploadResp } from './bindings/UploadResp';
+import type { UploadState } from './bindings/UploadState';
 import { call } from './core';
 
 export async function copyLink(link: string): Promise<void> {
@@ -7,6 +8,30 @@ export async function copyLink(link: string): Promise<void> {
   const response = await call<UploadReq, UploadResp>('ipc_upload', req);
   if (response.kind !== 'linkCopied') {
     throw new Error('The link could not be copied.');
+  }
+}
+
+export async function pickAndUpload(): Promise<number[]> {
+  const req: UploadReq = { kind: 'pickAndUpload' };
+  const response = await call<UploadReq, UploadResp>('ipc_upload', req);
+  if (response.kind === 'acceptedMany') {
+    return response.data.ids;
+  }
+  throw new Error('The files could not be added to the upload queue.');
+}
+
+export async function listUploadStates(): Promise<UploadState[]> {
+  const response = await call<UploadReq, UploadResp>('ipc_upload', { kind: 'list' });
+  return response.kind === 'states' ? response.data : [];
+}
+
+export async function cancelUpload(id: number): Promise<void> {
+  const response = await call<UploadReq, UploadResp>('ipc_upload', {
+    kind: 'cancel',
+    data: { id },
+  });
+  if (response.kind !== 'cancelled') {
+    throw new Error('The upload could not be cancelled.');
   }
 }
 

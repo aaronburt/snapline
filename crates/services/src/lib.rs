@@ -20,6 +20,7 @@ pub mod editor;
 pub mod event;
 pub mod history;
 pub mod hotkeys;
+pub mod intake;
 pub mod job;
 pub mod recording;
 pub mod saver;
@@ -73,6 +74,14 @@ pub trait FolderPicker: Send + Sync {
     fn pick_folder(&self, current: Option<&Path>) -> Result<Option<PathBuf>, ServiceError>;
 }
 
+pub trait FilePicker: Send + Sync {
+    fn pick_files(&self) -> Result<Vec<PathBuf>, ServiceError>;
+
+    fn pick_ffmpeg(&self) -> Result<Option<PathBuf>, ServiceError> {
+        Err(ServiceError::NotYet)
+    }
+}
+
 pub type CodecFactory = dyn Fn() -> Result<Arc<dyn ImageCodec>, ServiceError> + Send + Sync;
 
 struct SettingsState {
@@ -84,6 +93,7 @@ struct SettingsState {
 struct Inner {
     settings: Mutex<SettingsState>,
     picker: Mutex<Option<Arc<dyn FolderPicker>>>,
+    file_picker: Mutex<Option<Arc<dyn FilePicker>>>,
     hotkeys: Mutex<hotkeys::HotkeysRuntime>,
     codec: Mutex<Option<Arc<CodecFactory>>>,
     history_host: Mutex<Option<Arc<dyn history::HistoryHost>>>,
@@ -134,6 +144,13 @@ impl Services {
 
     pub fn with_folder_picker(self, picker: Arc<dyn FolderPicker>) -> Self {
         if let Ok(mut slot) = self.inner.picker.lock() {
+            *slot = Some(picker);
+        }
+        self
+    }
+
+    pub fn with_file_picker(self, picker: Arc<dyn FilePicker>) -> Self {
+        if let Ok(mut slot) = self.inner.file_picker.lock() {
             *slot = Some(picker);
         }
         self
@@ -221,6 +238,7 @@ impl Services {
             inner: Arc::new(Inner {
                 settings: Mutex::new(state),
                 picker: Mutex::new(None),
+                file_picker: Mutex::new(None),
                 hotkeys: Mutex::new(hotkeys::HotkeysRuntime::default()),
                 codec: Mutex::new(None),
                 history_host: Mutex::new(None),
@@ -252,6 +270,44 @@ impl Services {
     }
 
     pub fn update_settings(&self, patch: &serde_json::Value) -> Result<Settings, ServiceError> {
+        let Some(object) = patch.as_object() else {
+            return Err(ServiceError::Invalid(
+                "Settings changes must be an object.".to_owned(),
+            ));
+        };
+        let protected_capture_path = object
+            .get("capture")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|capture| capture.contains_key("ffmpeg_path"));
+        if protected_capture_path
+            || object.contains_key("programs")
+            || object.contains_key("watch_folders")
+        {
+            return Err(ServiceError::Invalid(
+                "Choose protected file paths with their native picker.".to_owned(),
+            ));
+        }
+        self.apply_settings_patch(patch)
+    }
+
+    pub(crate) fn update_ffmpeg_path(
+        &self,
+        path: Option<PathBuf>,
+    ) -> Result<Settings, ServiceError> {
+        if path
+            .as_ref()
+            .is_some_and(|path| !path.is_absolute() || !path.is_file())
+        {
+            return Err(ServiceError::Invalid(
+                "Choose an existing FFmpeg executable.".to_owned(),
+            ));
+        }
+        self.apply_settings_patch(&serde_json::json!({
+            "capture": { "ffmpeg_path": path.map(|path| path.to_string_lossy().into_owned()) }
+        }))
+    }
+
+    fn apply_settings_patch(&self, patch: &serde_json::Value) -> Result<Settings, ServiceError> {
         let mut state = self.lock_settings()?;
         let Some(object) = patch.as_object() else {
             return Err(ServiceError::Invalid(
@@ -330,6 +386,36 @@ impl Services {
             .ok_or(ServiceError::NotYet)?;
         let path = picker.pick_folder(current.map(Path::new))?;
         Ok(path.map(|path| path.to_string_lossy().into_owned()))
+    }
+
+    pub(crate) fn pick_files(&self) -> Result<Vec<PathBuf>, ServiceError> {
+        let picker = self
+            .inner
+            .file_picker
+            .lock()
+            .map_err(|_| ServiceError::Internal("The file picker is unavailable.".to_owned()))?
+            .clone()
+            .ok_or(ServiceError::NotYet)?;
+        picker.pick_files()
+    }
+
+    pub(crate) fn pick_ffmpeg(&self) -> Result<Option<PathBuf>, ServiceError> {
+        let picker = self
+            .inner
+            .file_picker
+            .lock()
+            .map_err(|_| ServiceError::Internal("The file picker is unavailable.".to_owned()))?
+            .clone()
+            .ok_or(ServiceError::NotYet)?;
+        picker.pick_ffmpeg()
+    }
+
+    pub(crate) fn notifier(&self) -> Option<Arc<dyn snapline_core::ports::Notifier + Send + Sync>> {
+        self.inner
+            .hotkeys
+            .lock()
+            .ok()
+            .and_then(|runtime| runtime.notifier.clone())
     }
 
     pub fn app(&self) -> app::AppService {

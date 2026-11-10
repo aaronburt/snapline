@@ -50,3 +50,13 @@ export async function browseFolder(current: string | null): Promise<string | nul
   }
   throw unexpected();
 }
+
+export async function pickFfmpeg(): Promise<SettingsDto> {
+  const response = await call<SettingsReq, SettingsResp>('ipc_settings', { kind: 'pickFfmpeg' });
+  return settingsOf(response);
+}
+
+export async function resetFfmpegPath(): Promise<SettingsDto> {
+  const response = await call<SettingsReq, SettingsResp>('ipc_settings', { kind: 'resetFfmpegPath' });
+  return settingsOf(response);
+}

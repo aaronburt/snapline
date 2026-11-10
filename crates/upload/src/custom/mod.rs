@@ -5,7 +5,9 @@ use serde_json::Value;
 
 use crate::error::UploadError;
 use crate::http::{HttpTransport, Method, Multipart, Request};
-use crate::queue::{DeletionLink, SecretStore, UploadFile, Uploaded, Uploader};
+use crate::queue::{
+    DeletionLink, SecretStore, UploadFile, Uploaded, Uploader, MAX_BUFFERED_UPLOAD_BYTES,
+};
 
 pub mod sxcu;
 pub mod template;
@@ -270,21 +272,22 @@ fn apply_body(
         config.file_form_field.as_str()
     };
     let content_type = content_type(file);
+    let bytes = file.read_all(MAX_BUFFERED_UPLOAD_BYTES)?;
     match config.body {
         sxcu::BodyType::MultipartFormData => Ok(request.multipart(Multipart::new().file(
             field,
             &file.file_name,
             content_type,
-            file.bytes.clone(),
+            bytes.clone(),
         ))),
-        sxcu::BodyType::Binary => Ok(request.body(content_type, file.bytes.clone())),
+        sxcu::BodyType::Binary => Ok(request.body(content_type, bytes)),
         sxcu::BodyType::FormUrlEncoded => {
-            let encoded = base64_encode(&file.bytes);
+            let encoded = base64_encode(&bytes);
             Ok(request.form(&[(field, &encoded)]))
         }
         sxcu::BodyType::Json => {
             let mut object = serde_json::Map::new();
-            object.insert(field.to_owned(), Value::String(base64_encode(&file.bytes)));
+            object.insert(field.to_owned(), Value::String(base64_encode(&bytes)));
             request.json(&Value::Object(object))
         }
     }

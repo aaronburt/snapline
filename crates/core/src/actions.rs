@@ -171,6 +171,13 @@ pub const CATALOGUE: &[ActionDef] = &[
         available_from_milestone: 6,
     },
     ActionDef {
+        id: "upload_file",
+        label: "Upload file",
+        default_chord: None,
+        group: "uploads",
+        available_from_milestone: 1,
+    },
+    ActionDef {
         id: "app_open",
         label: "Open Snapline",
         default_chord: None,

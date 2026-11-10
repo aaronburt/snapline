@@ -147,7 +147,7 @@ const HOTKEY_ACTIONS = {
 } as const;
 
 const GENERAL_TEXT: ReadonlySet<string> = new Set(['saveFolder', 'namePattern']);
-const CAPTURE_TEXT: ReadonlySet<string> = new Set(['microphoneDevice', 'ffmpegPath']);
+const CAPTURE_TEXT: ReadonlySet<string> = new Set(['microphoneDevice']);
 const UPLOADS_TEXT: ReadonlySet<string> = new Set(['customProxy']);
 
 function choose(value: string, labels: Record<string, string>, fallback: string): string {
@@ -725,8 +725,6 @@ function capturePatch<K extends keyof CaptureSettings>(key: K, value: CaptureSet
       return { microphone_device: value };
     case 'recordingBorder':
       return { recording_border: value };
-    case 'ffmpegPath':
-      return { ffmpeg_path: value === '' ? null : value };
     case 'gifFrameRate':
       return { gif_frame_rate: gifFrameRateValue(String(value)) };
     case 'gifWidth':
@@ -832,6 +830,9 @@ export function updateCapture<K extends keyof CaptureSettings>(
   key: K,
   value: CaptureSettings[K],
 ): void {
+  if (key === 'ffmpegPath') {
+    return;
+  }
   settings.update((current) => ({
     ...current,
     capture: { ...current.capture, [key]: value },
@@ -885,6 +886,26 @@ export async function pickFolder(current: string): Promise<string | null> {
   } catch (error) {
     settingsError.set(errorMessage(error));
     return null;
+  }
+}
+
+export async function pickFfmpegPath(): Promise<void> {
+  await flush();
+  try {
+    settings.set(toView(await ipc.pickFfmpeg()));
+    settingsError.set(null);
+  } catch (error) {
+    settingsError.set(errorMessage(error));
+  }
+}
+
+export async function resetFfmpegPath(): Promise<void> {
+  await flush();
+  try {
+    settings.set(toView(await ipc.resetFfmpegPath()));
+    settingsError.set(null);
+  } catch (error) {
+    settingsError.set(errorMessage(error));
   }
 }
 

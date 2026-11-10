@@ -2,4 +2,4 @@
 import type { CaptureKindDto } from "./CaptureKindDto";
 import type { UploadDto } from "./UploadDto";
 
-export type HistoryCaptureDto = { id: number, kind: CaptureKindDto, name: string, bytes: number, width: number | null, height: number | null, durationMs: number | null, sourceApp: string | null, createdAt: number, folder: string, upload: UploadDto | null, };
+export type HistoryCaptureDto = { id: number, kind: CaptureKindDto, owned: boolean, missing: boolean, name: string, bytes: number, width: number | null, height: number | null, durationMs: number | null, sourceApp: string | null, createdAt: number, folder: string, upload: UploadDto | null, };

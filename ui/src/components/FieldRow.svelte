@@ -8,8 +8,11 @@
     title: string;
     description?: string;
     mono?: boolean;
+    readOnly?: boolean;
     button?: string;
     onbutton?: () => void;
+    secondaryButton?: string;
+    onsecondarybutton?: () => void;
     placeholder?: string;
     inputType?: 'text' | 'search';
     onchange?: (value: string) => void;
@@ -21,8 +24,11 @@
     title,
     description = '',
     mono = false,
+    readOnly = false,
     button,
     onbutton,
+    secondaryButton,
+    onsecondarybutton,
     placeholder,
     inputType = 'text',
     onchange,
@@ -42,6 +48,7 @@
       type={inputType}
       aria-labelledby={id}
       class:mono
+      readonly={readOnly}
       bind:value
       {placeholder}
       spellcheck="false"
@@ -49,6 +56,9 @@
     />
     {#if button}
       <button type="button" class="hv" onclick={onbutton}>{button}</button>
+    {/if}
+    {#if secondaryButton}
+      <button type="button" class="hv" onclick={onsecondarybutton}>{secondaryButton}</button>
     {/if}
   </div>
 </div>

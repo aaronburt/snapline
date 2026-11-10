@@ -126,10 +126,17 @@ impl HistoryService {
             HistoryReq::ConfirmDelete { id } => {
                 let paths = self.paths()?;
                 let capture = self.capture(&paths, id)?;
-                let message = format!(
-                    "Delete {}? The file goes to the Recycle Bin.",
-                    file_name(&capture)
-                );
+                let message = if capture.owned {
+                    format!(
+                        "Delete {}? The file goes to the Recycle Bin.",
+                        file_name(&capture)
+                    )
+                } else {
+                    format!(
+                        "Delete {} from History? The original file stays where it is.",
+                        file_name(&capture)
+                    )
+                };
                 let confirmed = self.host()?.confirm_delete(&message)?;
                 Ok(HistoryResp::ConfirmDelete { confirmed })
             }
@@ -162,7 +169,12 @@ impl HistoryService {
             HistoryReq::OpenFile { id } => {
                 let paths = self.paths()?;
                 let capture = self.capture(&paths, id)?;
-                self.host()?.open_file(Path::new(&capture.path))?;
+                let path = Path::new(&capture.path);
+                if capture.owned {
+                    self.host()?.open_file(path)?;
+                } else {
+                    self.host()?.show_in_folder(path)?;
+                }
                 Ok(HistoryResp::OpenFile)
             }
             HistoryReq::OpenUrl { id } => {
@@ -219,7 +231,7 @@ impl HistoryService {
             .map_err(delete_error)?
             .ok_or(ServiceError::NotFound)?;
         let path = PathBuf::from(&capture.path);
-        if path.exists() {
+        if capture.owned && path.exists() {
             self.host()?.recycle_file(&path)?;
         }
         let thumbnail = crate::thumbs::thumbnail_path(&paths.thumbs_dir, id, ImageFormat::WebP);
@@ -255,6 +267,7 @@ fn store_filter(filter: HistoryFilter) -> StoreFilter {
         HistoryFilter::Images => StoreFilter::Images,
         HistoryFilter::Videos => StoreFilter::Videos,
         HistoryFilter::Gifs => StoreFilter::Gifs,
+        HistoryFilter::Files => StoreFilter::Files,
         HistoryFilter::Uploaded => StoreFilter::Uploaded,
         HistoryFilter::LocalOnly => StoreFilter::LocalOnly,
     }
@@ -295,7 +308,11 @@ fn capture_dto(capture: &Capture, paths: &Paths) -> CaptureDto {
             CaptureKind::Image => CaptureKindDto::Image,
             CaptureKind::Video => CaptureKindDto::Video,
             CaptureKind::Gif => CaptureKindDto::Gif,
+            CaptureKind::Text => CaptureKindDto::Text,
+            CaptureKind::File => CaptureKindDto::File,
         },
+        owned: capture.owned,
+        missing: !Path::new(&capture.path).is_file(),
         name: file_name(capture),
         bytes: capture.bytes,
         width: capture.width,
@@ -306,10 +323,16 @@ fn capture_dto(capture: &Capture, paths: &Paths) -> CaptureDto {
             .as_deref()
             .map(snapline_core::naming::app_name),
         created_at: capture.created_at,
-        folder: saved_folder(&capture.path, &paths.captures_dir),
+        folder: if capture.owned {
+            saved_folder(&capture.path, &paths.captures_dir)
+        } else {
+            String::new()
+        },
         upload: capture.upload.as_ref().map(|upload| UploadDto {
             dest_id: upload.dest_id.clone(),
             state: upload_state(upload.state),
+            sent: upload.sent,
+            total: upload.total,
             url: upload.url.clone(),
             deletion_url: upload.deletion_url.clone(),
             error: upload.error.clone(),
@@ -506,6 +529,8 @@ mod tests {
         fn upload(&self, id: CaptureId, state: StoreUploadState, url: Option<&str>) {
             self.repo()
                 .set_upload(UploadUpdate {
+                    sent: 0,
+                    total: 0,
                     capture_id: id,
                     dest_id: "imgur".to_owned(),
                     state,
@@ -675,6 +700,39 @@ mod tests {
         assert!(service.handle(HistoryReq::Delete { id }).is_err());
         assert!(thumbnail.exists());
         assert!(fixture.repo().get(id).expect("get").is_some());
+    }
+
+    #[test]
+    fn a_borrowed_file_is_revealed_and_remains_on_disk_after_history_deletion() {
+        use snapline_store::history::{BorrowedFile, Origin};
+
+        let fixture = fixture();
+        let path = fixture._directory.path().join("original.exe");
+        fs::write(&path, b"original").expect("original file");
+        let id = fixture
+            .repo()
+            .record_borrowed_files(&[BorrowedFile {
+                kind: CaptureKind::File,
+                origin: Origin::File,
+                path: path.to_string_lossy().into_owned(),
+                bytes: 8,
+                source_modified_ms: BASE,
+                created_at: BASE,
+            }])
+            .expect("borrowed file")[0];
+        let service = fixture.service();
+        service
+            .handle(HistoryReq::OpenFile { id })
+            .expect("show original");
+        service
+            .handle(HistoryReq::Delete { id })
+            .expect("remove row");
+        assert_eq!(
+            fixture.host.calls(),
+            vec![format!("show:{}", path.display())]
+        );
+        assert_eq!(fs::read(&path).expect("original remains"), b"original");
+        assert_eq!(fixture.repo().get(id).expect("lookup"), None);
     }
 
     #[test]

@@ -1,5 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
+use snapline_core::media::content_type;
 use snapline_services::uploads::FileSource;
 use snapline_services::ServiceError;
 use snapline_store::history::HistoryRepo;
@@ -26,8 +27,9 @@ impl FileSource for HistoryFileSource {
             return Ok(None);
         };
         let path = PathBuf::from(&capture.path);
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
+        let metadata = match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => metadata,
+            Ok(_) => return Ok(None),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(ServiceError::Io(error.to_string())),
         };
@@ -36,25 +38,31 @@ impl FileSource for HistoryFileSource {
             .and_then(|name| name.to_str())
             .unwrap_or("capture")
             .to_string();
-        let content_type = content_type(&path).to_string();
-        Ok(Some(UploadFile::new(path, file_name, content_type, bytes)))
-    }
-}
-
-fn content_type(path: &Path) -> &'static str {
-    match path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("png") => "image/png",
-        Some("jpg" | "jpeg") => "image/jpeg",
-        Some("webp") => "image/webp",
-        Some("gif") => "image/gif",
-        Some("mp4") => "video/mp4",
-        Some("webm") => "video/webm",
-        Some("mkv") => "video/x-matroska",
-        _ => "application/octet-stream",
+        let modified_ms = match capture.source_modified_ms {
+            Some(value) => value,
+            None => {
+                let modified = metadata
+                    .modified()
+                    .map_err(|error| ServiceError::Io(error.to_string()))?;
+                let elapsed = modified
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|error| ServiceError::Io(error.to_string()))?;
+                i64::try_from(elapsed.as_millis())
+                    .map_err(|error| ServiceError::Io(error.to_string()))?
+            }
+        };
+        let len = if capture.owned {
+            metadata.len()
+        } else {
+            u64::try_from(capture.bytes).unwrap_or_default()
+        };
+        let content_type = content_type(&file_name).to_owned();
+        Ok(Some(UploadFile::from_path(
+            path,
+            file_name,
+            content_type,
+            len,
+            modified_ms,
+        )))
     }
 }

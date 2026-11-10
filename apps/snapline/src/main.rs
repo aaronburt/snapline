@@ -16,6 +16,7 @@ mod upload_files;
 mod webview_tuning;
 mod windows;
 
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::c_void;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
@@ -34,9 +35,10 @@ use snapline_core::ffmpeg_args::{fallback_encoder, FfmpegCommand, VideoEncoder, 
 use snapline_core::geometry::{Point, Px, Rect};
 use snapline_core::hotkey_plan::{Blocked, Owner};
 use snapline_core::image::Image;
-use snapline_core::ports::{MagnifierZoom, OverlayTheme, ScreenCapture};
+use snapline_core::ports::{MagnifierZoom, Notice, Notifier, OverlayTheme, ScreenCapture};
 use snapline_services::capture::{CaptureContext, CaptureService, Countdown, LastRegion};
 use snapline_services::dto::record::RecordStateDto;
+use snapline_services::dto::upload::{UploadState, UploadStatus};
 use snapline_services::editor::{
     EditorAction, EditorClipboardContent, EditorClipboardSource, EditorFileDialog, EditorHost,
     EditorPin, EditorPorts, EditorResult,
@@ -172,6 +174,18 @@ impl EditorFileDialog for EditorFileDialogImpl {
         snapline_win::image_dialog::pick_images()
             .map(|mut paths| paths.pop())
             .map_err(|error| ServiceError::Io(error.to_string()))
+    }
+}
+
+struct UploadFileDialogImpl;
+
+impl snapline_services::FilePicker for UploadFileDialogImpl {
+    fn pick_files(&self) -> Result<Vec<PathBuf>, ServiceError> {
+        snapline_win::dialogs::pick_files().map_err(|error| ServiceError::Io(error.to_string()))
+    }
+
+    fn pick_ffmpeg(&self) -> Result<Option<PathBuf>, ServiceError> {
+        snapline_win::dialogs::pick_ffmpeg().map_err(|error| ServiceError::Io(error.to_string()))
     }
 }
 
@@ -919,7 +933,8 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
-    let services = Services::with_paths(Paths::discover()?)?;
+    let services =
+        Services::with_paths(Paths::discover()?)?.with_file_picker(Arc::new(UploadFileDialogImpl));
     let settings = services.settings_snapshot()?;
     let secrets: Arc<dyn snapline_core::ports::SecretStore + Send + Sync> =
         Arc::new(snapline_win::credentials::CredentialStore::new());
@@ -1089,6 +1104,7 @@ fn main() -> anyhow::Result<()> {
                 let upload_app = app.handle().clone();
                 let persist_services = services.clone();
                 std::thread::spawn(move || {
+                    let mut batches = IntakeLinkBatches::default();
                     while let Ok(event) = upload_events.recv() {
                         if let snapline_services::AppEvent::Upload(
                             snapline_services::uploads::Event::StateChanged(state),
@@ -1109,6 +1125,7 @@ fn main() -> anyhow::Result<()> {
                                     }
                                 }
                             }
+                            batches.handle(&persist_services, state);
                         }
                         events::emit(&upload_app, &event);
                     }
@@ -1156,6 +1173,79 @@ fn main() -> anyhow::Result<()> {
         }
     });
     Ok(())
+}
+
+struct IntakeLink {
+    url: String,
+    name: String,
+    page_url: Option<String>,
+}
+
+#[derive(Default)]
+struct IntakeLinkBatches(HashMap<String, BTreeMap<u32, Option<IntakeLink>>>);
+
+impl IntakeLinkBatches {
+    fn handle(&mut self, services: &Services, state: &UploadState) {
+        let Some(batch) = &state.link_batch else {
+            return;
+        };
+        if batch.index >= batch.size {
+            return;
+        }
+        let link = match state.status {
+            UploadStatus::Done => state.link.clone().map(|url| IntakeLink {
+                url,
+                name: state.file_name.clone(),
+                page_url: state.page_link.clone(),
+            }),
+            UploadStatus::Failed | UploadStatus::Cancelled => None,
+            _ => return,
+        };
+        let completed = self.0.entry(batch.id.clone()).or_default();
+        completed.insert(batch.index, link);
+        if completed.len() != batch.size as usize {
+            return;
+        }
+
+        let Some(completed) = self.0.remove(&batch.id) else {
+            return;
+        };
+        let format = intake_link_format(services);
+        let links: Vec<_> = completed
+            .into_values()
+            .flatten()
+            .map(|link| format.format(&link.url, &link.name, link.page_url.as_deref()))
+            .collect();
+        if links.is_empty() {
+            return;
+        }
+        if let Err(error) = Clipboard::new().set_text(&links.join("\n")) {
+            tracing::warn!(%error, "upload links could not be copied to the clipboard");
+            return;
+        }
+        let message = if links.len() == 1 {
+            "1 link copied to the clipboard.".to_owned()
+        } else {
+            format!("{} links copied to the clipboard.", links.len())
+        };
+        ToastNotifier.toast(Notice::new("Upload links copied", message));
+    }
+}
+
+fn intake_link_format(services: &Services) -> snapline_core::link_format::LinkFormat {
+    use snapline_core::link_format::LinkFormat;
+    use snapline_store::settings::general::LinkFormat as StoredFormat;
+
+    match services
+        .settings_snapshot()
+        .map(|settings| settings.general.copied_link_format)
+    {
+        Ok(StoredFormat::Markdown) => LinkFormat::Markdown,
+        Ok(StoredFormat::Html) => LinkFormat::Html,
+        Ok(StoredFormat::Bbcode) => LinkFormat::Bbcode,
+        Ok(StoredFormat::Page) => LinkFormat::Page,
+        Ok(StoredFormat::Direct) | Err(_) => LinkFormat::Direct,
+    }
 }
 
 fn codec_factory() -> Arc<CodecFactory> {

@@ -26,7 +26,9 @@
       "../../third_party/ffmpeg/ffmpeg.exe": "ffmpeg.exe",
       "../../LICENSE": "LICENSE",
       "../../third_party/ffmpeg/LICENSE": "FFmpeg-LICENSE.txt",
-      "../../third_party/ffmpeg/SOURCE.txt": "SOURCE.txt"
+      "../../third_party/ffmpeg/SOURCE.txt": "SOURCE.txt",
+      "../../assets/sounds/shutter.wav": "assets/sounds/shutter.wav",
+      "../../assets/sounds/done.wav": "assets/sounds/done.wav"
     },
     "windows": {
       "webviewInstallMode": {

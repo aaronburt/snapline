@@ -3,6 +3,7 @@
   import Badge from '../../../components/Badge.svelte';
   import Icon from '../../../components/Icon.svelte';
   import Thumb from '../../../components/Thumb.svelte';
+  import UploadProgress from '../../../components/UploadProgress.svelte';
   import { onEvent } from '../../../lib/events';
   import type { AppEvent } from '../../../lib/ipc/bindings/AppEvent';
   import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
@@ -17,6 +18,7 @@
     formatDay,
     formatDuration,
     formatTime,
+    pendingUploadLabel,
     timed,
     typeLabel,
     typeTag,
@@ -24,6 +26,7 @@
 
   interface Props {
     capture: HistoryCaptureDto | null;
+    activeUpload: UploadState | null;
     defaultDestination: string;
     oncopy: (id: number) => void;
     onshow: (id: number) => void;
@@ -31,6 +34,7 @@
     onannotate: (id: number) => void;
     onpin: (id: number) => void;
     ondelete: (id: number) => void;
+    onclose: () => void;
   }
 
   type ShareStatus = 'uploaded' | 'local' | 'failed' | 'uploading';
@@ -44,10 +48,12 @@
     queueId: number | null;
     retryInMs: number | null;
     cancellable: boolean;
+    progressAvailable: boolean;
+    sent: number;
+    total: number;
   }
 
-  let { capture, defaultDestination, oncopy, onshow, onopen, onannotate, onpin, ondelete }: Props =
-    $props();
+  let { capture, activeUpload, defaultDestination, oncopy, onshow, onopen, onannotate, onpin, ondelete, onclose }: Props = $props();
 
   let copyFailed = $state(false);
   let actionError = $state('');
@@ -62,7 +68,8 @@
   let menuElement = $state<HTMLDivElement | null>(null);
 
   const isTimed = $derived(capture !== null && timed(capture));
-  const isImage = $derived(capture !== null && !timed(capture));
+  const isImage = $derived(capture?.kind === 'image');
+  const currentLive = $derived(live !== null && matchesLive(live) ? live : activeUpload);
 
   function shareStatus(state: string | null | undefined): ShareStatus {
     if (state === 'done') {
@@ -106,20 +113,26 @@
         queueId: null,
         retryInMs: null,
         cancellable: false,
+        progressAvailable: false,
+        sent: 0,
+        total: 0,
       };
     }
     const upload = capture.upload;
     const known = queueIds[capture.id] ?? null;
-    if (live !== null && matchesLive(live)) {
+    if (currentLive !== null && matchesLive(currentLive)) {
       return {
-        status: shareStatus(live.status),
-        url: live.link ?? upload?.url ?? null,
-        deletionUrl: live.deletionLink ?? upload?.deletionUrl ?? null,
-        error: live.error ?? upload?.error ?? null,
-        destId: live.dest,
-        queueId: live.id,
-        retryInMs: live.retryInMs,
-        cancellable: live.status === 'queued' || live.status === 'backingOff',
+        status: shareStatus(currentLive.status),
+        url: currentLive.link ?? upload?.url ?? null,
+        deletionUrl: currentLive.deletionLink ?? upload?.deletionUrl ?? null,
+        error: currentLive.error ?? upload?.error ?? null,
+        destId: currentLive.dest,
+        queueId: currentLive.id,
+        retryInMs: currentLive.retryInMs,
+        cancellable: currentLive.cancellable,
+        progressAvailable: currentLive.progressAvailable,
+        sent: currentLive.sent,
+        total: currentLive.total,
       };
     }
     if (upload) {
@@ -132,6 +145,9 @@
         queueId: known,
         retryInMs: null,
         cancellable: upload.state === 'queued' && known !== null,
+        progressAvailable: false,
+        sent: upload.sent,
+        total: upload.total,
       };
     }
     return {
@@ -143,6 +159,9 @@
       queueId: null,
       retryInMs: null,
       cancellable: false,
+      progressAvailable: false,
+      sent: 0,
+      total: 0,
     };
   });
 
@@ -171,6 +190,7 @@
   });
 
   onMount(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     const handler = (event: AppEvent): void => {
       if (event.area !== 'upload' || event.event.kind !== 'stateChanged') {
@@ -188,10 +208,12 @@
     };
     void onEvent(handler)
       .then((stop) => {
-        unlisten = stop;
+        if (disposed) stop();
+        else unlisten = stop;
       })
       .catch(() => undefined);
     return () => {
+      disposed = true;
       unlisten?.();
     };
   });
@@ -223,6 +245,7 @@
       return;
     }
     const id = capture.id;
+    const fileName = capture.name;
     busy = true;
     actionError = '';
     try {
@@ -233,19 +256,28 @@
       if (response.kind !== 'accepted') {
         throw new Error('The upload could not be started.');
       }
+      if (capture?.id !== id || (live?.captureId === id && live.id >= response.data.id)) {
+        return;
+      }
       queueIds = { ...queueIds, [id]: response.data.id };
       live = {
         id: response.data.id,
         captureId: id,
+        fileName,
         dest: destination,
         runId: null,
         status: 'queued',
+        cancellable: true,
+        progressAvailable: false,
         attempts: 0,
         link: null,
         pageLink: null,
         deletionLink: null,
         error: null,
         retryInMs: null,
+        sent: 0,
+        total: 0,
+        linkBatch: null,
       } satisfies UploadState;
     } catch (error) {
       actionError = describe(error);
@@ -268,9 +300,6 @@
           kind: 'retry',
           data: { id: queueId },
         });
-        if (live !== null && live.id === queueId) {
-          live = { ...live, status: 'queued', error: null, retryInMs: null };
-        }
       } catch (error) {
         actionError = describe(error);
       } finally {
@@ -296,9 +325,6 @@
         kind: 'cancel',
         data: { id: queueId },
       });
-      if (live !== null && live.id === queueId) {
-        live = { ...live, status: 'cancelled', retryInMs: null };
-      }
     } catch (error) {
       actionError = describe(error);
     } finally {
@@ -345,6 +371,10 @@
 
   function onMenuKey(event: KeyboardEvent): void {
     if (!menuOpen) {
+      if (event.key === 'Escape' && !event.defaultPrevented) {
+        event.preventDefault();
+        onclose();
+      }
       return;
     }
     if (event.key === 'Escape') {
@@ -411,14 +441,25 @@
 
 <aside aria-label="Capture details">
   {#if capture}
-    <h2 class="heading">Details</h2>
+    <div class="detail-heading">
+      <h2 class="heading">Details</h2>
+      <button class="hv iconbtn" type="button" aria-label="Close details" title="Close details" onclick={onclose}>
+        <Icon name="close" size={14} />
+      </button>
+    </div>
 
-    <Thumb
-      id={capture.id}
-      alt=""
-      duration={capture.durationMs === null ? undefined : formatDuration(capture.durationMs)}
-      tag={capture.durationMs === null ? undefined : typeTag(capture.kind, capture.name)}
-    />
+    <div class="preview">
+    {#if capture.kind === 'image' || capture.kind === 'video' || capture.kind === 'gif'}
+      <Thumb
+        id={capture.id}
+        alt=""
+        duration={isTimed && capture.durationMs !== null ? formatDuration(capture.durationMs) : undefined}
+        tag={isTimed ? typeTag(capture.kind, capture.name) : undefined}
+      />
+    {:else}
+      <div class="file-preview" aria-hidden="true">{typeTag(capture.kind, capture.name)}</div>
+    {/if}
+    </div>
 
     <div class="identity">
       <div class="filename">{capture.name}</div>
@@ -430,15 +471,15 @@
     </div>
 
     <div class="actions">
-      {#if isTimed}
+      {#if !capture.missing && capture.owned}
         <button
           type="button"
           class="hv iconbtn"
-          aria-label="Open"
-          title="Open"
+          aria-label="Open file"
+          title="Open file"
           onclick={() => onopen(capture.id)}
         >
-          <Icon name="play" size={14} strokeWidth={1.8} />
+          <Icon name={isTimed ? 'play' : 'open'} size={14} strokeWidth={1.8} />
         </button>
       {/if}
       {#if isImage}
@@ -452,19 +493,22 @@
           <Icon name="edit" size={14} strokeWidth={1.8} />
         </button>
       {/if}
-      <button
-        type="button"
-        class="hv iconbtn"
-        aria-label="Copy image"
-        title="Copy image"
-        onclick={() => oncopy(capture.id)}
-      >
-        <Icon name="copy" size={14} strokeWidth={1.8} />
-      </button>
+      {#if isImage}
+        <button
+          type="button"
+          class="hv iconbtn"
+          aria-label="Copy image"
+          title="Copy image"
+          onclick={() => oncopy(capture.id)}
+        >
+          <Icon name="copy" size={14} strokeWidth={1.8} />
+        </button>
+      {/if}
       <button
         type="button"
         class="hv iconbtn"
         aria-label="Show in folder"
+        disabled={capture.missing}
         onclick={() => onshow(capture.id)}
       >
         <Icon name="folder" size={14} strokeWidth={1.8} />
@@ -489,11 +533,15 @@
       </button>
     </div>
 
-    {#if share.status !== 'local'}
+    {#if share.status !== 'local' || !capture.owned}
     <section class="sharing" aria-label="Sharing">
       <div class="sharinghead">
-        <h2 class="heading">Link</h2>
-        <Badge status={share.status === 'uploaded' ? 'ok' : share.status} long />
+        <h2 class="heading">Sharing</h2>
+        <Badge
+          status={share.status === 'uploaded' ? 'ok' : share.status}
+          label={pendingUploadLabel(currentLive?.status ?? capture.upload?.state)}
+          long
+        />
       </div>
 
       {#if share.status === 'uploaded'}
@@ -507,6 +555,32 @@
           >
             <Icon name="copy" size={14} strokeWidth={1.8} />
           </button>
+        </div>
+        <div class="retry">
+          <button
+            type="button"
+            class="hv secondary"
+            disabled={busy || capture.missing}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            bind:this={menuTrigger}
+            onclick={() => void toggleElsewhere()}
+          >Upload elsewhere…</button>
+          {#if menuOpen}
+            {#if destinations.length === 0}
+              <div class="menu menuempty" role="status" bind:this={menuElement}>
+                No destinations configured.
+              </div>
+            {:else}
+              <div class="menu" role="menu" aria-label="Upload elsewhere" tabindex="-1" bind:this={menuElement}>
+                {#each destinations as item (item.id)}
+                  <button type="button" class="menuitem" role="menuitem" onclick={() => chooseElsewhere(item.id)}>
+                    {item.name}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          {/if}
         </div>
         {#if share.deletionUrl}
           <div class="deletion">
@@ -529,12 +603,13 @@
           Upload failed: {share.error ?? 'the destination did not accept the file.'}
         </div>
         <div class="retry">
-          <button type="button" class="upload" disabled={busy} onclick={() => void retry()}>
+          <button type="button" class="upload" disabled={busy || capture.missing} onclick={() => void retry()}>
             Retry
           </button>
           <button
             type="button"
             class="hv secondary"
+            disabled={capture.missing}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             bind:this={menuTrigger}
@@ -570,12 +645,48 @@
           {/if}
         </div>
       {:else if share.status === 'uploading'}
-        <div class="note">Uploading…</div>
-        <progress class="bar" aria-label="Uploading"></progress>
+        {#if (currentLive?.status ?? capture.upload?.state) === 'uploading'}
+          <div class="note">
+            {share.progressAvailable && share.total > 0
+              ? `${formatBytes(share.sent)} of ${formatBytes(share.total)}`
+              : 'Sending file…'}
+          </div>
+          <UploadProgress determinate={share.progressAvailable} sent={share.sent} total={share.total} />
+        {/if}
         {#if share.cancellable}
           <button type="button" class="hv secondary" disabled={busy} onclick={() => void cancel()}>
             Cancel
           </button>
+        {/if}
+      {:else}
+        {#if capture.missing}
+          <div class="note">The original file is unavailable. Add it again before uploading.</div>
+        {:else}
+          <div class="note">This item is saved locally.</div>
+          <button
+            type="button"
+            class="upload"
+            disabled={busy}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            bind:this={menuTrigger}
+            onclick={() => void toggleElsewhere()}
+          >Upload…</button>
+          {#if menuOpen}
+            {#if destinations.length === 0}
+              <div class="menu menuempty" role="status" bind:this={menuElement}>
+                No destinations configured.
+              </div>
+            {:else}
+              <div class="menu" role="menu" aria-label="Upload to a destination" tabindex="-1" bind:this={menuElement}>
+                {#each destinations as item (item.id)}
+                  <button type="button" class="menuitem" role="menuitem" onclick={() => chooseElsewhere(item.id)}>
+                    {item.name}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          {/if}
         {/if}
       {/if}
       {#if actionError}
@@ -590,6 +701,9 @@
     <section class="info" aria-label="File info">
       <h2 class="heading infoheading">Info</h2>
       <div class="inforow"><span>Dimensions</span><span>{dimensions}</span></div>
+      {#if capture.missing}
+        <div class="inforow"><span>Availability</span><span>Original file missing</span></div>
+      {/if}
       {#if isTimed}
         <div class="inforow">
           <span>Duration</span><span>{formatDuration(capture.durationMs)}</span>
@@ -628,11 +742,76 @@
     font-weight: 600;
   }
 
+  .detail-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .detail-heading .iconbtn {
+    width: 30px;
+    height: 30px;
+  }
+
+  @media (max-width: 1050px) {
+    aside {
+      flex: 0 0 34%;
+      min-width: 0;
+      max-width: none;
+      border-left: 0;
+      border-top: 1px solid var(--stroke);
+      padding: 12px 24px 16px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      align-content: start;
+      gap: 12px 20px;
+    }
+
+    .detail-heading,
+    .info {
+      grid-column: 1 / -1;
+    }
+
+    .preview {
+      display: none;
+    }
+
+    .identity {
+      grid-column: 1;
+      grid-row: 2;
+    }
+
+    .actions {
+      grid-column: 1;
+      grid-row: 3;
+    }
+
+    aside .sharing {
+      grid-column: 2;
+      grid-row: 2 / span 2;
+      padding-top: 0;
+      border-top: 0;
+    }
+  }
+
   .identity {
     display: flex;
     flex-direction: column;
     gap: 4px;
     min-width: 0;
+  }
+
+  .file-preview {
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--stroke);
+    border-radius: 4px;
+    background: var(--subtle);
+    color: var(--text2);
+    font: 600 20px var(--type-mono);
   }
 
   .filename {
@@ -810,14 +989,6 @@
     padding: 6px 8px;
     font-size: 12px;
     color: var(--text3);
-  }
-
-  .bar {
-    width: 100%;
-    height: 4px;
-    border: none;
-    border-radius: 2px;
-    overflow: hidden;
   }
 
   .error {

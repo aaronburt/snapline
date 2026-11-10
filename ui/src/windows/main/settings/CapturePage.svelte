@@ -21,6 +21,8 @@
     RECORDING_FRAME_RATE_OPTIONS,
     VIDEO_FORMAT_OPTIONS,
     loadSettings,
+    pickFfmpegPath,
+    resetFfmpegPath,
     settings,
     updateCapture,
   } from './settings';
@@ -388,11 +390,15 @@
         <FieldRow
           icon="code"
           title="FFmpeg location"
-          description="Used to encode video. Found automatically."
+          description="Choose the FFmpeg executable. Snapline finds it automatically when unset."
           mono
+          readOnly
           button="Browse…"
+          onbutton={() => void pickFfmpegPath()}
+          secondaryButton={rows.ffmpegPath ? 'Use bundled' : undefined}
+          onsecondarybutton={() => void resetFfmpegPath()}
           value={rows.ffmpegPath}
-          onchange={(value) => updateCapture('ffmpegPath', value)}
+          placeholder="Automatically detected"
         />
       {/if}
     </SettingsSection>

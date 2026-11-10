@@ -9,7 +9,9 @@ use crate::error::UploadError;
 use crate::http::{
     HttpClient, HttpTimeout, HttpTransport, Multipart, ProxySetting, Request, USER_AGENT,
 };
-use crate::queue::{DeletionLink, SecretStore, UploadFile, Uploaded, Uploader};
+use crate::queue::{
+    DeletionLink, SecretStore, UploadFile, Uploaded, Uploader, MAX_BUFFERED_UPLOAD_BYTES,
+};
 
 pub const DEFAULT_DEST_ID: &str = "imgur";
 pub const CLIENT_ID_FIELD: &str = "client_id";
@@ -149,12 +151,13 @@ impl ImgurUploader {
         description: Option<&str>,
         secrets: &dyn SecretStore,
     ) -> Result<Uploaded, UploadError> {
+        let bytes = file.read_all(MAX_BUFFERED_UPLOAD_BYTES)?;
         let client_id = self.client_id(secrets)?;
         let mut form = Multipart::new().file(
             "image",
             file.file_name.clone(),
             file.content_type.clone(),
-            file.bytes.clone(),
+            bytes,
         );
         if let Some(title) = title.filter(|value| !value.is_empty()) {
             form = form.text("title", title);

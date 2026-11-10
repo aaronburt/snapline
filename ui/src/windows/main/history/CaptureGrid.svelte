@@ -2,8 +2,10 @@
   import { untrack } from 'svelte';
   import Badge from '../../../components/Badge.svelte';
   import Thumb from '../../../components/Thumb.svelte';
+  import UploadProgress from '../../../components/UploadProgress.svelte';
   import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
-  import { badgeStatus, captureCardWidth, formatBytes, formatDuration, formatTime, typeTag } from './data';
+  import type { UploadState } from '../../../lib/ipc/bindings/UploadState';
+  import { badgeStatus, captureCardWidth, formatBytes, formatDuration, formatTime, pendingUploadLabel, timed, typeTag } from './data';
 
   interface Group {
     key: string;
@@ -14,6 +16,7 @@
 
   interface Props {
     groups: Group[];
+    activeUploads?: Record<number, UploadState>;
     selectedId: number | null;
     columns: number;
     viewportHeight: number;
@@ -25,6 +28,7 @@
 
   let {
     groups,
+    activeUploads = {},
     selectedId,
     columns,
     viewportHeight,
@@ -53,7 +57,7 @@
 
   type Row = HeaderRow | CardsRow;
 
-  const rowHeight = Math.round(captureCardWidth * 0.625) + 64 + 12;
+  const rowHeight = Math.round(captureCardWidth * 0.625) + 80 + 12;
   const height = $derived(Math.max(viewportHeight, 320));
 
   const layout = $derived.by(() => {
@@ -110,9 +114,9 @@
     if (!row) {
       return;
     }
-    const height = Math.max(viewportHeight, 320);
+    const height = viewportHeight || 320;
     const currentScrollTop = untrack(() => scrollTop);
-    if (row.top < currentScrollTop || row.top + row.height > currentScrollTop + height) {
+    if (row.top < currentScrollTop || row.top + row.height - 12 > currentScrollTop + height) {
       const target = Math.max(0, row.top - 12);
       scrollTop = target;
       if (scroller) {
@@ -122,7 +126,7 @@
   });
 
   function duration(capture: HistoryCaptureDto): string | undefined {
-    return capture.durationMs === null ? undefined : formatDuration(capture.durationMs);
+    return timed(capture) && capture.durationMs !== null ? formatDuration(capture.durationMs) : undefined;
   }
 </script>
 
@@ -140,6 +144,8 @@
       style:grid-template-columns="repeat({columns}, {captureCardWidth}px)"
     >
       {#each row.items as capture (capture.id)}
+        {@const active = activeUploads[capture.id]}
+        {@const phase = active?.status ?? capture.upload?.state}
         <button
           type="button"
           class="hv card"
@@ -149,20 +155,27 @@
           onclick={() => onselect(capture.id)}
           ondblclick={() => onopen(capture.id)}
         >
-          <Thumb
-            id={capture.id}
-            alt=""
-            duration={duration(capture)}
-            tag={duration(capture) ? typeTag(capture.kind, capture.name) : undefined}
-          />
+          {#if capture.kind === 'image' || capture.kind === 'video' || capture.kind === 'gif'}
+            <Thumb
+              id={capture.id}
+              alt=""
+              duration={duration(capture)}
+              tag={duration(capture) ? typeTag(capture.kind, capture.name) : undefined}
+            />
+          {:else}
+            <div class="filethumb">{typeTag(capture.kind, capture.name)}</div>
+          {/if}
           <div class="meta">
             <div class="name">{capture.name}</div>
             <div class="line">
               <span class="when"
                 >{formatTime(capture.createdAt)} · {formatBytes(capture.bytes)}</span
               >
-              <Badge status={badgeStatus(capture)} />
+              <Badge status={active ? 'uploading' : badgeStatus(capture)} label={pendingUploadLabel(phase)} />
             </div>
+            {#if phase === 'uploading'}
+              <UploadProgress determinate={active?.progressAvailable} sent={active?.sent} total={active?.total} />
+            {/if}
           </div>
         </button>
       {/each}
@@ -243,4 +256,18 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  .filethumb {
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--stroke);
+    border-radius: 4px;
+    background: var(--subtle);
+    color: var(--text2);
+    font: 600 16px var(--type-mono);
+  }
+
 </style>

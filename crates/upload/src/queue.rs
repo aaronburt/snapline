@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
+use std::io::{self, Cursor, Read};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -17,6 +18,7 @@ pub const DEFAULT_BACKOFF: [Duration; 5] = [
     Duration::from_secs(120),
     Duration::from_secs(300),
 ];
+pub const MAX_BUFFERED_UPLOAD_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct UploadId(u64);
@@ -36,7 +38,14 @@ pub struct UploadFile {
     pub path: PathBuf,
     pub file_name: String,
     pub content_type: String,
-    pub bytes: Vec<u8>,
+    pub len: u64,
+    pub body: UploadBody,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UploadBody {
+    Bytes(Arc<Vec<u8>>),
+    Path { path: PathBuf, modified_ms: i64 },
 }
 
 impl UploadFile {
@@ -46,11 +55,30 @@ impl UploadFile {
         content_type: impl Into<String>,
         bytes: impl Into<Vec<u8>>,
     ) -> Self {
+        let bytes = bytes.into();
         Self {
             path: path.into(),
             file_name: file_name.into(),
             content_type: content_type.into(),
-            bytes: bytes.into(),
+            len: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            body: UploadBody::Bytes(Arc::new(bytes)),
+        }
+    }
+
+    pub fn from_path(
+        path: impl Into<PathBuf>,
+        file_name: impl Into<String>,
+        content_type: impl Into<String>,
+        len: u64,
+        modified_ms: i64,
+    ) -> Self {
+        let path = path.into();
+        Self {
+            path: path.clone(),
+            file_name: file_name.into(),
+            content_type: content_type.into(),
+            len,
+            body: UploadBody::Path { path, modified_ms },
         }
     }
 
@@ -59,23 +87,123 @@ impl UploadFile {
         content_type: impl Into<String>,
     ) -> Result<Self, std::io::Error> {
         let path = path.into();
-        let bytes = std::fs::read(&path)?;
+        let metadata = std::fs::metadata(&path)?;
+        let modified_ms = modified_ms(&metadata)?;
         let file_name = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("upload")
             .to_owned();
-        Ok(Self {
-            path,
+        Ok(Self::from_path(
+            path.clone(),
             file_name,
-            content_type: content_type.into(),
-            bytes,
-        })
+            content_type,
+            metadata.len(),
+            modified_ms,
+        ))
     }
 
     pub fn content_type(&self) -> &str {
         &self.content_type
     }
+
+    pub fn open(&self) -> Result<Box<dyn Read + Send + '_>, UploadError> {
+        match &self.body {
+            UploadBody::Bytes(bytes) => Ok(Box::new(Cursor::new(bytes.as_slice()))),
+            UploadBody::Path {
+                path,
+                modified_ms: expected,
+            } => {
+                let file = std::fs::File::open(path).map_err(|_| {
+                    UploadError::permanent(
+                        "The file is no longer available. Add it again before uploading.",
+                    )
+                })?;
+                let metadata = file
+                    .metadata()
+                    .map_err(|_| UploadError::permanent("The file could not be checked."))?;
+                if !metadata.is_file()
+                    || metadata.len() != self.len
+                    || modified_ms(&metadata).ok() != Some(*expected)
+                {
+                    return Err(UploadError::permanent(
+                        "The file changed after it was added. Add it again to upload the new version.",
+                    ));
+                }
+                Ok(Box::new(LengthLimitedReader {
+                    file,
+                    remaining: self.len,
+                }))
+            }
+        }
+    }
+
+    pub fn read_all(&self, limit: u64) -> Result<Vec<u8>, UploadError> {
+        if self.len > limit {
+            return Err(UploadError::TooLarge);
+        }
+        match &self.body {
+            UploadBody::Bytes(bytes) => {
+                if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != self.len {
+                    return Err(UploadError::permanent("The upload body length is invalid."));
+                }
+                Ok(bytes.as_ref().clone())
+            }
+            UploadBody::Path { .. } => {
+                let mut reader = self.open()?;
+                let capacity = usize::try_from(self.len).unwrap_or(0);
+                let mut bytes = Vec::with_capacity(capacity);
+                reader.read_to_end(&mut bytes).map_err(|error| {
+                    if error.kind() == io::ErrorKind::UnexpectedEof {
+                        UploadError::permanent(
+                            "The file became shorter while it was being uploaded.",
+                        )
+                    } else {
+                        UploadError::permanent("The file could not be read.")
+                    }
+                })?;
+                if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != self.len {
+                    return Err(UploadError::permanent(
+                        "The file became shorter while it was being uploaded.",
+                    ));
+                }
+                Ok(bytes)
+            }
+        }
+    }
+}
+
+struct LengthLimitedReader {
+    file: std::fs::File,
+    remaining: u64,
+}
+
+impl Read for LengthLimitedReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() || self.remaining == 0 {
+            return Ok(0);
+        }
+        let limit =
+            usize::try_from(self.remaining.min(buffer.len() as u64)).unwrap_or(buffer.len());
+        let read = self.file.read(&mut buffer[..limit])?;
+        if read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "The file became shorter while it was being uploaded.",
+            ));
+        }
+        self.remaining -= u64::try_from(read).unwrap_or(u64::MAX);
+        Ok(read)
+    }
+}
+
+fn modified_ms(metadata: &std::fs::Metadata) -> Result<i64, io::Error> {
+    let modified = metadata.modified()?;
+    let elapsed = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid file timestamp"))?;
+    i64::try_from(elapsed.as_millis())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "file timestamp is too large"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,7 +281,39 @@ pub trait Uploader: Send + Sync {
     fn upload(&self, file: &UploadFile, secrets: &dyn SecretStore)
         -> Result<Uploaded, UploadError>;
 
+    fn supports_in_flight_cancel(&self) -> bool {
+        false
+    }
+
+    fn reports_progress(&self) -> bool {
+        false
+    }
+
+    fn upload_controlled(
+        &self,
+        file: &UploadFile,
+        secrets: &dyn SecretStore,
+        _control: &dyn UploadControl,
+    ) -> Result<Uploaded, UploadError> {
+        self.upload(file, secrets)
+    }
+
     fn delete(&self, link: &DeletionLink, secrets: &dyn SecretStore) -> Result<(), UploadError>;
+}
+
+pub trait UploadControl: Send + Sync {
+    fn sent(&self, bytes: u64);
+    fn cancelled(&self) -> bool;
+}
+
+pub struct NoopUploadControl;
+
+impl UploadControl for NoopUploadControl {
+    fn sent(&self, _bytes: u64) {}
+
+    fn cancelled(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,14 +336,27 @@ impl Status {
 pub struct UploadSnapshot {
     pub id: UploadId,
     pub capture_id: Option<i64>,
+    pub file_name: String,
     pub dest: String,
     pub run_id: Option<String>,
     pub status: Status,
+    pub cancellable: bool,
+    pub progress_available: bool,
+    pub sent: u64,
+    pub total: u64,
+    pub link_batch: Option<LinkBatch>,
     pub attempts: u32,
     pub link: Option<String>,
     pub page_link: Option<String>,
     pub deletion_link: Option<String>,
     pub error: Option<UploadError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkBatch {
+    pub id: String,
+    pub index: u32,
+    pub size: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,6 +369,7 @@ pub struct UploadJob {
     pub dest: String,
     pub run_id: Option<String>,
     pub capture_id: Option<i64>,
+    pub link_batch: Option<LinkBatch>,
 }
 
 impl UploadJob {
@@ -211,11 +385,17 @@ impl UploadJob {
             dest: dest.into(),
             run_id,
             capture_id: None,
+            link_batch: None,
         }
     }
 
     pub fn with_capture_id(mut self, capture_id: i64) -> Self {
         self.capture_id = Some(capture_id);
+        self
+    }
+
+    pub fn with_link_batch(mut self, batch: LinkBatch) -> Self {
+        self.link_batch = Some(batch);
         self
     }
 }
@@ -285,17 +465,14 @@ pub enum QueueError {
     Closed,
     #[error("The upload was not found.")]
     NotFound,
-    #[error("Only queued or backing-off uploads can be cancelled.")]
+    #[error("The upload cannot be cancelled.")]
     NotCancellable,
     #[error("Only failed or cancelled uploads can be retried.")]
     NotRetryable,
 }
 
 enum Command {
-    Enqueue {
-        id: UploadId,
-        job: UploadJob,
-    },
+    Enqueue(Vec<(UploadId, UploadJob)>),
     Cancel {
         id: UploadId,
         reply: Sender<Result<(), QueueError>>,
@@ -337,16 +514,46 @@ impl Listener {
 pub struct Handle {
     commands: Arc<Mutex<Sender<Command>>>,
     next_id: Arc<AtomicU64>,
+    cancellations: Arc<Mutex<HashMap<UploadId, ActiveCancellation>>>,
+}
+
+#[derive(Clone)]
+struct ActiveCancellation {
+    cancelled: Arc<AtomicBool>,
+    cancellable: bool,
 }
 
 impl Handle {
     pub fn enqueue(&self, job: UploadJob) -> Result<UploadId, QueueError> {
         let id = UploadId(self.next_id.fetch_add(1, Ordering::Relaxed));
-        self.send(Command::Enqueue { id, job })?;
+        self.send(Command::Enqueue(vec![(id, job)]))?;
         Ok(id)
     }
 
+    pub fn enqueue_batch(&self, jobs: Vec<UploadJob>) -> Result<Vec<UploadId>, QueueError> {
+        let entries: Vec<_> = jobs
+            .into_iter()
+            .map(|job| (UploadId(self.next_id.fetch_add(1, Ordering::Relaxed)), job))
+            .collect();
+        let ids = entries.iter().map(|(id, _)| *id).collect();
+        self.send(Command::Enqueue(entries))?;
+        Ok(ids)
+    }
+
     pub fn cancel(&self, id: UploadId) -> Result<(), QueueError> {
+        if let Some(cancellation) = self
+            .cancellations
+            .lock()
+            .map_err(|_| QueueError::Closed)?
+            .get(&id)
+            .cloned()
+        {
+            if !cancellation.cancellable {
+                return Err(QueueError::NotCancellable);
+            }
+            cancellation.cancelled.store(true, Ordering::SeqCst);
+            return Ok(());
+        }
         let (reply, response) = mpsc::channel();
         self.send(Command::Cancel { id, reply })?;
         response.recv().map_err(|_| QueueError::Closed)?
@@ -418,10 +625,12 @@ impl Queue {
         let handle = Handle {
             commands: Arc::new(Mutex::new(commands)),
             next_id: Arc::new(AtomicU64::new(1)),
+            cancellations: Arc::new(Mutex::new(HashMap::new())),
         };
+        let cancellations = Arc::clone(&handle.cancellations);
         let thread = thread::Builder::new()
             .name("snapline-upload".to_owned())
-            .spawn(move || run(receiver, secrets, policy, listener))
+            .spawn(move || run(receiver, secrets, policy, listener, cancellations))
             .map_err(|_| QueueError::Spawn)?;
         Ok(Self {
             handle,
@@ -460,10 +669,12 @@ struct JobRecord {
     page_link: Option<String>,
     deletion_link: Option<String>,
     error: Option<UploadError>,
+    progress: Arc<Mutex<ProgressData>>,
 }
 
 impl JobRecord {
     fn new(id: UploadId, job: UploadJob) -> Self {
+        let total = job.file.len;
         Self {
             id,
             job,
@@ -473,22 +684,87 @@ impl JobRecord {
             page_link: None,
             deletion_link: None,
             error: None,
+            progress: Arc::new(Mutex::new(ProgressData {
+                sent: 0,
+                total,
+                last_emit: Instant::now(),
+                last_emitted_sent: 0,
+            })),
         }
     }
 
     fn snapshot(&self) -> UploadSnapshot {
+        let (sent, total) = self
+            .progress
+            .lock()
+            .map(|progress| (progress.sent, progress.total))
+            .unwrap_or_default();
         UploadSnapshot {
             id: self.id,
             capture_id: self.job.capture_id,
+            file_name: self.job.file.file_name.clone(),
             dest: self.job.dest.clone(),
             run_id: self.job.run_id.clone(),
             status: self.status.clone(),
+            cancellable: match &self.status {
+                Status::Queued | Status::BackingOff { .. } => true,
+                Status::Uploading => self.job.uploader.supports_in_flight_cancel(),
+                Status::Done | Status::Failed | Status::Cancelled => false,
+            },
+            progress_available: self.job.uploader.reports_progress(),
+            sent,
+            total,
+            link_batch: self.job.link_batch.clone(),
             attempts: self.attempts,
             link: self.link.clone(),
             page_link: self.page_link.clone(),
             deletion_link: self.deletion_link.clone(),
             error: self.error.clone(),
         }
+    }
+}
+
+struct ProgressData {
+    sent: u64,
+    total: u64,
+    last_emit: Instant,
+    last_emitted_sent: u64,
+}
+
+struct JobUploadControl {
+    cancelled: Arc<AtomicBool>,
+    progress: Arc<Mutex<ProgressData>>,
+    listener: Listener,
+    snapshot: UploadSnapshot,
+}
+
+impl UploadControl for JobUploadControl {
+    fn sent(&self, bytes: u64) {
+        let Ok(mut progress) = self.progress.lock() else {
+            return;
+        };
+        progress.sent = progress.sent.max(bytes.min(progress.total));
+        let increment = progress.total.div_ceil(100);
+        let advanced = progress.sent.saturating_sub(progress.last_emitted_sent);
+        let should_emit = progress.last_emit.elapsed() >= Duration::from_millis(100)
+            || advanced >= increment
+            || progress.sent == progress.total;
+        if !should_emit || advanced == 0 {
+            return;
+        }
+        progress.last_emit = Instant::now();
+        progress.last_emitted_sent = progress.sent;
+        let sent = progress.sent;
+        let total = progress.total;
+        drop(progress);
+        let mut snapshot = self.snapshot.clone();
+        snapshot.sent = sent;
+        snapshot.total = total;
+        self.listener.emit(UploadEvent(snapshot));
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
     }
 }
 
@@ -527,10 +803,12 @@ impl State {
 
     fn handle(&mut self, command: Command, current: Option<UploadId>) -> Control {
         match command {
-            Command::Enqueue { id, job } => {
-                self.records.insert(id, JobRecord::new(id, job));
-                self.pending.push_back(id);
-                self.emit(id);
+            Command::Enqueue(entries) => {
+                for (id, job) in entries {
+                    self.records.insert(id, JobRecord::new(id, job));
+                    self.pending.push_back(id);
+                    self.emit(id);
+                }
                 Control::Continue
             }
             Command::Cancel { id, reply } => {
@@ -580,6 +858,18 @@ impl State {
                         record.page_link = None;
                         record.deletion_link = None;
                         record.error = None;
+                        if record.job.link_batch.is_some() {
+                            record.job.link_batch = Some(LinkBatch {
+                                id: format!("retry-{}", id.get()),
+                                index: 0,
+                                size: 1,
+                            });
+                        }
+                        if let Ok(mut progress) = record.progress.lock() {
+                            progress.sent = 0;
+                            progress.last_emit = Instant::now();
+                            progress.last_emitted_sent = 0;
+                        }
                     }
                     self.pending.push_back(id);
                     let _ = reply.send(Ok(()));
@@ -613,6 +903,7 @@ fn run(
     secrets: Arc<dyn SecretStore>,
     policy: RetryPolicy,
     listener: Listener,
+    cancellations: Arc<Mutex<HashMap<UploadId, ActiveCancellation>>>,
 ) {
     let mut state = State::new(listener);
     loop {
@@ -632,7 +923,14 @@ fn run(
             }
             continue;
         };
-        if !run_job(id, &commands, secrets.as_ref(), &policy, &mut state) {
+        if !run_job(
+            id,
+            &commands,
+            secrets.as_ref(),
+            &policy,
+            &mut state,
+            &cancellations,
+        ) {
             return;
         }
     }
@@ -644,6 +942,7 @@ fn run_job(
     secrets: &dyn SecretStore,
     policy: &RetryPolicy,
     state: &mut State,
+    cancellations: &Arc<Mutex<HashMap<UploadId, ActiveCancellation>>>,
 ) -> bool {
     loop {
         let Some(record) = state.records.get_mut(&id) else {
@@ -655,13 +954,74 @@ fn run_job(
         let uploader = Arc::clone(&record.job.uploader);
         let file = record.job.file.clone();
         let attempts = record.attempts;
+        let progress = Arc::clone(&record.progress);
+        if let Ok(mut progress) = progress.lock() {
+            progress.sent = 0;
+            progress.total = file.len;
+            progress.last_emit = Instant::now();
+            progress.last_emitted_sent = 0;
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        if let Ok(mut active) = cancellations.lock() {
+            active.insert(
+                id,
+                ActiveCancellation {
+                    cancelled: Arc::clone(&cancelled),
+                    cancellable: record.job.uploader.supports_in_flight_cancel(),
+                },
+            );
+        }
+        let snapshot = record.snapshot();
+        let control = JobUploadControl {
+            cancelled: Arc::clone(&cancelled),
+            progress: Arc::clone(&progress),
+            listener: state.listener.clone(),
+            snapshot,
+        };
         state.emit(id);
-        let result = uploader.upload(&file, secrets);
+        let result = thread::scope(|scope| {
+            let attempt = match thread::Builder::new()
+                .name("snapline-upload-transfer".to_owned())
+                .spawn_scoped(scope, || {
+                    uploader.upload_controlled(&file, secrets, &control)
+                }) {
+                Ok(attempt) => attempt,
+                Err(_) => return Some(Err(UploadError::permanent("The upload could not start."))),
+            };
+            while !attempt.is_finished() {
+                match commands.recv_timeout(Duration::from_millis(20)) {
+                    Ok(command) => {
+                        if !matches!(state.handle(command, None), Control::Shutdown) {
+                            continue;
+                        }
+                    }
+                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(RecvTimeoutError::Disconnected) => {}
+                }
+                cancelled.store(true, Ordering::SeqCst);
+                let _ = attempt.join();
+                return None;
+            }
+            Some(attempt.join().unwrap_or_else(|_| {
+                Err(UploadError::permanent("The upload stopped unexpectedly."))
+            }))
+        });
+        if let Ok(mut active) = cancellations.lock() {
+            active.remove(&id);
+        }
+        let Some(result) = result else {
+            return false;
+        };
         match result {
             Ok(uploaded) => {
                 if let Some(record) = state.records.get_mut(&id) {
                     record.status = Status::Done;
-                    record.job.file.bytes = Vec::new();
+                    if let Ok(mut progress) = record.progress.lock() {
+                        progress.sent = progress.total;
+                    }
+                    if matches!(&record.job.file.body, UploadBody::Bytes(_)) {
+                        record.job.file.body = UploadBody::Bytes(Arc::new(Vec::new()));
+                    }
                     record.link = Some(uploaded.link);
                     record.page_link = uploaded.page_link;
                     record.deletion_link = uploaded.deletion_link.map(|link| link.url);
@@ -671,6 +1031,14 @@ fn run_job(
                 return true;
             }
             Err(error) => {
+                if error == UploadError::Cancelled || cancelled.load(Ordering::SeqCst) {
+                    if let Some(record) = state.records.get_mut(&id) {
+                        record.status = Status::Cancelled;
+                        record.error = None;
+                    }
+                    state.emit(id);
+                    return true;
+                }
                 let retryable = error.is_retryable() && attempts <= policy.max_retries();
                 if !retryable {
                     if let Some(record) = state.records.get_mut(&id) {
@@ -1085,10 +1453,22 @@ mod tests {
             .enqueue(job(FakeUploader::new(Vec::new()), "second.png"))
             .expect("second");
         let cancelling = handle.clone();
-        let cancel = thread::spawn(move || cancelling.cancel(second));
-        thread::sleep(Duration::from_millis(20));
+        let (result, completed) = mpsc::channel();
+        let cancel = thread::spawn(move || {
+            let outcome = cancelling.list().and_then(|states| {
+                assert!(states
+                    .iter()
+                    .any(|state| state.id == first && state.status == Status::Uploading));
+                cancelling.cancel(second)
+            });
+            let _ = result.send(outcome);
+        });
+        let while_uploading = completed.recv_timeout(Duration::from_secs(5));
         release.send(()).expect("release");
-        cancel.join().expect("cancel thread").expect("cancel");
+        cancel.join().expect("cancel thread");
+        while_uploading
+            .expect("queue responded during transfer")
+            .expect("cancel");
         let finished = wait_all_terminal(&events, 2);
         assert_eq!(finished.len(), 2);
         assert_eq!(

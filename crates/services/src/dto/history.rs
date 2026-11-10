@@ -8,6 +8,7 @@ pub enum HistoryFilter {
     Images,
     Videos,
     Gifs,
+    Files,
     Uploaded,
     LocalOnly,
 }
@@ -18,6 +19,8 @@ pub enum CaptureKindDto {
     Image,
     Video,
     Gif,
+    Text,
+    File,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -35,6 +38,10 @@ pub enum UploadStateDto {
 pub struct UploadDto {
     pub dest_id: String,
     pub state: UploadStateDto,
+    #[ts(as = "i32")]
+    pub sent: i64,
+    #[ts(as = "i32")]
+    pub total: i64,
     pub url: Option<String>,
     pub deletion_url: Option<String>,
     pub error: Option<String>,
@@ -51,6 +58,8 @@ pub struct CaptureDto {
     #[ts(as = "i32")]
     pub id: i64,
     pub kind: CaptureKindDto,
+    pub owned: bool,
+    pub missing: bool,
     pub name: String,
     #[ts(as = "i32")]
     pub bytes: i64,

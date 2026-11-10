@@ -8,6 +8,8 @@ pub enum UploadError {
     Retryable(String),
     #[error("The file is too large for this destination.")]
     TooLarge,
+    #[error("The upload was cancelled.")]
+    Cancelled,
     #[error("The destination rejected the credentials.")]
     Auth,
     #[error("{0}")]

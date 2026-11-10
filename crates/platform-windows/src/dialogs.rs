@@ -8,8 +8,9 @@ use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
 };
 use windows::Win32::UI::Shell::{
-    FileOpenDialog, IFileOpenDialog, IShellItem, SHCreateItemFromParsingName, FOS_FORCEFILESYSTEM,
-    FOS_PATHMUSTEXIST, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
+    FileOpenDialog, IFileOpenDialog, IShellItem, IShellItemArray, SHCreateItemFromParsingName,
+    FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST,
+    FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
 };
 
 #[derive(Debug, Error)]
@@ -18,6 +19,78 @@ pub enum DialogError {
     Open(#[source] windows::core::Error),
     #[error("The chosen folder could not be read.")]
     Read(#[source] windows::core::Error),
+    #[error("The file picker could not be opened.")]
+    FilesOpen(#[source] windows::core::Error),
+    #[error("The selected files could not be read.")]
+    FilesRead(#[source] windows::core::Error),
+    #[error("Choose an existing FFmpeg executable.")]
+    InvalidFfmpeg,
+}
+
+pub fn pick_files() -> Result<Vec<PathBuf>, DialogError> {
+    let _com = Com::start().map_err(DialogError::FilesOpen)?;
+    let dialog: IFileOpenDialog =
+        unsafe { CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER) }
+            .map_err(DialogError::FilesOpen)?;
+    let options = unsafe { dialog.GetOptions() }.map_err(DialogError::FilesOpen)?;
+    let options = options | FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST;
+    unsafe { dialog.SetOptions(options) }.map_err(DialogError::FilesOpen)?;
+    unsafe { dialog.SetTitle(&HSTRING::from("Choose files to upload")) }
+        .map_err(DialogError::FilesOpen)?;
+    match unsafe { dialog.Show(None) } {
+        Ok(()) => {}
+        Err(error) if error.code() == HRESULT::from_win32(ERROR_CANCELLED.0) => {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(DialogError::FilesOpen(error)),
+    }
+    let results: IShellItemArray =
+        unsafe { dialog.GetResults() }.map_err(DialogError::FilesRead)?;
+    let count = unsafe { results.GetCount() }.map_err(DialogError::FilesRead)?;
+    let mut paths = Vec::new();
+    for index in 0..count {
+        let item = unsafe { results.GetItemAt(index) }.map_err(DialogError::FilesRead)?;
+        let name =
+            unsafe { item.GetDisplayName(SIGDN_FILESYSPATH) }.map_err(DialogError::FilesRead)?;
+        let value = unsafe { name.to_string() };
+        unsafe { CoTaskMemFree(Some(name.0.cast())) };
+        let value = value.map_err(|error| DialogError::FilesRead(error.into()))?;
+        paths.push(PathBuf::from(value));
+    }
+    Ok(paths)
+}
+
+pub fn pick_ffmpeg() -> Result<Option<PathBuf>, DialogError> {
+    let _com = Com::start().map_err(DialogError::FilesOpen)?;
+    let dialog: IFileOpenDialog =
+        unsafe { CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER) }
+            .map_err(DialogError::FilesOpen)?;
+    let options = unsafe { dialog.GetOptions() }.map_err(DialogError::FilesOpen)?;
+    unsafe { dialog.SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST) }
+        .map_err(DialogError::FilesOpen)?;
+    unsafe { dialog.SetTitle(&HSTRING::from("Choose the FFmpeg executable")) }
+        .map_err(DialogError::FilesOpen)?;
+    match unsafe { dialog.Show(None) } {
+        Ok(()) => {}
+        Err(error) if error.code() == HRESULT::from_win32(ERROR_CANCELLED.0) => {
+            return Ok(None);
+        }
+        Err(error) => return Err(DialogError::FilesOpen(error)),
+    }
+    let item = unsafe { dialog.GetResult() }.map_err(DialogError::FilesRead)?;
+    let name = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH) }.map_err(DialogError::FilesRead)?;
+    let value = unsafe { name.to_string() };
+    unsafe { CoTaskMemFree(Some(name.0.cast())) };
+    let value = value.map_err(|error| DialogError::FilesRead(error.into()))?;
+    let path = PathBuf::from(value);
+    if !path.is_file()
+        || !path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+    {
+        return Err(DialogError::InvalidFfmpeg);
+    }
+    Ok(Some(path))
 }
 
 struct Com;

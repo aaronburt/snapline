@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::UploadError;
 use crate::http::{HttpClient, HttpTimeout, HttpTransport, ProxySetting, Request, USER_AGENT};
-use crate::queue::{DeletionLink, SecretStore, UploadFile, Uploaded, Uploader};
+use crate::queue::{
+    DeletionLink, SecretStore, UploadFile, Uploaded, Uploader, MAX_BUFFERED_UPLOAD_BYTES,
+};
 
 pub const DEFAULT_DEST_ID: &str = "gist";
 pub const TOKEN_FIELD: &str = "token";
@@ -163,7 +165,8 @@ impl Uploader for GistUploader {
         file: &UploadFile,
         secrets: &dyn SecretStore,
     ) -> Result<Uploaded, UploadError> {
-        let content = std::str::from_utf8(&file.bytes).map_err(|_| {
+        let bytes = file.read_all(MAX_BUFFERED_UPLOAD_BYTES)?;
+        let content = std::str::from_utf8(&bytes).map_err(|_| {
             UploadError::Permanent(
                 "The file is not text and cannot be uploaded to a gist.".to_owned(),
             )

@@ -3,9 +3,12 @@
   import Icon from '../../components/Icon.svelte';
   import Logo from '../../components/Logo.svelte';
   import Thumb from '../../components/Thumb.svelte';
+  import { onEvent } from '../../lib/events';
   import type { UploadReq } from '../../lib/ipc/bindings/UploadReq';
   import type { UploadResp } from '../../lib/ipc/bindings/UploadResp';
+  import type { UploadState } from '../../lib/ipc/bindings/UploadState';
   import { call } from '../../lib/ipc/core';
+  import { cancelUpload, listUploadStates } from '../../lib/ipc/upload';
   import { panelCaptures, toPanelRecent } from './data';
   import type { PanelRecent } from './data';
   import {
@@ -26,6 +29,7 @@
 
   let frame: HTMLElement | undefined = $state();
   let recents = $state<PanelRecent[]>([]);
+  let activeUploads = $state<UploadState[]>([]);
   let recentsLoaded = $state(false);
   let lastLinkFromIpc = $state<string | null>(null);
 
@@ -78,10 +82,63 @@
   }
 
   onMount(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    let observed: Set<number> | null = new Set();
+    void onEvent((event) => {
+      if (event.area !== 'upload' || event.event.kind !== 'stateChanged') {
+        return;
+      }
+      const state = event.event.data;
+      observed?.add(state.id);
+      const before = activeUploads.length;
+      if (isActiveUpload(state)) {
+        if (activeUploads.some((upload) => upload.id === state.id)) {
+          activeUploads = activeUploads.map((upload) => upload.id === state.id ? state : upload);
+        } else {
+          activeUploads = [...activeUploads, state];
+        }
+      } else {
+        activeUploads = activeUploads.filter((upload) => upload.id !== state.id);
+      }
+      if (activeUploads.length !== before) {
+        void reportHeight();
+      }
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    }).catch(() => undefined).then(async () => {
+      if (disposed) return;
+      const states = await listUploadStates();
+      if (disposed) return;
+      activeUploads = [
+        ...states.filter((state) => !observed?.has(state.id) && isActiveUpload(state)),
+        ...activeUploads,
+      ];
+      await reportHeight();
+    }).catch(() => undefined).finally(() => { observed = null; });
     void reportHeight();
     void loadRecent();
     void loadLastLink();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   });
+
+  function isActiveUpload(state: UploadState): boolean {
+    return state.status === 'queued' || state.status === 'uploading' || state.status === 'backingOff';
+  }
+
+  function uploadName(state: UploadState): string {
+    return state.fileName || recents.find((capture) => capture.id === state.captureId)?.name || 'File upload';
+  }
+
+  function formatSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
 
   function close(): void {
     void panelClose().catch(() => undefined);
@@ -111,6 +168,10 @@
       return;
     }
     void panelCopyLink().catch(() => undefined);
+  }
+
+  function cancel(id: number): void {
+    void cancelUpload(id).catch(() => undefined);
   }
 </script>
 
@@ -186,6 +247,32 @@
       </div>
     {/if}
   </section>
+
+  {#if activeUploads.length > 0}
+    <section class="uploads" aria-labelledby="uploads-title">
+      <div class="uploads-title" id="uploads-title">Uploads</div>
+      {#each activeUploads as upload (upload.id)}
+        <div class="upload-row">
+          <div class="upload-details">
+            <span class="upload-name">{uploadName(upload)}</span>
+            <span class="upload-size">
+              {upload.progressAvailable
+                ? `${formatSize(upload.sent)} of ${formatSize(upload.total)}`
+                : 'Uploading'}
+            </span>
+            <progress
+              aria-label={`Upload progress for ${uploadName(upload)}`}
+              value={upload.progressAvailable && upload.total > 0 ? upload.sent : undefined}
+              max={upload.progressAvailable && upload.total > 0 ? upload.total : undefined}
+            ></progress>
+          </div>
+          {#if upload.cancellable}
+            <button type="button" class="cancel-upload hv" onclick={() => cancel(upload.id)}>Cancel</button>
+          {/if}
+        </div>
+      {/each}
+    </section>
+  {/if}
 
   <footer class="footer">
     <span class="last-link-label">Last link</span>
@@ -338,6 +425,68 @@
   .uploaded {
     display: inline-flex;
     color: var(--ok);
+  }
+
+  .uploads {
+    padding: 10px 16px 12px;
+    border-top: 1px solid var(--stroke);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .uploads-title {
+    font-size: 12px;
+    color: var(--text3);
+    font-weight: 500;
+  }
+
+  .upload-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .upload-details {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .upload-name,
+  .upload-size {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .upload-name {
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  .upload-size {
+    font-size: 10px;
+    color: var(--text3);
+  }
+
+  .upload-details progress {
+    width: 100%;
+    height: 4px;
+    accent-color: var(--accent);
+  }
+
+  .cancel-upload {
+    flex: none;
+    border: 1px solid var(--stroke);
+    border-radius: 4px;
+    background: var(--card);
+    color: var(--text2);
+    padding: 4px 7px;
+    font-size: 11px;
   }
 
   .empty {

@@ -14,11 +14,13 @@ const RELEASE_EXE: &str = "target/release/snapline.exe";
 const NSIS_DIR: &str = "target/release/bundle/nsis";
 const PORTABLE_DIR: &str = "target/portable";
 const MARKER: &str = "portable";
-const RESOURCES: [(&str, &str); 4] = [
+const RESOURCES: [(&str, &str); 6] = [
     ("third_party/ffmpeg/ffmpeg.exe", "ffmpeg.exe"),
     ("LICENSE", "LICENSE"),
     ("third_party/ffmpeg/LICENSE", "FFmpeg-LICENSE.txt"),
     ("third_party/ffmpeg/SOURCE.txt", "SOURCE.txt"),
+    ("assets/sounds/shutter.wav", "assets/sounds/shutter.wav"),
+    ("assets/sounds/done.wav", "assets/sounds/done.wav"),
 ];
 
 #[derive(Debug, Deserialize)]
@@ -201,6 +203,10 @@ fn copy(source: &Path, destination: &Path) -> Result<()> {
     if !source.is_file() {
         bail!("package: {} is missing", source.display());
     }
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create {}", parent.display()))?;
+    }
     fs::copy(source, destination).with_context(|| {
         format!(
             "cannot copy {} to {}",
@@ -297,7 +303,14 @@ mod tests {
         let targets: Vec<&str> = RESOURCES.iter().map(|(_, target)| *target).collect();
         assert_eq!(
             targets,
-            vec!["ffmpeg.exe", "LICENSE", "FFmpeg-LICENSE.txt", "SOURCE.txt"]
+            vec![
+                "ffmpeg.exe",
+                "LICENSE",
+                "FFmpeg-LICENSE.txt",
+                "SOURCE.txt",
+                "assets/sounds/shutter.wav",
+                "assets/sounds/done.wav"
+            ]
         );
     }
 

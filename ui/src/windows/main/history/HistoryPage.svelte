@@ -7,6 +7,7 @@
   import type { Cursor } from '../../../lib/ipc/bindings/Cursor';
   import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
   import type { HistoryStats } from '../../../lib/ipc/bindings/HistoryStats';
+  import type { UploadState } from '../../../lib/ipc/bindings/UploadState';
   import {
     historyConfirmDelete,
     historyCopyImage,
@@ -18,6 +19,7 @@
     historyStats,
   } from '../../../lib/ipc/history';
   import { get as settingsGet } from '../../../lib/ipc/settings';
+  import { cancelUpload, listUploadStates, pickAndUpload } from '../../../lib/ipc/upload';
   import { editorOpenHistory, pinHistory } from '../../../lib/ipc/tool';
   import CaptureGrid from './CaptureGrid.svelte';
   import CaptureList from './CaptureList.svelte';
@@ -38,12 +40,25 @@
   let viewportHeight = $state(600);
   let viewportWidth = $state(800);
   let defaultDestination = $state('Save locally only');
+  let uploadsById = $state<Record<number, UploadState>>({});
   let stats = $state<HistoryStats>({ count: 0, bytes: 0, uploadedThisWeek: 0 });
   let token = 0;
 
   const filter = $derived(filterValue(filterLabel));
+  const searching = $derived($searchQuery.trim() !== '');
   const groups = $derived(groupCaptures(items));
   const selected = $derived(items.find((capture) => capture.id === selectedId) ?? null);
+  const activeUploads = $derived.by(() => {
+    const byCapture: Record<number, UploadState> = {};
+    for (const upload of Object.values(uploadsById)) {
+      if (upload.captureId === null) continue;
+      const previous = byCapture[upload.captureId];
+      if (!previous || (previous.status === 'queued' && upload.status !== 'queued')) {
+        byCapture[upload.captureId] = upload;
+      }
+    }
+    return byCapture;
+  });
   const columns = $derived(Math.max(1, Math.floor((viewportWidth + captureCardGap) / (captureCardWidth + captureCardGap))));
 
   function describe(error: unknown): string {
@@ -135,17 +150,39 @@
   onMount(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
+    let observed: Set<number> | null = new Set();
     void onEvent((event) => {
+      if (event.area === 'upload' && event.event.kind === 'stateChanged') {
+        const state = event.event.data;
+        if (state.captureId !== null) {
+          observed?.add(state.id);
+          if (['done', 'failed', 'cancelled'].includes(state.status)) {
+            delete uploadsById[state.id];
+          } else {
+            uploadsById[state.id] = state;
+          }
+        }
+      }
       if ((event.area === 'history' && event.event.kind !== 'ping') ||
           (event.area === 'upload' && event.event.kind === 'stateChanged' &&
-           ['done', 'failed', 'cancelled'].includes(event.event.data.status))) {
+           ['queued', 'done', 'failed', 'cancelled'].includes(event.event.data.status))) {
         void fetchPage(true);
         void refreshStats();
       }
     }).then((stop) => {
       if (disposed) stop();
       else unlisten = stop;
-    }).catch(() => undefined);
+    }).catch(() => undefined).then(async () => {
+      if (disposed) return;
+      const states = await listUploadStates();
+      if (disposed) return;
+      for (const state of states) {
+        if (state.captureId !== null && !observed?.has(state.id) &&
+            !['done', 'failed', 'cancelled'].includes(state.status)) {
+          uploadsById[state.id] = state;
+        }
+      }
+    }).catch(() => undefined).finally(() => { observed = null; });
     void settingsGet()
       .then((settings) => {
         const destination = settings.uploads.images;
@@ -172,6 +209,12 @@
 
   function select(id: number): void {
     selectedId = id;
+  }
+
+  function closeDetails(): void {
+    const row = scroller?.querySelector<HTMLElement>(`[data-capture-id="${selectedId}"]`);
+    selectedId = null;
+    row?.focus({ preventScroll: true });
   }
 
   function deselectBackground(event: MouseEvent): void {
@@ -228,6 +271,28 @@
 
   function pin(id: number): void {
     void pinHistory(id).catch((error: unknown) => { errorMessage = describe(error); });
+  }
+
+  async function uploadFiles(): Promise<void> {
+    try {
+      const ids = await pickAndUpload();
+      if (ids.length > 0) {
+        await fetchPage(true);
+        await refreshStats();
+      }
+    } catch (error) {
+      errorMessage = describe(error);
+    }
+  }
+
+  function cancelRowUpload(id: number): void {
+    const upload = activeUploads[id];
+    if (!upload) {
+      return;
+    }
+    void cancelUpload(upload.id).catch((error: unknown) => {
+      errorMessage = describe(error);
+    });
   }
 
   async function askDelete(id: number): Promise<void> {
@@ -303,6 +368,7 @@
 
 <svelte:window {onkeydown} onclick={deselectBackground} />
 
+<div class="history-layout">
 <main class="page">
   <div class="pagehead">
     <div class="titles">
@@ -313,6 +379,9 @@
       </div>
     </div>
     <div class="controls">
+      <button type="button" class="upload-file hv" onclick={() => void uploadFiles()}>
+        Upload file…
+      </button>
       <Segmented
         options={historyFilters}
         value={filterLabel}
@@ -321,6 +390,7 @@
           filterLabel = value;
         }}
       />
+      <div class="view-options">
       <button
         type="button"
         class="hv viewbtn"
@@ -345,6 +415,7 @@
       >
         <Icon name="list" size={16} strokeWidth={1.8} />
       </button>
+      </div>
     </div>
   </div>
 
@@ -359,13 +430,27 @@
     bind:clientHeight={viewportHeight}
     {onscroll}
   >
-    {#if loaded && items.length === 0}
+    {#if loaded && !loading && !errorMessage && items.length === 0}
       <div class="empty">
-        <EmptyState title="No captures yet" text="Press PrtSc to capture a region." />
+        {#if searching || filter !== 'all'}
+          <EmptyState title="No matching items" text="Clear the search or change the filter to see more of your history." />
+          <div class="empty-actions">
+            {#if searching}
+              <button type="button" class="upload-file hv" onclick={() => searchQuery.set('')}>Clear search</button>
+            {/if}
+            {#if filter !== 'all'}
+              <button type="button" class="upload-file hv" onclick={() => (filterLabel = 'All')}>Reset filters</button>
+            {/if}
+          </div>
+        {:else}
+          <EmptyState title="No captures yet" text="Press PrtSc to capture a region." />
+          <button type="button" class="upload-file primary hv" onclick={() => void uploadFiles()}>Upload file…</button>
+        {/if}
       </div>
     {:else if view === 'grid'}
       <CaptureGrid
         {groups}
+        {activeUploads}
         {selectedId}
         {columns}
         {viewportHeight}
@@ -377,12 +462,15 @@
     {:else}
       <CaptureList
         {items}
+        {activeUploads}
         {selectedId}
         {viewportHeight}
+        {viewportWidth}
         bind:scrollTop
         {scroller}
         onselect={select}
         onopen={openFile}
+        oncancel={cancelRowUpload}
       />
     {/if}
     {#if loading}
@@ -394,19 +482,39 @@
 {#if selected}
 <DetailPane
   capture={selected}
+  activeUpload={selected ? activeUploads[selected.id] ?? null : null}
   {defaultDestination}
   oncopy={copyImage}
   onshow={showInFolder}
   onopen={openFile}
   onannotate={annotate}
   onpin={pin}
+  onclose={closeDetails}
   ondelete={(id) => {
     void askDelete(id);
   }}
 />
 {/if}
+</div>
 
 <style>
+  .history-layout {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  @media (max-width: 1050px) {
+    .history-layout {
+      flex-direction: column;
+    }
+
+    .history-layout .page {
+      flex: 1 1 0;
+    }
+  }
+
   .page {
     flex: 999 1 460px;
     min-width: 0;
@@ -447,8 +555,32 @@
 
   .controls {
     display: flex;
+    flex-wrap: wrap;
+    max-width: 100%;
     align-items: center;
     gap: 8px;
+  }
+
+  .view-options,
+  .empty-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .upload-file {
+    min-height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--stroke);
+    border-radius: 4px;
+    background: var(--card);
+    color: var(--text);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .upload-file.primary {
+    background: var(--accent);
+    color: var(--onAccent);
   }
 
   .viewbtn {
@@ -479,6 +611,8 @@
   .empty {
     height: 100%;
     display: flex;
+    flex-direction: column;
+    gap: 14px;
     align-items: center;
     justify-content: center;
   }

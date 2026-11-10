@@ -13,6 +13,8 @@ pub enum CaptureKind {
     Image,
     Video,
     Gif,
+    Text,
+    File,
 }
 
 impl CaptureKind {
@@ -21,6 +23,8 @@ impl CaptureKind {
             Self::Image => "image",
             Self::Video => "video",
             Self::Gif => "gif",
+            Self::Text => "text",
+            Self::File => "file",
         }
     }
 
@@ -29,8 +33,45 @@ impl CaptureKind {
             "image" => Ok(Self::Image),
             "video" => Ok(Self::Video),
             "gif" => Ok(Self::Gif),
+            "text" => Ok(Self::Text),
+            "file" => Ok(Self::File),
             _ => Err(HistoryError::UnknownValue {
                 field: "capture.kind",
+                value: value.to_owned(),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    Capture,
+    Clipboard,
+    File,
+    Url,
+    Watch,
+}
+
+impl Origin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Capture => "capture",
+            Self::Clipboard => "clipboard",
+            Self::File => "file",
+            Self::Url => "url",
+            Self::Watch => "watch",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, HistoryError> {
+        match value {
+            "capture" => Ok(Self::Capture),
+            "clipboard" => Ok(Self::Clipboard),
+            "file" => Ok(Self::File),
+            "url" => Ok(Self::Url),
+            "watch" => Ok(Self::Watch),
+            _ => Err(HistoryError::UnknownValue {
+                field: "capture.origin",
                 value: value.to_owned(),
             }),
         }
@@ -85,12 +126,24 @@ pub struct NewCapture {
     pub ocr_text: Option<String>,
 }
 
+pub struct BorrowedFile {
+    pub kind: CaptureKind,
+    pub origin: Origin,
+    pub path: String,
+    pub bytes: i64,
+    pub source_modified_ms: i64,
+    pub created_at: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Capture {
     pub id: CaptureId,
     pub kind: CaptureKind,
+    pub origin: Origin,
+    pub owned: bool,
     pub path: String,
     pub bytes: i64,
+    pub source_modified_ms: Option<i64>,
     pub width: Option<i64>,
     pub height: Option<i64>,
     pub duration_ms: Option<i64>,
@@ -118,6 +171,8 @@ pub struct UploadRecord {
     pub error: Option<String>,
     pub attempts: i64,
     pub updated_at: i64,
+    pub sent: i64,
+    pub total: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,6 +180,8 @@ pub struct UploadUpdate {
     pub capture_id: CaptureId,
     pub dest_id: String,
     pub state: UploadState,
+    pub sent: i64,
+    pub total: i64,
     pub url: Option<String>,
     pub deletion_url: Option<String>,
     pub error: Option<String>,
@@ -144,6 +201,7 @@ pub enum HistoryFilter {
     Images,
     Videos,
     Gifs,
+    Files,
     Uploaded,
     LocalOnly,
 }
@@ -155,6 +213,7 @@ impl HistoryFilter {
             Self::Images => 1,
             Self::Videos => 2,
             Self::Gifs => 3,
+            Self::Files => 6,
             Self::Uploaded => 4,
             Self::LocalOnly => 5,
         }
@@ -178,6 +237,7 @@ pub struct HistoryStats {
 pub struct DeletedCapture {
     pub id: CaptureId,
     pub kind: CaptureKind,
+    pub owned: bool,
     pub path: String,
     pub created_at: i64,
 }
@@ -186,6 +246,8 @@ pub struct DeletedCapture {
 pub enum HistoryError {
     #[error("could not create the history folder: {0}")]
     Folder(#[source] std::io::Error),
+    #[error("the history backup could not be created: {0}")]
+    Backup(#[source] std::io::Error),
     #[error("history database error: {0}")]
     Database(#[from] rusqlite::Error),
     #[error("history schema version {found} is newer than this build supports ({supported})")]
@@ -198,6 +260,8 @@ pub enum HistoryError {
     MissingMigration(u32),
     #[error("the history database did not enable WAL mode (reported {0})")]
     JournalMode(String),
+    #[error("the history database contains a foreign key violation")]
+    ForeignKeys,
     #[error("local time is not available on this system")]
     LocalTimeUnavailable,
     #[error("the history database contains an unknown {field}: {value}")]
