@@ -1,12 +1,10 @@
 <script lang="ts">
   import { currentRoute } from '../../../router';
   import Icon from '../../../components/Icon.svelte';
-  import NavItem from '../../../components/NavItem.svelte';
   import GeneralPage from './GeneralPage.svelte';
   import CapturePage from './CapturePage.svelte';
   import HotkeysPage from './HotkeysPage.svelte';
   import UploadsPage from './UploadsPage.svelte';
-  import { lastMainRoute } from './lastMainRoute';
   import { searchSettings } from './registry';
 
   const page = $derived($currentRoute.page);
@@ -16,7 +14,7 @@
 </script>
 
 <div class="shell">
-  <nav aria-label="Settings">
+  <div class="topbar">
     <label class="find">
       <input
         type="search"
@@ -37,39 +35,7 @@
         {/each}
       </div>
     {/if}
-    <NavItem
-      label="General"
-      icon="gear"
-      height={40}
-      active={page === 'settings-general'}
-      href="#/settings/general"
-    />
-    <NavItem
-      label="Capture"
-      icon="region"
-      height={40}
-      active={page === 'settings-capture'}
-      href="#/settings/capture"
-    />
-    <NavItem
-      label="Hotkeys"
-      icon="grid"
-      height={40}
-      active={page === 'settings-hotkeys'}
-      href="#/settings/hotkeys"
-    />
-    <NavItem
-      label="Upload destinations"
-      icon="cloud"
-      height={40}
-      active={page === 'settings-uploads'}
-      href="#/settings/uploads"
-    />
-    <a class="hv back" href={`#${$lastMainRoute}`}>
-      <Icon name="back" size={16} strokeWidth={1.8} />
-      Back to Snapline
-    </a>
-  </nav>
+  </div>
 
   <main class="content">
     <div class="inner">
@@ -90,33 +56,14 @@
   .shell {
     display: flex;
     flex: 1;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    min-height: 0;
-    height: 100%;
-  }
-
-  nav {
-    display: flex;
-    align-self: stretch;
-    flex: 1 1 240px;
     flex-direction: column;
-    gap: 4px;
-    max-width: 100%;
-    padding: 8px 12px 16px;
-    box-sizing: border-box;
+    min-width: 0;
+    min-height: 0;
   }
 
-  .back {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    align-self: flex-start;
-    margin-top: auto;
-    height: 36px;
-    padding: 0 10px;
-    border-radius: 4px;
-    color: var(--text2);
+  .topbar {
+    flex: none;
+    padding: 8px 40px 0;
   }
 
   .find {
@@ -124,7 +71,8 @@
     align-items: center;
     gap: 8px;
     height: 34px;
-    margin: 8px 0 12px;
+    max-width: 420px;
+    margin: 0 0 8px;
     padding: 0 10px;
     background: var(--card);
     border: 1px solid var(--stroke);
@@ -174,16 +122,10 @@
   }
 
   .content {
-    flex: 999 1 560px;
+    flex: 1;
     min-width: 0;
-    height: 100%;
     overflow-y: auto;
-    background: var(--layer);
-    border-top: 1px solid var(--stroke);
-    border-left: 1px solid var(--stroke);
-    border-top-left-radius: 8px;
-    padding: 28px 40px 48px;
-    box-sizing: border-box;
+    padding: 20px 40px 48px;
   }
 
   .inner {

@@ -1,13 +1,14 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { onEvent } from '../../lib/events';
   import Icon from '../../components/Icon.svelte';
   import NavItem from '../../components/NavItem.svelte';
+  import Toast from '../../components/Toast.svelte';
   import type { AppReq } from '../../lib/ipc/bindings/AppReq';
   import type { AppResp } from '../../lib/ipc/bindings/AppResp';
   import { call } from '../../lib/ipc/core';
-  import { listDestinations, type DestinationView } from '../../lib/ipc/upload';
-  import { loadSettings, settings, settingsError } from './settings/settings';
+  import { currentRoute, navigate } from '../../router';
+  import { searchQuery } from './history/search';
 
   interface Props {
     page: string;
@@ -15,13 +16,12 @@
 
   let { page }: Props = $props();
 
+  let find = $state($searchQuery);
+  let findTimer: ReturnType<typeof setTimeout> | undefined;
   let count = $state('');
   let captureError = $state('');
-  let destinations = $state<DestinationView[]>([]);
-  let destinationState = $state<'loading' | 'ready' | 'error'>('loading');
 
-  const section = $derived(page.startsWith('workflow') ? 'workflows' : ['qr', 'combine', 'convert'].includes(page) ? 'tools' : page);
-  const destination = $derived(destinationState === 'loading' ? 'Checking destination…' : destinationState === 'error' ? 'Destination unavailable' : destinations.find((item) => item.id === $settings.uploads.images)?.name ?? $settings.uploads.images);
+  const section = $derived(page.startsWith('workflow') ? 'workflows' : page);
 
   async function loadCount(): Promise<void> {
     const req: AppReq = { kind: 'stats' };
@@ -37,8 +37,6 @@
     };
     const refresh = (): void => {
       refreshCount();
-      void loadSettings().then(() => { destinationState = $settingsError === null ? 'ready' : 'error'; });
-      void listDestinations().then((items) => { destinations = items; }).catch(() => undefined);
     };
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -57,6 +55,28 @@
     };
   });
 
+  $effect(() => {
+    if ($searchQuery !== find && findTimer === undefined) {
+      find = $searchQuery;
+    }
+  });
+
+  function onfind(event: Event): void {
+    find = (event.currentTarget as HTMLInputElement).value;
+    clearTimeout(findTimer);
+    findTimer = setTimeout(() => {
+      findTimer = undefined;
+      searchQuery.set(find);
+      if ($currentRoute.page !== 'history') {
+        navigate('/history');
+      }
+    }, 200);
+  }
+
+  onDestroy(() => {
+    clearTimeout(findTimer);
+  });
+
   function newCapture(): void {
     const req: AppReq = { kind: 'panelAction', data: { action: 'capture_region' } };
     captureError = '';
@@ -67,41 +87,68 @@
 </script>
 
 <nav aria-label="Main">
+  <label class="find">
+    <input
+      type="search"
+      aria-label="Search captures"
+      placeholder="Search captures"
+      value={find}
+      oninput={onfind}
+    />
+    <Icon name="search" size={14} strokeWidth={2} />
+  </label>
   <button type="button" class="newcapture" onclick={newCapture}>
     <Icon name="region" size={16} strokeWidth={1.8} />
     <span class="newlabel">New capture</span>
     <span class="chord">PrtSc</span>
   </button>
-  {#if captureError}
-    <p role="alert">{captureError}</p>
-  {/if}
 
   <NavItem label="History" icon="history" {count} active={section === 'history'} href="#/history" />
   <NavItem label="Workflows" icon="workflows" active={section === 'workflows'} href="#/workflows" />
-  <NavItem label="Tools" icon="tools" active={section === 'tools'} href="#/tools" />
 
   <div class="footer">
-    <a
-      class="hv destination"
-      href="#/settings/uploads"
-      aria-label={`Default destination: ${destination}. Change in settings`}
-    >
-      <Icon name="cloud" size={16} />
-      {destination}
-    </a>
-
-    <NavItem label="Settings" icon="gear" href="#/settings/general" />
+    <h2 class="group">Settings</h2>
+    <NavItem label="General" icon="gear" height={40} active={page === 'settings-general'} href="#/settings/general" />
+    <NavItem label="Capture" icon="region" height={40} active={page === 'settings-capture'} href="#/settings/capture" />
+    <NavItem label="Hotkeys" icon="grid" height={40} active={page === 'settings-hotkeys'} href="#/settings/hotkeys" />
+    <NavItem label="Upload destinations" icon="cloud" height={40} active={page === 'settings-uploads'} href="#/settings/uploads" />
   </div>
 </nav>
 
+<Toast message={captureError} onclose={() => (captureError = '')} />
+
 <style>
   nav {
-    flex: 1 1 220px;
-    max-width: 100%;
-    padding: 4px 8px 16px;
+    flex: 0 0 var(--sidebar-width);
+    padding: 4px 12px 16px;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 2px;
+  }
+
+  .find {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 34px;
+    margin: 8px 0 12px;
+    padding: 0 10px;
+    background: var(--card);
+    border: 1px solid var(--stroke);
+    border-bottom-color: var(--strokeHi);
+    border-radius: 4px;
+    color: var(--text3);
+  }
+
+  .find input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
   }
 
   .newcapture {
@@ -131,25 +178,18 @@
     opacity: 0.85;
   }
 
+  .group {
+    margin: 8px 0 4px;
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text3);
+  }
+
   .footer {
     margin-top: auto;
     display: flex;
     flex-direction: column;
     gap: 2px;
-  }
-
-  .destination {
-    margin: 0 4px 8px;
-    min-height: 44px;
-    padding: 0 12px;
-    border-radius: 6px;
-    background: var(--subtle);
-    border: 1px solid var(--stroke);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 500;
   }
 </style>

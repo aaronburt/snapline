@@ -14,6 +14,7 @@ pub struct SaveRequest<'a> {
     pub recording_details: Option<RecordingDetails>,
     pub converted: Option<&'a Path>,
     pub file_name: Option<&'a str>,
+    pub source_app: Option<&'a str>,
 }
 
 pub struct UploadRequest<'a> {
@@ -23,6 +24,7 @@ pub struct UploadRequest<'a> {
     pub recording: Option<&'a Path>,
     pub converted: Option<&'a Path>,
     pub file_name: Option<&'a str>,
+    pub source_app: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +56,7 @@ pub struct RunContext {
     pub converted: Option<PathBuf>,
     pub saved_file: Option<PathBuf>,
     pub file_name: Option<String>,
+    pub source_app: Option<String>,
     pub link: Option<String>,
     pub page_link: Option<String>,
     pub text: Option<String>,
@@ -358,6 +361,7 @@ fn execute_step(
                 .capture_for_workflow(*kind, annotate)
                 .map_err(|error| port_error(index, step, error))?;
             context.image = Some(captured.image);
+            context.source_app = captured.source_app;
             context.capture_annotated = captured.annotated;
             context.capture_action = captured.action;
             Ok(StepStatus::Done)
@@ -407,6 +411,7 @@ fn execute_step(
                 recording_details: context.recording_details,
                 converted: context.converted.as_deref(),
                 file_name: context.file_name.as_deref(),
+                source_app: context.source_app.as_deref(),
             };
             if request.image.is_none() && request.recording.is_none() && request.converted.is_none()
             {
@@ -427,6 +432,7 @@ fn execute_step(
                 recording: context.recording.as_deref(),
                 converted: context.converted.as_deref(),
                 file_name: context.file_name.as_deref(),
+                source_app: context.source_app.as_deref(),
             };
             if request.image.is_none()
                 && request.saved_file.is_none()
@@ -587,8 +593,11 @@ mod tests {
         annotate_calls: Cell<u32>,
         capture_has_annotation: Cell<bool>,
         capture_action: Cell<Option<crate::ports::OverlayAction>>,
+        capture_source_app: RefCell<Option<String>>,
         capture_annotation_requested: Cell<bool>,
         save_calls: Cell<u32>,
+        save_source_app: RefCell<Option<String>>,
+        upload_source_app: RefCell<Option<String>>,
         save_had_image: Cell<bool>,
         upload_calls: RefCell<Vec<(Option<DestId>, bool)>>,
         text_calls: Cell<u32>,
@@ -617,8 +626,11 @@ mod tests {
                 annotate_calls: Cell::new(0),
                 capture_has_annotation: Cell::new(false),
                 capture_action: Cell::new(None),
+                capture_source_app: RefCell::new(None),
                 capture_annotation_requested: Cell::new(false),
                 save_calls: Cell::new(0),
+                save_source_app: RefCell::new(None),
+                upload_source_app: RefCell::new(None),
                 save_had_image: Cell::new(false),
                 upload_calls: RefCell::new(Vec::new()),
                 text_calls: Cell::new(0),
@@ -667,6 +679,7 @@ mod tests {
                 image: self.capture(kind)?,
                 annotated: self.capture_has_annotation.get(),
                 action: self.capture_action.get(),
+                source_app: self.capture_source_app.borrow().clone(),
             })
         }
 
@@ -713,6 +726,7 @@ mod tests {
         fn save(&self, request: SaveRequest<'_>) -> Result<PathBuf, WorkflowError> {
             self.save_calls.set(self.save_calls.get() + 1);
             self.save_had_image.set(request.image.is_some());
+            *self.save_source_app.borrow_mut() = request.source_app.map(str::to_owned);
             match self.save_mode.get() {
                 Mode::Ready => Ok(PathBuf::from("C:/Pictures/shot.png")),
                 Mode::NotAvailable => Err(WorkflowError::NotAvailableYet),
@@ -726,6 +740,7 @@ mod tests {
             self.upload_calls
                 .borrow_mut()
                 .push((request.dest.cloned(), request.image.is_some()));
+            *self.upload_source_app.borrow_mut() = request.source_app.map(str::to_owned);
             match self.upload_mode.get() {
                 Mode::Ready => {
                     let id = UploadId::new(self.next_upload.get());
@@ -909,6 +924,31 @@ mod tests {
             .map(|outcome| outcome.index)
             .collect();
         assert_eq!(indexes, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn the_captured_source_app_reaches_the_save_and_upload_steps() {
+        let fake = Fake::new();
+        *fake.capture_source_app.borrow_mut() = Some("firefox.exe".to_string());
+        let workflow = flow(
+            "Capture",
+            vec![
+                capture(CaptureKind::Region),
+                Step::Save,
+                Step::Upload { dest: None },
+            ],
+        );
+        let mut context = RunContext::default();
+        run(&workflow, &fake.ports(), &mut context).expect("run");
+        assert_eq!(context.source_app.as_deref(), Some("firefox.exe"));
+        assert_eq!(
+            fake.save_source_app.borrow().as_deref(),
+            Some("firefox.exe")
+        );
+        assert_eq!(
+            fake.upload_source_app.borrow().as_deref(),
+            Some("firefox.exe")
+        );
     }
 
     #[test]

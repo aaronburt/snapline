@@ -339,6 +339,14 @@ impl CaptureContext for AppCaptureContext {
         CaptureBackend::foreground_window()
     }
 
+    fn process_name(&self, window: snapline_core::ids::WindowId) -> Option<String> {
+        CaptureBackend::process_name(window)
+    }
+
+    fn window_at(&self, point: Point) -> Option<snapline_core::ids::WindowId> {
+        CaptureBackend::window_at(point)
+    }
+
     fn window_under_cursor(&self) -> Option<snapline_core::ids::WindowId> {
         CaptureBackend::window_under_cursor()
     }
@@ -903,6 +911,13 @@ fn main() -> anyhow::Result<()> {
 
     crash::install();
     logging::init();
+    let apartment = snapline_win::apartment::init_ui_thread();
+    if apartment != snapline_win::apartment::UiApartment::Ready {
+        tracing::warn!(
+            ?apartment,
+            "the main thread apartment could not be prepared"
+        );
+    }
 
     let services = Services::with_paths(Paths::discover()?)?;
     let settings = services.settings_snapshot()?;

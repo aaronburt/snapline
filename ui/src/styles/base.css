@@ -1,3 +1,7 @@
+:root {
+  --sidebar-width: 248px;
+}
+
 *,
 *::before,
 *::after {

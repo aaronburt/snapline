@@ -13,15 +13,10 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('SettingsShell', () => {
-  it('shows the settings navigation', async () => {
+  it('shows the settings search', async () => {
     const { container } = render(SettingsShell);
     await expectAccessible(container);
-    expect(screen.getByRole('link', { name: 'Back to Snapline' })).not.toBeNull();
     expect(screen.getByPlaceholderText('Find a setting')).not.toBeNull();
-    expect(screen.getByRole('link', { name: 'General' })).not.toBeNull();
-    expect(screen.getByRole('link', { name: 'Capture' })).not.toBeNull();
-    expect(screen.getByRole('link', { name: 'Hotkeys' })).not.toBeNull();
-    expect(screen.getByRole('link', { name: 'Upload destinations' })).not.toBeNull();
   });
 
   it('filters the current page and lists matches on other pages', async () => {

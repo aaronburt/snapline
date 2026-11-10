@@ -7,10 +7,6 @@
   import HistoryPage from './history/HistoryPage.svelte';
   import WorkflowsPage from './workflows/WorkflowsPage.svelte';
   import WorkflowEditor from './workflows/WorkflowEditor.svelte';
-  import ToolsPage from './tools/ToolsPage.svelte';
-  import QrTool from './tools/QrTool.svelte';
-  import CombinerTool from './tools/CombinerTool.svelte';
-  import ConverterTool from './tools/ConverterTool.svelte';
   import SettingsShell from './settings/SettingsShell.svelte';
 
   interface Props {
@@ -46,28 +42,20 @@
 
 <div class="root" class:mica={hasMica}>
   <div class="body">
-    {#if isSettings}
-      <SettingsShell />
-    {:else}
-      <Nav {page} />
-      <div class="content">
+    <Nav {page} />
+    <div class="content">
+      {#if isSettings}
+        <SettingsShell />
+      {:else}
         {#if page === 'history'}
           <HistoryPage />
         {:else if page === 'workflows'}
           <WorkflowsPage />
         {:else if page === 'workflow-editor'}
           <WorkflowEditor />
-        {:else if page === 'tools'}
-          <ToolsPage />
-        {:else if page === 'qr'}
-          <QrTool />
-        {:else if page === 'combine'}
-          <CombinerTool />
-        {:else if page === 'convert'}
-          <ConverterTool />
         {/if}
-      </div>
-    {/if}
+      {/if}
+    </div>
   </div>
 </div>
 

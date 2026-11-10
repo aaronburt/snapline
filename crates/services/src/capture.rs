@@ -81,6 +81,14 @@ pub trait CaptureContext: Send + Sync {
         None
     }
 
+    fn window_at(&self, _point: Point) -> Option<WindowId> {
+        None
+    }
+
+    fn process_name(&self, _window: WindowId) -> Option<String> {
+        None
+    }
+
     fn cursor_position(&self) -> Option<Point> {
         None
     }
@@ -112,6 +120,12 @@ struct Inner {
     last_region: Mutex<Option<LastRegion>>,
 }
 
+pub(crate) struct Shot {
+    pub image: Image,
+    pub source_app: Option<String>,
+    pub action: Option<snapline_core::ports::OverlayAction>,
+}
+
 #[derive(Clone)]
 pub struct CaptureService {
     inner: Arc<Inner>,
@@ -138,20 +152,13 @@ impl CaptureService {
     }
 
     pub fn capture_region(&self) -> Result<CaptureOutcome, ServiceError> {
-        match self.region_image(true)? {
-            Some(image) => self.copy(image),
+        match self.region_result(true)? {
+            Some(shot) => self.copy(shot.image),
             None => Ok(CaptureOutcome::Cancelled),
         }
     }
 
-    pub(crate) fn region_image(&self, annotate: bool) -> Result<Option<Image>, ServiceError> {
-        Ok(self.region_result(annotate)?.map(|(image, _)| image))
-    }
-
-    pub(crate) fn region_result(
-        &self,
-        annotate: bool,
-    ) -> Result<Option<(Image, Option<snapline_core::ports::OverlayAction>)>, ServiceError> {
+    pub(crate) fn region_result(&self, annotate: bool) -> Result<Option<Shot>, ServiceError> {
         let settings = self.inner.context.capture_settings()?;
         self.wait(settings.capture.capture_delay)?;
         let desktop = self.freeze()?;
@@ -169,6 +176,7 @@ impl CaptureService {
             Err(OverlayError::Cancelled) => return Ok(None),
             Err(error) => return Err(ServiceError::Invalid(error.to_string())),
         };
+        let source_app = self.app_at(result.selection.center());
         let frozen = monitor_for(&desktop, result.monitor, result.selection.center())
             .or_else(|| desktop.monitors.first())
             .ok_or_else(no_monitor)?;
@@ -184,17 +192,21 @@ impl CaptureService {
         self.inner
             .context
             .capture_complete(&image, settings.capture.shutter_sound);
-        Ok(Some((image, result.action)))
+        Ok(Some(Shot {
+            image,
+            source_app,
+            action: result.action,
+        }))
     }
 
     pub fn capture_window(&self) -> Result<CaptureOutcome, ServiceError> {
         match self.window_image()? {
-            Some(image) => self.copy(image),
+            Some(shot) => self.copy(shot.image),
             None => Ok(CaptureOutcome::Cancelled),
         }
     }
 
-    pub(crate) fn window_image(&self) -> Result<Option<Image>, ServiceError> {
+    pub(crate) fn window_image(&self) -> Result<Option<Shot>, ServiceError> {
         let settings = self.inner.context.capture_settings()?;
         self.wait(settings.capture.capture_delay)?;
         let Some(window) = self.inner.context.foreground_window() else {
@@ -213,54 +225,70 @@ impl CaptureService {
         let Some(window) = self.inner.context.window_under_cursor() else {
             return Err(window_missing());
         };
-        let image = self.window_image_id(
+        let shot = self.window_image_id(
             window,
             settings.capture.keep_window_shadow,
             settings.capture.shutter_sound,
         )?;
-        match image {
-            Some(image) => self.copy(image),
+        match shot {
+            Some(shot) => self.copy(shot.image),
             None => Ok(CaptureOutcome::Cancelled),
         }
     }
 
     pub fn capture_screen(&self) -> Result<CaptureOutcome, ServiceError> {
         match self.screen_image()? {
-            Some(image) => self.copy(image),
+            Some(shot) => self.copy(shot.image),
             None => Ok(CaptureOutcome::Cancelled),
         }
     }
 
-    pub(crate) fn screen_image(&self) -> Result<Option<Image>, ServiceError> {
+    pub(crate) fn screen_image(&self) -> Result<Option<Shot>, ServiceError> {
         let settings = self.inner.context.capture_settings()?;
         self.wait(settings.capture.capture_delay)?;
         let mut desktop = self.freeze()?;
-        let image = match settings.capture.fullscreen_capture_uses {
-            FullscreenCapture::AllMonitors => compose_all(&desktop)?,
+        let (image, source_app) = match settings.capture.fullscreen_capture_uses {
+            FullscreenCapture::AllMonitors => (compose_all(&desktop)?, None),
             FullscreenCapture::PrimaryMonitor => {
                 let index = primary_index(&desktop);
-                take_monitor(&mut desktop, index)?
+                self.take_monitor_shot(&mut desktop, index)?
             }
             FullscreenCapture::MonitorUnderCursor => {
                 let cursor = self.inner.context.cursor_position();
                 let index = cursor_index(&desktop, cursor);
-                take_monitor(&mut desktop, index)?
+                self.take_monitor_shot(&mut desktop, index)?
             }
         };
         self.inner
             .context
             .capture_complete(&image, settings.capture.shutter_sound);
-        Ok(Some(image))
+        Ok(Some(Shot {
+            image,
+            source_app,
+            action: None,
+        }))
+    }
+
+    fn take_monitor_shot(
+        &self,
+        desktop: &mut FrozenDesktop,
+        index: Option<usize>,
+    ) -> Result<(Image, Option<String>), ServiceError> {
+        let centre = index
+            .and_then(|index| desktop.monitors.get(index))
+            .map(|item| item.monitor.bounds.center());
+        let image = take_monitor(desktop, index)?;
+        Ok((image, centre.and_then(|point| self.app_at(point))))
     }
 
     pub fn capture_last_region(&self) -> Result<CaptureOutcome, ServiceError> {
         match self.last_region_image()? {
-            Some(image) => self.copy(image),
+            Some(shot) => self.copy(shot.image),
             None => Ok(CaptureOutcome::Cancelled),
         }
     }
 
-    pub(crate) fn last_region_image(&self) -> Result<Option<Image>, ServiceError> {
+    pub(crate) fn last_region_image(&self) -> Result<Option<Shot>, ServiceError> {
         let settings = self.inner.context.capture_settings()?;
         let region = self.last_region()?;
         self.wait(settings.capture.capture_delay)?;
@@ -268,10 +296,15 @@ impl CaptureService {
         let frozen = monitor_for(&desktop, Some(region.monitor), region.rect.center())
             .ok_or_else(display_changed)?;
         let (image, _) = crop_to_monitor(frozen, region.rect)?;
+        let source_app = self.app_at(region.rect.center());
         self.inner
             .context
             .capture_complete(&image, settings.capture.shutter_sound);
-        Ok(Some(image))
+        Ok(Some(Shot {
+            image,
+            source_app,
+            action: None,
+        }))
     }
 
     fn window_image_id(
@@ -279,14 +312,19 @@ impl CaptureService {
         window: WindowId,
         keep_shadow: bool,
         sound: bool,
-    ) -> Result<Option<Image>, ServiceError> {
+    ) -> Result<Option<Shot>, ServiceError> {
         let image = self
             .inner
             .capture
             .window(window, keep_shadow)
             .map_err(capture_error)?;
+        let source_app = self.inner.context.process_name(window);
         self.inner.context.capture_complete(&image, sound);
-        Ok(Some(image))
+        Ok(Some(Shot {
+            image,
+            source_app,
+            action: None,
+        }))
     }
 
     fn freeze(&self) -> Result<FrozenDesktop, ServiceError> {
@@ -301,6 +339,11 @@ impl CaptureService {
             .set_image(&image)
             .map_err(|error| ServiceError::Invalid(error.to_string()))?;
         Ok(CaptureOutcome::Copied { width, height })
+    }
+
+    fn app_at(&self, point: Point) -> Option<String> {
+        let window = self.inner.context.window_at(point)?;
+        self.inner.context.process_name(window)
     }
 
     fn wait(&self, delay: CaptureDelay) -> Result<(), ServiceError> {
@@ -562,6 +605,8 @@ mod tests {
         cursor: Mutex<Option<Point>>,
         foreground: Mutex<Option<WindowId>>,
         under_cursor: Mutex<Option<WindowId>>,
+        at_point: Mutex<Vec<(Rect, WindowId)>>,
+        apps: Mutex<HashMap<WindowId, String>>,
         theme: OverlayTheme,
         feedback: Mutex<Vec<(u32, u32, bool)>>,
     }
@@ -587,6 +632,19 @@ mod tests {
 
         fn window_under_cursor(&self) -> Option<WindowId> {
             *self.under_cursor.lock().expect("under cursor")
+        }
+
+        fn window_at(&self, point: Point) -> Option<WindowId> {
+            self.at_point
+                .lock()
+                .expect("at point")
+                .iter()
+                .find(|(rect, _)| rect.contains(point))
+                .map(|(_, window)| *window)
+        }
+
+        fn process_name(&self, window: WindowId) -> Option<String> {
+            self.apps.lock().expect("apps").get(&window).cloned()
         }
 
         fn cursor_position(&self) -> Option<Point> {
@@ -771,6 +829,8 @@ mod tests {
             cursor: Mutex::new(None),
             foreground: Mutex::new(None),
             under_cursor: Mutex::new(None),
+            at_point: Mutex::new(Vec::new()),
+            apps: Mutex::new(HashMap::new()),
             theme: OverlayTheme::Dark,
             feedback: Mutex::new(Vec::new()),
         });
@@ -894,13 +954,13 @@ mod tests {
         let mut result = selected(Rect::new(Px(1), Px(1), Px(5), Px(5)), 7).expect("selection");
         result.action = Some(PortOverlayAction::Save);
         let harness = harness(directory.path(), desktop, Ok(result));
-        let (image, action) = harness
+        let shot = harness
             .service
             .region_result(true)
             .expect("capture")
             .expect("selection");
-        assert_eq!((image.width(), image.height()), (5, 5));
-        assert_eq!(action, Some(PortOverlayAction::Save));
+        assert_eq!((shot.image.width(), shot.image.height()), (5, 5));
+        assert_eq!(shot.action, Some(PortOverlayAction::Save));
         assert!(harness
             .clipboard
             .images
@@ -1036,6 +1096,189 @@ mod tests {
             *harness.capture.calls.lock().expect("calls"),
             vec![(WindowId::new(9), true)]
         );
+    }
+
+    fn place_app(harness: &Harness, id: u64, rect: Rect, name: &str) {
+        harness
+            .context
+            .at_point
+            .lock()
+            .expect("at point")
+            .push((rect, WindowId::new(id)));
+        harness
+            .context
+            .apps
+            .lock()
+            .expect("apps")
+            .insert(WindowId::new(id), name.to_owned());
+    }
+
+    #[test]
+    fn a_region_capture_records_the_app_under_the_selection() {
+        let directory = tempfile::tempdir().expect("temp");
+        let desktop = desktop_of(vec![(monitor(1, 0, 0, 800, 600, true), pattern(800, 600))]);
+        let selection = Rect::new(Px(500), Px(100), Px(100), Px(100));
+        let harness = harness(directory.path(), desktop, selected(selection, 1));
+        place_app(
+            &harness,
+            1,
+            Rect::new(Px(0), Px(0), Px(400), Px(600)),
+            "chrome.exe",
+        );
+        place_app(
+            &harness,
+            2,
+            Rect::new(Px(400), Px(0), Px(400), Px(600)),
+            "firefox.exe",
+        );
+        *harness.context.foreground.lock().expect("foreground") = Some(WindowId::new(1));
+        let shot = harness
+            .service
+            .region_result(true)
+            .expect("capture")
+            .expect("selection");
+        assert_eq!(shot.source_app.as_deref(), Some("firefox.exe"));
+    }
+
+    #[test]
+    fn a_region_over_no_app_does_not_fall_back_to_the_foreground_window() {
+        let directory = tempfile::tempdir().expect("temp");
+        let desktop = desktop_of(vec![(monitor(1, 0, 0, 800, 600, true), pattern(800, 600))]);
+        let selection = Rect::new(Px(500), Px(100), Px(100), Px(100));
+        let harness = harness(directory.path(), desktop, selected(selection, 1));
+        place_app(
+            &harness,
+            1,
+            Rect::new(Px(0), Px(0), Px(400), Px(600)),
+            "snapline.exe",
+        );
+        *harness.context.foreground.lock().expect("foreground") = Some(WindowId::new(1));
+        let shot = harness
+            .service
+            .region_result(true)
+            .expect("capture")
+            .expect("selection");
+        assert_eq!(shot.source_app, None);
+    }
+
+    #[test]
+    fn a_window_capture_records_the_captured_window_app() {
+        let directory = tempfile::tempdir().expect("temp");
+        let harness = harness(
+            directory.path(),
+            desktop_of(vec![]),
+            selected(Rect::ZERO, 1),
+        );
+        *harness.context.foreground.lock().expect("foreground") = Some(WindowId::new(42));
+        harness
+            .capture
+            .windows
+            .lock()
+            .expect("windows")
+            .insert(WindowId::new(42), solid(120, 80, [9, 8, 7, 255]));
+        harness
+            .context
+            .apps
+            .lock()
+            .expect("apps")
+            .insert(WindowId::new(42), "code.exe".to_owned());
+        let shot = harness
+            .service
+            .window_image()
+            .expect("capture")
+            .expect("window");
+        assert_eq!(shot.source_app.as_deref(), Some("code.exe"));
+    }
+
+    #[test]
+    fn a_single_monitor_capture_records_the_app_at_its_centre() {
+        let directory = tempfile::tempdir().expect("temp");
+        let desktop = desktop_of(vec![
+            (
+                monitor(1, 0, 0, 800, 600, true),
+                solid(800, 600, [1, 1, 1, 255]),
+            ),
+            (
+                monitor(2, 800, 0, 640, 480, false),
+                solid(640, 480, [2, 2, 2, 255]),
+            ),
+        ]);
+        let harness = harness(directory.path(), desktop, selected(Rect::ZERO, 1));
+        harness
+            .services
+            .update_settings(&serde_json::json!({
+                "capture": { "fullscreen_capture_uses": "primary_monitor" }
+            }))
+            .expect("settings");
+        place_app(
+            &harness,
+            1,
+            Rect::new(Px(0), Px(0), Px(800), Px(600)),
+            "game.exe",
+        );
+        place_app(
+            &harness,
+            2,
+            Rect::new(Px(800), Px(0), Px(640), Px(480)),
+            "slack.exe",
+        );
+        *harness.context.cursor.lock().expect("cursor") = Some(Point::new(Px(900), Px(100)));
+        let shot = harness
+            .service
+            .screen_image()
+            .expect("capture")
+            .expect("screen");
+        assert_eq!(shot.source_app.as_deref(), Some("game.exe"));
+    }
+
+    #[test]
+    fn an_all_monitors_capture_has_no_source_app() {
+        let directory = tempfile::tempdir().expect("temp");
+        let desktop = desktop_of(vec![(
+            monitor(1, 0, 0, 800, 600, true),
+            solid(800, 600, [1, 1, 1, 255]),
+        )]);
+        let harness = harness(directory.path(), desktop, selected(Rect::ZERO, 1));
+        harness
+            .services
+            .update_settings(&serde_json::json!({
+                "capture": { "fullscreen_capture_uses": "all_monitors" }
+            }))
+            .expect("settings");
+        place_app(
+            &harness,
+            1,
+            Rect::new(Px(0), Px(0), Px(800), Px(600)),
+            "game.exe",
+        );
+        *harness.context.cursor.lock().expect("cursor") = Some(Point::new(Px(100), Px(100)));
+        let shot = harness
+            .service
+            .screen_image()
+            .expect("capture")
+            .expect("screen");
+        assert_eq!(shot.source_app, None);
+    }
+
+    #[test]
+    fn a_last_region_capture_records_the_app_under_the_region() {
+        let directory = tempfile::tempdir().expect("temp");
+        let desktop = desktop_of(vec![(monitor(1, 0, 0, 800, 600, true), pattern(800, 600))]);
+        let selection = Rect::new(Px(100), Px(100), Px(100), Px(100));
+        let harness = harness(directory.path(), desktop, selected(selection, 1));
+        harness.service.capture_region().expect("region");
+        place_app(
+            &harness,
+            1,
+            Rect::new(Px(0), Px(0), Px(400), Px(600)),
+            "chrome.exe",
+        );
+        let shot = harness
+            .service
+            .last_region_image()
+            .expect("capture")
+            .expect("region");
+        assert_eq!(shot.source_app.as_deref(), Some("chrome.exe"));
     }
 
     #[test]
@@ -1181,6 +1424,8 @@ mod tests {
             cursor: Mutex::new(None),
             foreground: Mutex::new(None),
             under_cursor: Mutex::new(None),
+            at_point: Mutex::new(Vec::new()),
+            apps: Mutex::new(HashMap::new()),
             theme: OverlayTheme::Dark,
             feedback: Mutex::new(Vec::new()),
         });

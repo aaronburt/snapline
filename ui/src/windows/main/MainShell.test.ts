@@ -43,7 +43,7 @@ async function flush(): Promise<void> {
 }
 
 beforeEach(() => {
-  currentRoute.set(resolve('#/tools'));
+  currentRoute.set(resolve('#/workflows'));
   mocks.info.mockReset();
   mocks.call.mockReset();
   mocks.available.mockReset();
@@ -55,12 +55,12 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('MainShell accessibility', () => {
-  it('has no axe violations with the tools page, navigation and title bar', async () => {
+  it('has no axe violations with the workflows page, navigation and title bar', async () => {
     const { container } = render(MainShell);
     await flush();
     await waitFor(() => expect(mocks.call).toHaveBeenCalled());
     expect(screen.getByRole('navigation', { name: 'Main' })).not.toBeNull();
-    expect(screen.getByRole('heading', { level: 1, name: 'Tools' })).not.toBeNull();
+    expect(screen.getByRole('heading', { level: 1, name: 'Workflows' })).not.toBeNull();
     await expectAccessible(container);
   });
 });

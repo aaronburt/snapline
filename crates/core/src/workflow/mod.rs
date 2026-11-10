@@ -177,6 +177,7 @@ pub trait CapturePort {
             image: self.capture(kind)?,
             annotated: self.includes_annotation(kind),
             action: None,
+            source_app: None,
         })
     }
 
@@ -189,6 +190,7 @@ pub struct Captured {
     pub image: Image,
     pub annotated: bool,
     pub action: Option<crate::ports::OverlayAction>,
+    pub source_app: Option<String>,
 }
 
 pub trait RecordPort {

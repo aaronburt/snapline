@@ -301,7 +301,10 @@ fn capture_dto(capture: &Capture, paths: &Paths) -> CaptureDto {
         width: capture.width,
         height: capture.height,
         duration_ms: capture.duration_ms,
-        source_app: capture.source_app.clone(),
+        source_app: capture
+            .source_app
+            .as_deref()
+            .map(snapline_core::naming::app_name),
         created_at: capture.created_at,
         folder: saved_folder(&capture.path, &paths.captures_dir),
         upload: capture.upload.as_ref().map(|upload| UploadDto {
@@ -583,7 +586,7 @@ mod tests {
         assert_eq!(capture.name, "two.png");
         assert_eq!(capture.width, Some(1280));
         assert_eq!(capture.height, Some(720));
-        assert_eq!(capture.source_app.as_deref(), Some("chrome.exe"));
+        assert_eq!(capture.source_app.as_deref(), Some("chrome"));
         assert_eq!(
             service.handle(HistoryReq::Get { id: id + 1 }),
             Err(ServiceError::NotFound)

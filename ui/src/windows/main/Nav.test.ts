@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { get } from 'svelte/store';
 import { tick } from 'svelte';
 import { expectAccessible } from '../../test/axe';
 import Nav from './Nav.svelte';
-import { settingsDto } from './settings/settingsDto';
+import { searchQuery } from './history/search';
+import { currentRoute, resolve } from '../../router';
 
 const mocks = vi.hoisted(() => ({
   call: vi.fn(),
@@ -25,6 +27,40 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Nav', () => {
+  it('shows a failed capture as a dismissible toast', async () => {
+    mocks.call.mockImplementation(async (_area: string, req: { kind: string }) => {
+      if (req.kind === 'panelAction') throw { message: 'Capture is unavailable.' };
+      return { kind: 'stats', data: { count: 1 } };
+    });
+    render(Nav, { props: { page: 'history' } });
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: /New capture/ }));
+    await flush();
+    const toast = screen.getByRole('alert');
+    expect(toast.textContent).toContain('Capture is unavailable.');
+    expect(toast.closest('nav')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('searches the history from the sidebar', async () => {
+    vi.useFakeTimers();
+    window.location.hash = '#/workflows';
+    currentRoute.set(resolve('#/workflows'));
+    searchQuery.set('');
+    render(Nav, { props: { page: 'workflows' } });
+    try {
+      const input = screen.getByRole('searchbox', { name: 'Search captures' });
+      await fireEvent.input(input, { target: { value: 'invoice' } });
+      expect(get(searchQuery)).toBe('');
+      vi.advanceTimersByTime(250);
+      expect(get(searchQuery)).toBe('invoice');
+      expect(window.location.hash).toBe('#/history');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('shows the real capture count from the stats request', async () => {
     const { container } = render(Nav, { props: { page: 'history' } });
     await flush();
@@ -41,18 +77,14 @@ describe('Nav', () => {
     expect(container.querySelector('.count')?.textContent).toBe('0');
   });
 
-  it('shows the configured image destination instead of a fixed local-only label', async () => {
-    const dto = settingsDto();
-    dto.uploads.images = 'my-uploader';
-    mocks.call.mockImplementation(async (area: string) => {
-      if (area === 'ipc_settings') return { kind: 'settings', data: { settings: dto } };
-      if (area === 'ipc_upload') return { kind: 'destination', data: { kind: 'destinations', data: [{ id: 'my-uploader', name: 'My uploader' }] } };
-      return { kind: 'stats', data: { count: 0 } };
-    });
+  it('lists the sections and the settings pages in the sidebar', async () => {
     render(Nav, { props: { page: 'history' } });
     await flush();
-    expect(screen.getByRole('link', { name: /Default destination: My uploader/ })).not.toBeNull();
-    expect(screen.getByRole('link', { name: 'Tools' })).not.toBeNull();
+    expect(screen.getByRole('link', { name: 'Workflows' })).not.toBeNull();
+    expect(screen.getByRole('heading', { name: 'Settings' })).not.toBeNull();
+    for (const name of ['General', 'Capture', 'Hotkeys', 'Upload destinations']) {
+      expect(screen.getByRole('link', { name })).not.toBeNull();
+    }
   });
 
   it('refreshes the count when the main window regains focus', async () => {

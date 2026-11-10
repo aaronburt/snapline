@@ -37,6 +37,14 @@ impl CaptureBackend {
         wgc::foreground_window()
     }
 
+    pub fn process_name(window: WindowId) -> Option<String> {
+        crate::source_app::process_name(window)
+    }
+
+    pub fn window_at(point: snapline_core::geometry::Point) -> Option<WindowId> {
+        crate::source_app::app_window_at(point)
+    }
+
     pub fn window_under_cursor() -> Option<WindowId> {
         wgc::window_under_cursor()
     }

@@ -240,13 +240,14 @@ impl CapturePort for CaptureServicePort {
         let service =
             capture::installed().map_err(|error| WorkflowError::Failed(error.to_string()))?;
         match kind {
-            CaptureKind::Region => service.region_image(true),
+            CaptureKind::Region => service.region_result(true),
             CaptureKind::Window => service.window_image(),
             CaptureKind::Screen => service.screen_image(),
             CaptureKind::LastRegion => service.last_region_image(),
             CaptureKind::Scrolling => return Err(WorkflowError::NotAvailableYet),
         }
         .map_err(|error| WorkflowError::Failed(error.to_string()))?
+        .map(|shot| shot.image)
         .ok_or(WorkflowError::Cancelled)
     }
 
@@ -255,23 +256,23 @@ impl CapturePort for CaptureServicePort {
         kind: CaptureKind,
         annotate: bool,
     ) -> Result<workflow::Captured, WorkflowError> {
-        if kind != CaptureKind::Region {
-            return Ok(workflow::Captured {
-                image: self.capture(kind)?,
-                annotated: false,
-                action: None,
-            });
-        }
         let service =
             capture::installed().map_err(|error| WorkflowError::Failed(error.to_string()))?;
-        let (image, action) = service
-            .region_result(annotate)
-            .map_err(|error| WorkflowError::Failed(error.to_string()))?
-            .ok_or(WorkflowError::Cancelled)?;
+        let region = kind == CaptureKind::Region;
+        let shot = match kind {
+            CaptureKind::Region => service.region_result(annotate),
+            CaptureKind::Window => service.window_image(),
+            CaptureKind::Screen => service.screen_image(),
+            CaptureKind::LastRegion => service.last_region_image(),
+            CaptureKind::Scrolling => return Err(WorkflowError::NotAvailableYet),
+        }
+        .map_err(|error| WorkflowError::Failed(error.to_string()))?
+        .ok_or(WorkflowError::Cancelled)?;
         Ok(workflow::Captured {
-            image,
-            annotated: annotate,
-            action,
+            image: shot.image,
+            annotated: region && annotate,
+            action: shot.action,
+            source_app: shot.source_app,
         })
     }
 }
@@ -323,7 +324,8 @@ impl SavePort for WorkerSavePort {
                 .map_err(|error| WorkflowError::Failed(error.to_string()));
         };
         let window_title = request.file_name.unwrap_or_default();
-        let mut capture = CaptureRequest::new(image.clone(), None, window_title);
+        let source_app = request.source_app.map(str::to_owned);
+        let mut capture = CaptureRequest::new(image.clone(), source_app, window_title);
         capture.workflow_save = true;
         let outcome = self
             .worker
@@ -482,6 +484,7 @@ impl UploadPort for QueueUploadPort {
                         recording_details: None,
                         converted: request.converted,
                         file_name: request.file_name,
+                        source_app: request.source_app,
                     })?
                 }
             },
