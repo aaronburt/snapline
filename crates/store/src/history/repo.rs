@@ -807,6 +807,83 @@ mod tests {
         assert_eq!(count, 1);
     }
 
+    fn upload_states(repo: &HistoryRepo) -> Vec<(String, String, Option<String>)> {
+        let mut statement = repo
+            .conn
+            .prepare("SELECT dest_id, state, error FROM upload ORDER BY dest_id")
+            .expect("prepare");
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("query");
+        rows.map(|row| row.expect("row")).collect()
+    }
+
+    #[test]
+    fn expiring_removes_only_finished_uploads_older_than_the_cutoff() {
+        let (_directory, mut repo) = repo();
+        let id = repo
+            .record(capture(CaptureKind::Image, "C:\\Pictures\\a.png", BASE))
+            .expect("record");
+        let cutoff = BASE + 100;
+        let rows = [
+            ("old-done", UploadState::Done, cutoff - 1),
+            ("old-failed", UploadState::Failed, cutoff - 1),
+            ("old-cancelled", UploadState::Cancelled, cutoff - 1),
+            ("old-queued", UploadState::Queued, cutoff - 1),
+            ("old-uploading", UploadState::Uploading, cutoff - 1),
+            ("edge-done", UploadState::Done, cutoff),
+            ("new-done", UploadState::Done, cutoff + 1),
+        ];
+        for (dest, state, updated_at) in rows {
+            let mut update = upload(id, state, updated_at);
+            update.dest_id = dest.to_owned();
+            repo.set_upload(update).expect("upload");
+        }
+        repo.expire_uploads(cutoff).expect("expire");
+        let kept: Vec<String> = upload_states(&repo)
+            .into_iter()
+            .map(|(dest, _, _)| dest)
+            .collect();
+        assert_eq!(
+            kept,
+            vec!["edge-done", "new-done", "old-queued", "old-uploading"]
+        );
+        assert!(repo.get(id).expect("get").is_some());
+    }
+
+    #[test]
+    fn interrupted_uploads_become_failed_and_finished_ones_are_untouched() {
+        let (_directory, mut repo) = repo();
+        let id = repo
+            .record(capture(CaptureKind::Image, "C:\\Pictures\\a.png", BASE))
+            .expect("record");
+        for (dest, state) in [
+            ("a-queued", UploadState::Queued),
+            ("b-uploading", UploadState::Uploading),
+            ("c-done", UploadState::Done),
+            ("d-cancelled", UploadState::Cancelled),
+        ] {
+            let mut update = upload(id, state, BASE + 1);
+            update.dest_id = dest.to_owned();
+            repo.set_upload(update).expect("upload");
+        }
+        repo.mark_uploads_interrupted().expect("mark");
+        let interrupted = Some("The upload was interrupted when Snapline closed.".to_owned());
+        assert_eq!(
+            upload_states(&repo),
+            vec![
+                (
+                    "a-queued".to_owned(),
+                    "failed".to_owned(),
+                    interrupted.clone()
+                ),
+                ("b-uploading".to_owned(), "failed".to_owned(), interrupted),
+                ("c-done".to_owned(), "done".to_owned(), None),
+                ("d-cancelled".to_owned(), "cancelled".to_owned(), None),
+            ]
+        );
+    }
+
     #[test]
     fn an_upload_reads_its_saved_etag() {
         let (_directory, mut repo) = repo();

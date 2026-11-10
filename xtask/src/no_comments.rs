@@ -7,6 +7,7 @@ const SKIP_DIRS: &[&str] = &[
     "target",
     "ui/node_modules",
     "ui/dist",
+    "ui/coverage",
     ".git",
     "third_party",
     "design/v2",

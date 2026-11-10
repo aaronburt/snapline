@@ -73,11 +73,6 @@ pub fn validate(template: &str) -> Result<(), TemplateError> {
     Ok(())
 }
 
-pub fn json_path(response: &str, path: &str) -> Result<Option<String>, TemplateError> {
-    let value: Value = serde_json::from_str(response).map_err(|_| TemplateError::InvalidJson)?;
-    json_path_value(&value, path)
-}
-
 pub fn json_path_value(value: &Value, path: &str) -> Result<Option<String>, TemplateError> {
     let normalized = normalized_path(path)?;
     let parsed = JsonPath::parse(&normalized).map_err(|_| TemplateError::InvalidPath)?;

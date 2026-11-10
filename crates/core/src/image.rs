@@ -104,10 +104,6 @@ impl Image {
         &mut self.pixels
     }
 
-    pub fn into_pixels(self) -> Vec<u8> {
-        self.pixels
-    }
-
     pub fn pixel(&self, x: u32, y: u32) -> Result<[u8; 4], ImageError> {
         if x >= self.width || y >= self.height {
             return Err(ImageError::Outside);

@@ -61,20 +61,27 @@ pub fn schema_version(connection: &Connection) -> Result<u32, HistoryError> {
 }
 
 pub fn migrate(connection: &mut Connection) -> Result<(), HistoryError> {
+    migrate_with(connection, MIGRATIONS)
+}
+
+fn migrate_with(connection: &mut Connection, migrations: &[&str]) -> Result<(), HistoryError> {
     let _guard = MIGRATION_LOCK
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
+    let target = u32::try_from(migrations.len()).unwrap_or(u32::MAX);
     let found = schema_version(connection)?;
-    if found > CURRENT_VERSION {
+    if found > target {
         return Err(HistoryError::FutureSchema {
             found,
-            supported: CURRENT_VERSION,
+            supported: target,
         });
     }
-    if found == CURRENT_VERSION {
+    if found == target {
         return Ok(());
     }
-    backup(connection)?;
+    if found > 0 {
+        backup(connection)?;
+    }
     if let Err(error) = connection.pragma_update(None, "foreign_keys", false) {
         let _ = connection.pragma_update(None, "foreign_keys", true);
         return Err(error.into());
@@ -86,8 +93,8 @@ pub fn migrate(connection: &mut Connection) -> Result<(), HistoryError> {
             return Err(HistoryError::ForeignKeys);
         }
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        for version in (found + 1)..=CURRENT_VERSION {
-            let migration = MIGRATIONS
+        for version in (found + 1)..=target {
+            let migration = migrations
                 .get((version - 1) as usize)
                 .copied()
                 .ok_or(HistoryError::MissingMigration(version))?;
@@ -299,6 +306,164 @@ mod tests {
             .query_row("SELECT count(*) FROM upload", [], |row| row.get(0))
             .expect("backup uploads");
         assert_eq!(uploads, 1);
+    }
+
+    #[test]
+    fn the_migration_list_matches_the_current_version() {
+        assert_eq!(MIGRATIONS.len(), CURRENT_VERSION as usize);
+    }
+
+    #[test]
+    fn a_new_database_leaves_no_backup() {
+        let (_directory, path) = database();
+        let _connection = open_write(&path).expect("open");
+        assert!(!path.with_extension("db.bak").exists());
+    }
+
+    #[test]
+    fn migration_four_keeps_every_upload_of_a_capture_and_its_cascade() {
+        let (_directory, path) = database();
+        let connection = Connection::open(&path).expect("open version three");
+        for migration in &MIGRATIONS[..3] {
+            connection.execute_batch(migration).expect("seed schema");
+        }
+        connection
+            .pragma_update(None, "user_version", 3)
+            .expect("version");
+        connection
+            .execute_batch(
+                "INSERT INTO capture (id, kind, path, bytes, created_at) VALUES (7, 'image', 'shot.png', 10, 1);
+                 INSERT INTO capture (id, kind, path, bytes, created_at) VALUES (8, 'video', 'clip.mp4', 20, 2);
+                 INSERT INTO upload (id, capture_id, dest_id, state, url, updated_at) VALUES (1, 7, 'imgur', 'done', 'https://example.com/a', 2);
+                 INSERT INTO upload (id, capture_id, dest_id, state, error, updated_at) VALUES (2, 7, 's3', 'failed', 'refused', 3);
+                 INSERT INTO upload (id, capture_id, dest_id, state, updated_at) VALUES (3, 7, 'sftp', 'cancelled', 4);
+                 INSERT INTO upload (id, capture_id, dest_id, state, updated_at) VALUES (4, 8, 'sftp', 'done', 5);",
+            )
+            .expect("seed history");
+        drop(connection);
+
+        let upgraded = open_write(&path).expect("upgrade");
+        let mut statement = upgraded
+            .prepare("SELECT id, capture_id, dest_id, state, url, error FROM upload ORDER BY id")
+            .expect("prepare");
+        let uploads: Vec<(i64, i64, String, String, Option<String>, Option<String>)> = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            })
+            .expect("query")
+            .map(|row| row.expect("row"))
+            .collect();
+        assert_eq!(
+            uploads,
+            vec![
+                (
+                    1,
+                    7,
+                    "imgur".to_owned(),
+                    "done".to_owned(),
+                    Some("https://example.com/a".to_owned()),
+                    None
+                ),
+                (
+                    2,
+                    7,
+                    "s3".to_owned(),
+                    "failed".to_owned(),
+                    None,
+                    Some("refused".to_owned())
+                ),
+                (3, 7, "sftp".to_owned(), "cancelled".to_owned(), None, None),
+                (4, 8, "sftp".to_owned(), "done".to_owned(), None, None),
+            ]
+        );
+        drop(statement);
+        upgraded
+            .execute("DELETE FROM capture WHERE id = 7", [])
+            .expect("delete capture");
+        let remaining: i64 = upgraded
+            .query_row("SELECT count(*) FROM upload", [], |row| row.get(0))
+            .expect("count");
+        assert_eq!(remaining, 1);
+    }
+
+    #[test]
+    fn a_failed_migration_rolls_back_and_restores_foreign_keys() {
+        let (_directory, path) = database();
+        let mut connection = open_write(&path).expect("open");
+        connection
+            .execute_batch(
+                "INSERT INTO capture (id, kind, path, bytes, created_at) VALUES (7, 'image', 'shot.png', 10, 1);
+                 INSERT INTO upload (id, capture_id, dest_id, state, updated_at) VALUES (9, 7, 'sftp', 'done', 2);",
+            )
+            .expect("seed history");
+        let mut migrations = MIGRATIONS.to_vec();
+        migrations.push("ALTER TABLE upload ADD COLUMN extra INTEGER; DROP TABLE capture; SELECT * FROM missing_table;");
+
+        assert!(migrate_with(&mut connection, &migrations).is_err());
+
+        assert_eq!(
+            schema_version(&connection).expect("version"),
+            CURRENT_VERSION
+        );
+        let foreign_keys: i64 = connection
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .expect("foreign keys");
+        assert_eq!(foreign_keys, 1);
+        let rows: (i64, i64) = connection
+            .query_row(
+                "SELECT (SELECT count(*) FROM capture), (SELECT count(*) FROM upload)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("rows");
+        assert_eq!(rows, (1, 1));
+        let extra: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('upload') WHERE name = 'extra'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("columns");
+        assert_eq!(extra, 0);
+        let backup = Connection::open_with_flags(
+            path.with_extension("db.bak"),
+            OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .expect("backup");
+        assert_eq!(
+            schema_version(&backup).expect("backup version"),
+            CURRENT_VERSION
+        );
+    }
+
+    #[test]
+    fn a_migration_that_orphans_uploads_is_refused() {
+        let (_directory, path) = database();
+        let mut connection = open_write(&path).expect("open");
+        connection
+            .execute_batch(
+                "INSERT INTO capture (id, kind, path, bytes, created_at) VALUES (7, 'image', 'shot.png', 10, 1);
+                 INSERT INTO upload (id, capture_id, dest_id, state, updated_at) VALUES (9, 7, 'sftp', 'done', 2);",
+            )
+            .expect("seed history");
+        let mut migrations = MIGRATIONS.to_vec();
+        migrations.push("DELETE FROM capture;");
+
+        assert!(matches!(
+            migrate_with(&mut connection, &migrations),
+            Err(HistoryError::ForeignKeys)
+        ));
+        let captures: i64 = connection
+            .query_row("SELECT count(*) FROM capture", [], |row| row.get(0))
+            .expect("captures");
+        assert_eq!(captures, 1);
     }
 
     #[test]

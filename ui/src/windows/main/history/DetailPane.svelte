@@ -53,7 +53,18 @@
     total: number;
   }
 
-  let { capture, activeUpload, defaultDestination, oncopy, onshow, onopen, onannotate, onpin, ondelete, onclose }: Props = $props();
+  let {
+    capture,
+    activeUpload,
+    defaultDestination,
+    oncopy,
+    onshow,
+    onopen,
+    onannotate,
+    onpin,
+    ondelete,
+    onclose,
+  }: Props = $props();
 
   let copyFailed = $state(false);
   let actionError = $state('');
@@ -443,22 +454,30 @@
   {#if capture}
     <div class="detail-heading">
       <h2 class="heading">Details</h2>
-      <button class="hv iconbtn" type="button" aria-label="Close details" title="Close details" onclick={onclose}>
+      <button
+        class="hv iconbtn"
+        type="button"
+        aria-label="Close details"
+        title="Close details"
+        onclick={onclose}
+      >
         <Icon name="close" size={14} />
       </button>
     </div>
 
     <div class="preview">
-    {#if capture.kind === 'image' || capture.kind === 'video' || capture.kind === 'gif'}
-      <Thumb
-        id={capture.id}
-        alt=""
-        duration={isTimed && capture.durationMs !== null ? formatDuration(capture.durationMs) : undefined}
-        tag={isTimed ? typeTag(capture.kind, capture.name) : undefined}
-      />
-    {:else}
-      <div class="file-preview" aria-hidden="true">{typeTag(capture.kind, capture.name)}</div>
-    {/if}
+      {#if capture.kind === 'image' || capture.kind === 'video' || capture.kind === 'gif'}
+        <Thumb
+          id={capture.id}
+          alt=""
+          duration={isTimed && capture.durationMs !== null
+            ? formatDuration(capture.durationMs)
+            : undefined}
+          tag={isTimed ? typeTag(capture.kind, capture.name) : undefined}
+        />
+      {:else}
+        <div class="file-preview" aria-hidden="true">{typeTag(capture.kind, capture.name)}</div>
+      {/if}
     </div>
 
     <div class="identity">
@@ -534,168 +553,204 @@
     </div>
 
     {#if share.status !== 'local' || !capture.owned}
-    <section class="sharing" aria-label="Sharing">
-      <div class="sharinghead">
-        <h2 class="heading">Sharing</h2>
-        <Badge
-          status={share.status === 'uploaded' ? 'ok' : share.status}
-          label={pendingUploadLabel(currentLive?.status ?? capture.upload?.state)}
-          long
-        />
-      </div>
+      <section class="sharing" aria-label="Sharing">
+        <div class="sharinghead">
+          <h2 class="heading">Sharing</h2>
+          <Badge
+            status={share.status === 'uploaded' ? 'ok' : share.status}
+            label={pendingUploadLabel(currentLive?.status ?? capture.upload?.state)}
+            long
+          />
+        </div>
 
-      {#if share.status === 'uploaded'}
-        <div class="linkrow">
-          <input readonly aria-label="Share link" value={share.url ?? ''} />
-          <button
-            type="button"
-            class="hv linkbtn"
-            aria-label="Copy link"
-            onclick={() => void copyText(share.url)}
-          >
-            <Icon name="copy" size={14} strokeWidth={1.8} />
-          </button>
-        </div>
-        <div class="retry">
-          <button
-            type="button"
-            class="hv secondary"
-            disabled={busy || capture.missing}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            bind:this={menuTrigger}
-            onclick={() => void toggleElsewhere()}
-          >Upload elsewhere…</button>
-          {#if menuOpen}
-            {#if destinations.length === 0}
-              <div class="menu menuempty" role="status" bind:this={menuElement}>
-                No destinations configured.
-              </div>
-            {:else}
-              <div class="menu" role="menu" aria-label="Upload elsewhere" tabindex="-1" bind:this={menuElement}>
-                {#each destinations as item (item.id)}
-                  <button type="button" class="menuitem" role="menuitem" onclick={() => chooseElsewhere(item.id)}>
-                    {item.name}
-                  </button>
-                {/each}
-              </div>
-            {/if}
-          {/if}
-        </div>
-        {#if share.deletionUrl}
-          <div class="deletion">
-            <span>Deletion link saved</span>
+        {#if share.status === 'uploaded'}
+          <div class="linkrow">
+            <input readonly aria-label="Share link" value={share.url ?? ''} />
             <button
               type="button"
-              class="hv textbtn"
-              onclick={() => void copyText(share.deletionUrl)}
+              class="hv linkbtn"
+              aria-label="Copy link"
+              onclick={() => void copyText(share.url)}
             >
-              Copy deletion link
+              <Icon name="copy" size={14} strokeWidth={1.8} />
             </button>
           </div>
-        {:else if canDeleteFromHost}
-          <div class="deletion">
-            <span>Delete from {hostLabel(share.destId ?? '')}</span>
+          <div class="retry">
+            <button
+              type="button"
+              class="hv secondary"
+              disabled={busy || capture.missing}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              bind:this={menuTrigger}
+              onclick={() => void toggleElsewhere()}>Upload elsewhere…</button
+            >
+            {#if menuOpen}
+              {#if destinations.length === 0}
+                <div class="menu menuempty" role="status" bind:this={menuElement}>
+                  No destinations configured.
+                </div>
+              {:else}
+                <div
+                  class="menu"
+                  role="menu"
+                  aria-label="Upload elsewhere"
+                  tabindex="-1"
+                  bind:this={menuElement}
+                >
+                  {#each destinations as item (item.id)}
+                    <button
+                      type="button"
+                      class="menuitem"
+                      role="menuitem"
+                      onclick={() => chooseElsewhere(item.id)}
+                    >
+                      {item.name}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            {/if}
           </div>
-        {/if}
-      {:else if share.status === 'failed'}
-        <div class="note">
-          Upload failed: {share.error ?? 'the destination did not accept the file.'}
-        </div>
-        <div class="retry">
-          <button type="button" class="upload" disabled={busy || capture.missing} onclick={() => void retry()}>
-            Retry
-          </button>
-          <button
-            type="button"
-            class="hv secondary"
-            disabled={capture.missing}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            bind:this={menuTrigger}
-            onclick={() => void toggleElsewhere()}
-          >
-            Upload elsewhere…
-          </button>
-          {#if menuOpen}
-            {#if destinations.length === 0}
-              <div class="menu menuempty" role="status" bind:this={menuElement}>
-                No destinations configured.
-              </div>
-            {:else}
-              <div
-                class="menu"
-                role="menu"
-                aria-label="Upload elsewhere"
-                tabindex="-1"
-                bind:this={menuElement}
+          {#if share.deletionUrl}
+            <div class="deletion">
+              <span>Deletion link saved</span>
+              <button
+                type="button"
+                class="hv textbtn"
+                onclick={() => void copyText(share.deletionUrl)}
               >
-                {#each destinations as item (item.id)}
-                  <button
-                    type="button"
-                    class="menuitem"
-                    role="menuitem"
-                    onclick={() => chooseElsewhere(item.id)}
-                  >
-                    {item.name}
-                  </button>
-                {/each}
-              </div>
-            {/if}
+                Copy deletion link
+              </button>
+            </div>
+          {:else if canDeleteFromHost}
+            <div class="deletion">
+              <span>Delete from {hostLabel(share.destId ?? '')}</span>
+            </div>
           {/if}
-        </div>
-      {:else if share.status === 'uploading'}
-        {#if (currentLive?.status ?? capture.upload?.state) === 'uploading'}
+        {:else if share.status === 'failed'}
           <div class="note">
-            {share.progressAvailable && share.total > 0
-              ? `${formatBytes(share.sent)} of ${formatBytes(share.total)}`
-              : 'Sending file…'}
+            Upload failed: {share.error ?? 'the destination did not accept the file.'}
           </div>
-          <UploadProgress determinate={share.progressAvailable} sent={share.sent} total={share.total} />
-        {/if}
-        {#if share.cancellable}
-          <button type="button" class="hv secondary" disabled={busy} onclick={() => void cancel()}>
-            Cancel
-          </button>
-        {/if}
-      {:else}
-        {#if capture.missing}
-          <div class="note">The original file is unavailable. Add it again before uploading.</div>
+          <div class="retry">
+            <button
+              type="button"
+              class="upload"
+              disabled={busy || capture.missing}
+              onclick={() => void retry()}
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              class="hv secondary"
+              disabled={capture.missing}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              bind:this={menuTrigger}
+              onclick={() => void toggleElsewhere()}
+            >
+              Upload elsewhere…
+            </button>
+            {#if menuOpen}
+              {#if destinations.length === 0}
+                <div class="menu menuempty" role="status" bind:this={menuElement}>
+                  No destinations configured.
+                </div>
+              {:else}
+                <div
+                  class="menu"
+                  role="menu"
+                  aria-label="Upload elsewhere"
+                  tabindex="-1"
+                  bind:this={menuElement}
+                >
+                  {#each destinations as item (item.id)}
+                    <button
+                      type="button"
+                      class="menuitem"
+                      role="menuitem"
+                      onclick={() => chooseElsewhere(item.id)}
+                    >
+                      {item.name}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            {/if}
+          </div>
+        {:else if share.status === 'uploading'}
+          {#if (currentLive?.status ?? capture.upload?.state) === 'uploading'}
+            <div class="note">
+              {share.progressAvailable && share.total > 0
+                ? `${formatBytes(share.sent)} of ${formatBytes(share.total)}`
+                : 'Sending file…'}
+            </div>
+            <UploadProgress
+              determinate={share.progressAvailable}
+              sent={share.sent}
+              total={share.total}
+            />
+          {/if}
+          {#if share.cancellable}
+            <button
+              type="button"
+              class="hv secondary"
+              disabled={busy}
+              onclick={() => void cancel()}
+            >
+              Cancel
+            </button>
+          {/if}
         {:else}
-          <div class="note">This item is saved locally.</div>
-          <button
-            type="button"
-            class="upload"
-            disabled={busy}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            bind:this={menuTrigger}
-            onclick={() => void toggleElsewhere()}
-          >Upload…</button>
-          {#if menuOpen}
-            {#if destinations.length === 0}
-              <div class="menu menuempty" role="status" bind:this={menuElement}>
-                No destinations configured.
-              </div>
-            {:else}
-              <div class="menu" role="menu" aria-label="Upload to a destination" tabindex="-1" bind:this={menuElement}>
-                {#each destinations as item (item.id)}
-                  <button type="button" class="menuitem" role="menuitem" onclick={() => chooseElsewhere(item.id)}>
-                    {item.name}
-                  </button>
-                {/each}
-              </div>
+          {#if capture.missing}
+            <div class="note">The original file is unavailable. Add it again before uploading.</div>
+          {:else}
+            <div class="note">This item is saved locally.</div>
+            <button
+              type="button"
+              class="upload"
+              disabled={busy}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              bind:this={menuTrigger}
+              onclick={() => void toggleElsewhere()}>Upload…</button
+            >
+            {#if menuOpen}
+              {#if destinations.length === 0}
+                <div class="menu menuempty" role="status" bind:this={menuElement}>
+                  No destinations configured.
+                </div>
+              {:else}
+                <div
+                  class="menu"
+                  role="menu"
+                  aria-label="Upload to a destination"
+                  tabindex="-1"
+                  bind:this={menuElement}
+                >
+                  {#each destinations as item (item.id)}
+                    <button
+                      type="button"
+                      class="menuitem"
+                      role="menuitem"
+                      onclick={() => chooseElsewhere(item.id)}
+                    >
+                      {item.name}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
             {/if}
           {/if}
         {/if}
-      {/if}
-      {#if actionError}
-        <div class="note error" role="status">{actionError}</div>
-      {/if}
-      {#if copyFailed}
-        <div class="note" role="status">The link could not be copied.</div>
-      {/if}
-    </section>
+        {#if actionError}
+          <div class="note error" role="status">{actionError}</div>
+        {/if}
+        {#if copyFailed}
+          <div class="note" role="status">The link could not be copied.</div>
+        {/if}
+      </section>
     {/if}
 
     <section class="info" aria-label="File info">

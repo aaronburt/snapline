@@ -5,7 +5,15 @@
   import UploadProgress from '../../../components/UploadProgress.svelte';
   import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
   import type { UploadState } from '../../../lib/ipc/bindings/UploadState';
-  import { badgeStatus, formatBytes, formatCaptured, formatDuration, pendingUploadLabel, typeLabel, typeTag } from './data';
+  import {
+    badgeStatus,
+    formatBytes,
+    formatCaptured,
+    formatDuration,
+    pendingUploadLabel,
+    typeLabel,
+    typeTag,
+  } from './data';
 
   interface Props {
     items: HistoryCaptureDto[];
@@ -114,7 +122,9 @@
           <td>
             <span class="file">
               {#if capture.kind === 'text' || capture.kind === 'file'}
-                <span class="thumb file-type" aria-hidden="true">{typeTag(capture.kind, capture.name)}</span>
+                <span class="thumb file-type" aria-hidden="true"
+                  >{typeTag(capture.kind, capture.name)}</span
+                >
               {:else}
                 <span class="thumb"><Thumb id={capture.id} alt="" /></span>
               {/if}
@@ -122,7 +132,9 @@
                 <span class="filename" title={capture.name}>{capture.name}</span>
                 {#if compact}
                   <span class="metadata">
-                    {type} · {captured}{#if duration} · {duration}{/if}{#if inlineSize} · {formatBytes(capture.bytes)}{/if}
+                    {type} · {captured}{#if duration}
+                      · {duration}{/if}{#if inlineSize}
+                      · {formatBytes(capture.bytes)}{/if}
                   </span>
                 {/if}
               </span>
@@ -138,12 +150,19 @@
           {/if}
           <td>
             <div class="upload-status">
-              <Badge status={active ? 'uploading' : badgeStatus(capture)} label={pendingUploadLabel(phase)} />
+              <Badge
+                status={active ? 'uploading' : badgeStatus(capture)}
+                label={pendingUploadLabel(phase)}
+              />
               {#if phase === 'uploading' || (active?.cancellable && oncancel)}
                 <div class="progress-row">
                   {#if phase === 'uploading'}
                     <div class="progress-meter">
-                      <UploadProgress determinate={active?.progressAvailable} sent={active?.sent} total={active?.total} />
+                      <UploadProgress
+                        determinate={active?.progressAvailable}
+                        sent={active?.sent}
+                        total={active?.total}
+                      />
                     </div>
                   {/if}
                   {#if active?.cancellable && oncancel}
@@ -154,8 +173,8 @@
                       onclick={(event) => {
                         event.stopPropagation();
                         oncancel?.(capture.id);
-                      }}
-                    >Cancel</button>
+                      }}>Cancel</button
+                    >
                   {/if}
                 </div>
               {/if}
@@ -185,10 +204,18 @@
     table-layout: fixed;
   }
 
-  .type-col { width: 108px; }
-  .size-col { width: 84px; }
-  .captured-col { width: 162px; }
-  .status-col { width: 148px; }
+  .type-col {
+    width: 108px;
+  }
+  .size-col {
+    width: 84px;
+  }
+  .captured-col {
+    width: 162px;
+  }
+  .status-col {
+    width: 148px;
+  }
 
   thead th {
     position: sticky;

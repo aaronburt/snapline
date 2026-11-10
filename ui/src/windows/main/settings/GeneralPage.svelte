@@ -96,9 +96,15 @@
   const notificationsVisible = $derived(
     matches('Notifications', 'Show a toast when an upload finishes or a link is copied'),
   );
-  const trayClickVisible = $derived(matches('Open capture on tray click', 'When off, clicking the tray icon opens the menu'));
+  const trayClickVisible = $derived(
+    matches('Open capture on tray click', 'When off, clicking the tray icon opens the menu'),
+  );
   const showStartup = $derived(
-    matches('Startup') || launchVisible || minimiseVisible || notificationsVisible || trayClickVisible,
+    matches('Startup') ||
+      launchVisible ||
+      minimiseVisible ||
+      notificationsVisible ||
+      trayClickVisible,
   );
 
   const folderVisible = $derived(

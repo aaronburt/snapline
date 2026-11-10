@@ -11,7 +11,9 @@ use snapline_store::history::{BorrowedFile, CaptureKind, HistoryRepo, Origin};
 use snapline_store::settings::uploads::DestinationRef;
 use snapline_upload::queue::{self, LinkBatch, UploadFile};
 
-use crate::uploads::{destination_for, DestinationSource, UploadRuntime};
+use crate::uploads::{
+    destination_for, missing_destination_message, DestinationSource, UploadRuntime,
+};
 use crate::{ServiceError, Services};
 
 static NEXT_BATCH: AtomicU64 = AtomicU64::new(1);
@@ -106,9 +108,8 @@ impl Intake {
                     .as_str()
                     .to_owned()
             });
-            let setting = setting_for(media);
             if !DestinationRef::is_upload_id(&destination) {
-                let message = format!("Choose an upload destination in Settings for {setting}.");
+                let message = missing_destination_message(media);
                 if let Some(notifier) = self.services.notifier() {
                     notifier.toast(Notice::new("Upload not started", &message));
                 }
@@ -205,15 +206,6 @@ fn capture_kind(media: MediaKind) -> CaptureKind {
         MediaKind::Gif => CaptureKind::Gif,
         MediaKind::Text => CaptureKind::Text,
         MediaKind::File => CaptureKind::File,
-    }
-}
-
-fn setting_for(media: MediaKind) -> &'static str {
-    match media {
-        MediaKind::Image => "uploads.images",
-        MediaKind::Video | MediaKind::Gif => "uploads.videos_and_gifs",
-        MediaKind::Text => "uploads.text_and_code",
-        MediaKind::File => "uploads.other_files",
     }
 }
 
@@ -326,7 +318,7 @@ mod tests {
         fn new(has_uploader: bool, streams_files: bool) -> Self {
             let directory = tempfile::Builder::new()
                 .prefix("intake-test-")
-                .tempdir_in(".")
+                .tempdir()
                 .expect("temporary directory");
             let root = directory.path();
             let paths = Paths::resolve(
@@ -567,11 +559,11 @@ mod tests {
         let services = Services::new();
         let intake = Intake::new(&services, &fixture.runtime);
         let cases = [
-            ("photo.png", "uploads.images"),
-            ("clip.mp4", "uploads.videos_and_gifs"),
-            ("motion.gif", "uploads.videos_and_gifs"),
-            ("notes.txt", "uploads.text_and_code"),
-            ("archive.zip", "uploads.other_files"),
+            ("photo.png", "images"),
+            ("clip.mp4", "videos and GIFs"),
+            ("motion.gif", "videos and GIFs"),
+            ("notes.txt", "text and code"),
+            ("archive.zip", "other files"),
         ];
 
         for (name, setting) in cases {
@@ -583,8 +575,11 @@ mod tests {
                 dest: None,
             });
 
-            assert!(
-                matches!(result, Err(ServiceError::Invalid(message)) if message.contains(setting)),
+            assert_eq!(
+                result,
+                Err(ServiceError::Invalid(format!(
+                    "Choose a destination for {setting} in Settings, under Upload destinations."
+                ))),
                 "{name}"
             );
         }

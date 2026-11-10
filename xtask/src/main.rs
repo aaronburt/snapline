@@ -175,7 +175,7 @@ fn check(root: &Path) -> Result<()> {
 
 fn test(root: &Path) -> Result<()> {
     run(root, "cargo", &["nextest", "run", "--workspace"])?;
-    run_npm(root, &["run", "test"])
+    run_npm(root, &["run", "coverage"])
 }
 
 fn test_desktop(root: &Path) -> Result<()> {

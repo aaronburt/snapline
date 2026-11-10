@@ -351,41 +351,13 @@ impl SftpConnection for Ssh2Connection {
                 OpenType::File,
             )
             .map_err(|error| map_sftp_error(&error))?;
-        let mut sent = 0_u64;
-        let result = (|| {
-            let mut buffer = [0_u8; 32 * 1024];
-            while sent < len {
-                if control.cancelled() {
-                    return Err(UploadError::Cancelled);
-                }
-                let limit =
-                    usize::try_from((len - sent).min(buffer.len() as u64)).unwrap_or(buffer.len());
-                let read = source.read(&mut buffer[..limit]).map_err(|error| {
-                    if error.kind() == std::io::ErrorKind::UnexpectedEof {
-                        UploadError::permanent(
-                            "The file became shorter while it was being uploaded.",
-                        )
-                    } else {
-                        UploadError::permanent("The file could not be read.")
-                    }
-                })?;
-                if read == 0 {
-                    return Err(UploadError::permanent(
-                        "The file became shorter while it was being uploaded.",
-                    ));
-                }
-                output
-                    .write_all(&buffer[..read])
-                    .map_err(|error| map_io_error(&error))?;
-                sent = sent.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
-                control.sent(sent);
-            }
+        let result = copy_stream(source, &mut output, len, control).and_then(|()| {
             output.close().map_err(|error| map_sftp_error(&error))?;
             if control.cancelled() {
                 return Err(UploadError::Cancelled);
             }
             Ok(())
-        })();
+        });
         if let Err(error) = result {
             let _ = output.close();
             let _ = sftp.unlink(Path::new(&partial_path));
@@ -633,6 +605,40 @@ impl Uploader for SftpUploader {
         }
         connection.remove_file(&path)
     }
+}
+
+fn copy_stream(
+    source: &mut dyn Read,
+    output: &mut dyn Write,
+    len: u64,
+    control: &dyn UploadControl,
+) -> Result<(), UploadError> {
+    let mut buffer = [0_u8; 32 * 1024];
+    let mut sent = 0_u64;
+    while sent < len {
+        if control.cancelled() {
+            return Err(UploadError::Cancelled);
+        }
+        let limit = usize::try_from((len - sent).min(buffer.len() as u64)).unwrap_or(buffer.len());
+        let read = source.read(&mut buffer[..limit]).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::UnexpectedEof {
+                UploadError::permanent("The file became shorter while it was being uploaded.")
+            } else {
+                UploadError::permanent("The file could not be read.")
+            }
+        })?;
+        if read == 0 {
+            return Err(UploadError::permanent(
+                "The file became shorter while it was being uploaded.",
+            ));
+        }
+        output
+            .write_all(&buffer[..read])
+            .map_err(|error| map_io_error(&error))?;
+        sent = sent.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
+        control.sent(sent);
+    }
+    Ok(())
 }
 
 pub fn fingerprint_sha256(key: &[u8]) -> String {
@@ -1092,18 +1098,7 @@ mod tests {
             control: &dyn UploadControl,
         ) -> Result<String, UploadError> {
             let mut bytes = Vec::new();
-            source
-                .read_to_end(&mut bytes)
-                .map_err(|error| map_io_error(&error))?;
-            if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != len {
-                return Err(UploadError::permanent(
-                    "The file became shorter while it was being uploaded.",
-                ));
-            }
-            if control.cancelled() {
-                return Err(UploadError::Cancelled);
-            }
-            control.sent(len);
+            copy_stream(source, &mut bytes, len, control)?;
             let mut state = self.state.lock().expect("state");
             state
                 .writes
@@ -1494,6 +1489,134 @@ mod tests {
         assert!(inside_folder("shots", "shots/shot.png"));
         assert!(!inside_folder("shots", "shots/../secret"));
         assert!(!inside_folder("/srv/shots", "/srv/other/shot.png"));
+    }
+
+    #[derive(Default)]
+    struct RecordingControl {
+        sent: Mutex<Vec<u64>>,
+        cancel_after: Option<usize>,
+    }
+
+    impl UploadControl for RecordingControl {
+        fn sent(&self, bytes: u64) {
+            self.sent.lock().expect("sent").push(bytes);
+        }
+
+        fn cancelled(&self) -> bool {
+            self.cancel_after
+                .is_some_and(|limit| self.sent.lock().expect("sent").len() >= limit)
+        }
+    }
+
+    struct FailingWriter(std::io::ErrorKind);
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::from(self.0))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    const CHUNK: usize = 32 * 1024;
+
+    #[test]
+    fn the_copy_sends_every_byte_and_reports_each_chunk() {
+        let source: Vec<u8> = (0..CHUNK * 2 + 10)
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let control = RecordingControl::default();
+        let mut output = Vec::new();
+        copy_stream(
+            &mut source.as_slice(),
+            &mut output,
+            source.len() as u64,
+            &control,
+        )
+        .expect("copy");
+        assert_eq!(output, source);
+        assert_eq!(
+            *control.sent.lock().expect("sent"),
+            vec![CHUNK as u64, (CHUNK * 2) as u64, (CHUNK * 2 + 10) as u64]
+        );
+    }
+
+    #[test]
+    fn the_copy_stops_at_the_recorded_length() {
+        let source = vec![7_u8; 100];
+        let control = RecordingControl::default();
+        let mut output = Vec::new();
+        copy_stream(&mut source.as_slice(), &mut output, 40, &control).expect("copy");
+        assert_eq!(output.len(), 40);
+        assert_eq!(*control.sent.lock().expect("sent"), vec![40]);
+    }
+
+    #[test]
+    fn the_copy_stops_between_chunks_when_cancelled() {
+        let source = vec![1_u8; CHUNK * 3];
+        let control = RecordingControl {
+            cancel_after: Some(1),
+            ..RecordingControl::default()
+        };
+        let mut output = Vec::new();
+        let error = copy_stream(
+            &mut source.as_slice(),
+            &mut output,
+            source.len() as u64,
+            &control,
+        )
+        .expect_err("cancelled");
+        assert_eq!(error, UploadError::Cancelled);
+        assert_eq!(output.len(), CHUNK);
+    }
+
+    #[test]
+    fn a_cancelled_copy_writes_nothing() {
+        let control = RecordingControl {
+            cancel_after: Some(0),
+            ..RecordingControl::default()
+        };
+        let mut output = Vec::new();
+        let error = copy_stream(&mut [1_u8, 2, 3].as_slice(), &mut output, 3, &control)
+            .expect_err("cancelled");
+        assert_eq!(error, UploadError::Cancelled);
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn a_source_shorter_than_its_length_is_permanent() {
+        let control = RecordingControl::default();
+        let mut output = Vec::new();
+        let error =
+            copy_stream(&mut [1_u8, 2, 3].as_slice(), &mut output, 5, &control).expect_err("short");
+        assert_eq!(
+            error,
+            UploadError::permanent("The file became shorter while it was being uploaded.")
+        );
+    }
+
+    #[test]
+    fn write_failures_map_to_upload_errors() {
+        let control = RecordingControl::default();
+        let timed_out = copy_stream(
+            &mut [1_u8].as_slice(),
+            &mut FailingWriter(std::io::ErrorKind::TimedOut),
+            1,
+            &control,
+        )
+        .expect_err("timed out");
+        assert!(timed_out.is_retryable());
+        let denied = copy_stream(
+            &mut [1_u8].as_slice(),
+            &mut FailingWriter(std::io::ErrorKind::PermissionDenied),
+            1,
+            &control,
+        )
+        .expect_err("denied");
+        assert_eq!(denied, UploadError::Auth);
+        assert!(control.sent.lock().expect("sent").is_empty());
     }
 
     #[test]

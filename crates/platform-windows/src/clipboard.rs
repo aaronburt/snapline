@@ -86,18 +86,6 @@ impl Clipboard {
         Self { png: None }
     }
 
-    pub const fn with_png_codec(codec: PngCodec) -> Self {
-        Self { png: Some(codec) }
-    }
-
-    pub fn set_png_codec(&mut self, codec: PngCodec) {
-        self.png = Some(codec);
-    }
-
-    pub const fn has_png_codec(&self) -> bool {
-        self.png.is_some()
-    }
-
     pub fn set_image(&self, image: &Image) -> Result<(), ClipboardError> {
         let dib = dibv5_bytes(image)?;
         let png = match self.png {

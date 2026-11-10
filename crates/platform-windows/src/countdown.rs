@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn zero_seconds_returns_without_a_window() {
-        Countdown::new().run(0).expect("zero countdown");
+        assert!(Countdown::new().run(0).is_ok());
     }
 
     #[test]

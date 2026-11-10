@@ -449,13 +449,6 @@ impl Shape {
             _ => None,
         }
     }
-
-    pub fn text_value(&self) -> Option<&str> {
-        match self {
-            Self::Text { text, .. } => Some(text),
-            _ => None,
-        }
-    }
 }
 
 pub const fn half(amount: Px) -> Px {

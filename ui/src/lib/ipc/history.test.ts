@@ -41,12 +41,15 @@ describe('history IPC requests', () => {
       { kind: 'search', data: { text: 'screenshot', filter: 'uploaded', cursor: null } },
       { kind: 'search', data: { page } },
     ],
-  ] as const)('%s preserves its filter and cursor', async (_name, request, expectedRequest, response) => {
-    mocks.invoke.mockResolvedValue(response);
+  ] as const)(
+    '%s preserves its filter and cursor',
+    async (_name, request, expectedRequest, response) => {
+      mocks.invoke.mockResolvedValue(response);
 
-    await expect(request()).resolves.toEqual(page);
-    expect(mocks.invoke).toHaveBeenCalledWith('ipc_history', { req: expectedRequest });
-  });
+      await expect(request()).resolves.toEqual(page);
+      expect(mocks.invoke).toHaveBeenCalledWith('ipc_history', { req: expectedRequest });
+    },
+  );
 
   it.each([
     [
@@ -70,12 +73,15 @@ describe('history IPC requests', () => {
       { kind: 'confirmDelete', data: { confirmed: false } },
       false,
     ],
-  ] as const)('%s sends its request and returns the payload', async (_name, request, expectedRequest, response, expected) => {
-    mocks.invoke.mockResolvedValue(response);
+  ] as const)(
+    '%s sends its request and returns the payload',
+    async (_name, request, expectedRequest, response, expected) => {
+      mocks.invoke.mockResolvedValue(response);
 
-    await expect(request()).resolves.toEqual(expected);
-    expect(mocks.invoke).toHaveBeenCalledWith('ipc_history', { req: expectedRequest });
-  });
+      await expect(request()).resolves.toEqual(expected);
+      expect(mocks.invoke).toHaveBeenCalledWith('ipc_history', { req: expectedRequest });
+    },
+  );
 
   it.each([
     ['delete', historyDelete, { kind: 'delete', data: { id: 7 } }],
@@ -83,14 +89,17 @@ describe('history IPC requests', () => {
     ['show in folder', historyShowInFolder, { kind: 'showInFolder', data: { id: 7 } }],
     ['open file', historyOpenFile, { kind: 'openFile', data: { id: 7 } }],
     ['open URL', historyOpenUrl, { kind: 'openUrl', data: { id: 7 } }],
-  ] as const)('%s sends the capture id and accepts its acknowledgement', async (_name, request, expectedRequest) => {
-    mocks.invoke.mockResolvedValue({ kind: expectedRequest.kind });
+  ] as const)(
+    '%s sends the capture id and accepts its acknowledgement',
+    async (_name, request, expectedRequest) => {
+      mocks.invoke.mockResolvedValue({ kind: expectedRequest.kind });
 
-    await expect(request(7)).resolves.toBeUndefined();
-    expect(mocks.invoke).toHaveBeenCalledWith('ipc_history', {
-      req: expectedRequest,
-    });
-  });
+      await expect(request(7)).resolves.toBeUndefined();
+      expect(mocks.invoke).toHaveBeenCalledWith('ipc_history', {
+        req: expectedRequest,
+      });
+    },
+  );
 });
 
 describe('history IPC response validation', () => {

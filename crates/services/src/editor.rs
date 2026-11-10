@@ -163,10 +163,6 @@ pub fn annotate_image(image: &Image) -> Result<Image, snapline_core::workflow::W
         .ok_or(snapline_core::workflow::WorkflowError::Cancelled)
 }
 
-pub fn is_available() -> bool {
-    PORTS.get().is_some()
-}
-
 fn installed() -> Option<Arc<EditorPorts>> {
     PORTS.get().cloned()
 }

@@ -20,16 +20,8 @@ impl Rgba {
         Self { r, g, b, a }
     }
 
-    pub const fn opaque(r: u8, g: u8, b: u8) -> Self {
-        Self::new(r, g, b, 255)
-    }
-
     pub const fn alpha(self, a: u8) -> Self {
         Self::new(self.r, self.g, self.b, a)
-    }
-
-    pub const fn components(self) -> [u8; 4] {
-        [self.r, self.g, self.b, self.a]
     }
 
     pub fn from_hex(hex: &str) -> Option<Self> {

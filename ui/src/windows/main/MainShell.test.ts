@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
-import { tick } from 'svelte';
+import { flush } from '../../test/flush';
 import { expectAccessible } from '../../test/axe';
 import { currentRoute, resolve } from '../../router';
 import MainShell from './MainShell.svelte';
@@ -33,14 +33,6 @@ vi.mock('../../lib/ipc/tool', () => ({
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => appWindow,
 }));
-
-async function flush(): Promise<void> {
-  await tick();
-  await Promise.resolve();
-  await tick();
-  await Promise.resolve();
-  await tick();
-}
 
 beforeEach(() => {
   currentRoute.set(resolve('#/workflows'));

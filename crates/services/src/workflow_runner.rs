@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use snapline_core::actions::{ActionId, WORKFLOW_PREFIX};
 use snapline_core::ids::DestId;
 use snapline_core::image::Image;
-use snapline_core::media::{classify, content_type, MediaKind};
+use snapline_core::media::{classify, content_type};
 use snapline_core::ports::{Clipboard, ClipboardError, Clock, Notifier, Ocr, Sound};
 use snapline_core::workflow::{
     self, AnnotatePort, CaptureKind, CapturePort, GifPort, RecordKind, RecordPort, Recorded,
@@ -435,15 +435,9 @@ impl WorkflowUploadHandOff for QueueUploadHandOff {
             ToOwned::to_owned,
         );
         if !DestinationRef::is_upload_id(&dest) {
-            let setting = match media {
-                MediaKind::Image => "uploads.images",
-                MediaKind::Video | MediaKind::Gif => "uploads.videos_and_gifs",
-                MediaKind::Text => "uploads.text_and_code",
-                MediaKind::File => "uploads.other_files",
-            };
-            return Err(ServiceError::Invalid(format!(
-                "Choose an upload destination in Settings for {setting}."
-            )));
+            return Err(ServiceError::Invalid(
+                crate::uploads::missing_destination_message(media),
+            ));
         }
         let uploader = self.destinations.uploader(&dest).ok_or_else(|| {
             ServiceError::Invalid("The upload destination was not found.".to_owned())
@@ -559,10 +553,6 @@ impl WorkflowGate for HotkeyGate {
     }
 }
 
-pub trait WorkflowResumeSink: Send + Sync {
-    fn resumed(&self, report: &RunReport);
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunOutcome {
     Ran(RunReport),
@@ -597,7 +587,6 @@ struct Inner {
     ports: RunnerPorts,
     gate: Arc<dyn WorkflowGate>,
     pending: Arc<Mutex<HashMap<u64, Pending>>>,
-    resume: Option<Arc<dyn WorkflowResumeSink>>,
 }
 
 #[derive(Clone)]
@@ -613,7 +602,6 @@ impl WorkflowRunner {
                 ports,
                 gate: Arc::new(HotkeyGate::new(services)),
                 pending: Arc::new(Mutex::new(HashMap::new())),
-                resume: None,
             }),
         }
     }
@@ -625,19 +613,6 @@ impl WorkflowRunner {
                 ports: self.inner.ports.clone(),
                 gate,
                 pending: Arc::clone(&self.inner.pending),
-                resume: self.inner.resume.clone(),
-            }),
-        }
-    }
-
-    pub fn with_resume_sink(self, sink: Arc<dyn WorkflowResumeSink>) -> Self {
-        Self {
-            inner: Arc::new(Inner {
-                services: self.inner.services.clone(),
-                ports: self.inner.ports.clone(),
-                gate: Arc::clone(&self.inner.gate),
-                pending: Arc::clone(&self.inner.pending),
-                resume: Some(sink),
             }),
         }
     }
@@ -698,12 +673,7 @@ impl WorkflowRunner {
             file_name,
         };
         match workflow::resume_after_upload(&pending.workflow, &ports, &mut context, uploaded) {
-            Ok(report) => {
-                if let Some(sink) = &self.inner.resume {
-                    sink.resumed(&report);
-                }
-                Ok(Some(report))
-            }
+            Ok(report) => Ok(Some(report)),
             Err(error) => Err(map_run_error(error)),
         }
     }

@@ -32,6 +32,16 @@ pub enum Event {
 pub const LAST_LINK_KEY: &str = "last_link";
 pub const TEST_RUN_ID: &str = "snapline-destination-test";
 
+pub fn missing_destination_message(media: MediaKind) -> String {
+    let label = match media {
+        MediaKind::Image => "images",
+        MediaKind::Video | MediaKind::Gif => "videos and GIFs",
+        MediaKind::Text => "text and code",
+        MediaKind::File => "other files",
+    };
+    format!("Choose a destination for {label} in Settings, under Upload destinations.")
+}
+
 pub fn destination_for(uploads: &Uploads, media: MediaKind) -> &DestinationRef {
     match media {
         MediaKind::Image => &uploads.images,
@@ -379,17 +389,6 @@ impl UploaderThread {
         let mut thread = Self::spawn(services, secrets, policy, files, destinations, events)?;
         thread.events = Some(receiver);
         Ok(thread)
-    }
-
-    pub fn start_with_events(
-        services: &Services,
-        secrets: Arc<dyn CoreSecretStore + Send + Sync>,
-        policy: queue::RetryPolicy,
-        files: Arc<dyn FileSource>,
-        destinations: Arc<dyn DestinationSource>,
-        events: crossbeam_channel::Sender<AppEvent>,
-    ) -> Result<Self, ServiceError> {
-        Self::spawn(services, secrets, policy, files, destinations, events)
     }
 
     fn spawn(
@@ -929,5 +928,157 @@ mod tests {
             })
         );
         thread.join().expect("join");
+    }
+
+    const DAY_MS: i64 = 86_400_000;
+
+    fn now_ms() -> i64 {
+        time::OffsetDateTime::now_utc().unix_timestamp() * 1000
+    }
+
+    fn seed_upload(
+        services: &Services,
+        name: &str,
+        state: HistoryUploadState,
+        updated_at: i64,
+    ) -> i64 {
+        use snapline_store::history::{CaptureKind, NewCapture};
+
+        let path = services.paths().expect("paths").history_file;
+        let mut repo = HistoryRepo::open_write(&path).expect("history");
+        let id = repo
+            .record(NewCapture {
+                kind: CaptureKind::Image,
+                path: format!("C:\\captures\\{name}"),
+                bytes: 3,
+                width: None,
+                height: None,
+                duration_ms: None,
+                source_app: None,
+                created_at: updated_at,
+                ocr_text: None,
+            })
+            .expect("capture");
+        repo.set_upload(UploadUpdate {
+            sent: 0,
+            total: 0,
+            capture_id: id,
+            dest_id: "test".to_owned(),
+            state,
+            url: None,
+            deletion_url: None,
+            error: None,
+            attempts: 1,
+            updated_at,
+        })
+        .expect("upload");
+        id
+    }
+
+    fn upload_state(services: &Services, id: i64) -> Option<HistoryUploadState> {
+        let path = services.paths().expect("paths").history_file;
+        HistoryRepo::open_read(&path)
+            .expect("history")
+            .get(id)
+            .expect("get")
+            .expect("capture")
+            .upload
+            .map(|upload| upload.state)
+    }
+
+    fn keep_history(services: &Services, value: &str) {
+        services
+            .update_settings(&serde_json::json!({ "uploads": { "keep_history": value } }))
+            .expect("settings");
+    }
+
+    #[test]
+    fn maintenance_without_a_history_file_does_nothing() {
+        let fixture = settings_fixture();
+        maintain_history(&fixture.services, true).expect("maintain");
+        assert!(!fixture
+            .services
+            .paths()
+            .expect("paths")
+            .history_file
+            .exists());
+    }
+
+    #[test]
+    fn keeping_history_forever_expires_nothing() {
+        let fixture = settings_fixture();
+        let old = seed_upload(
+            &fixture.services,
+            "old.png",
+            HistoryUploadState::Done,
+            now_ms() - 5000 * DAY_MS,
+        );
+        maintain_history(&fixture.services, false).expect("maintain");
+        maintain_history(&fixture.services, true).expect("maintain at startup");
+        assert_eq!(
+            upload_state(&fixture.services, old),
+            Some(HistoryUploadState::Done)
+        );
+    }
+
+    #[test]
+    fn each_retention_setting_expires_uploads_past_its_age() {
+        for (setting, days) in [("days30", 30), ("days90", 90), ("one_year", 365)] {
+            let fixture = settings_fixture();
+            keep_history(&fixture.services, setting);
+            let now = now_ms();
+            let expired = seed_upload(
+                &fixture.services,
+                "expired.png",
+                HistoryUploadState::Done,
+                now - (days + 1) * DAY_MS,
+            );
+            let kept = seed_upload(
+                &fixture.services,
+                "kept.png",
+                HistoryUploadState::Done,
+                now - (days - 1) * DAY_MS,
+            );
+            maintain_history(&fixture.services, false).expect("maintain");
+            assert_eq!(upload_state(&fixture.services, expired), None, "{setting}");
+            assert_eq!(
+                upload_state(&fixture.services, kept),
+                Some(HistoryUploadState::Done),
+                "{setting}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_startup_maintenance_fails_interrupted_uploads() {
+        let fixture = settings_fixture();
+        keep_history(&fixture.services, "days30");
+        let now = now_ms();
+        let queued = seed_upload(
+            &fixture.services,
+            "queued.png",
+            HistoryUploadState::Queued,
+            now,
+        );
+        let uploading = seed_upload(
+            &fixture.services,
+            "uploading.png",
+            HistoryUploadState::Uploading,
+            now,
+        );
+        maintain_history(&fixture.services, false).expect("maintain");
+        assert_eq!(
+            upload_state(&fixture.services, queued),
+            Some(HistoryUploadState::Queued)
+        );
+        maintain_history(&fixture.services, true).expect("maintain at startup");
+        assert_eq!(
+            upload_state(&fixture.services, queued),
+            Some(HistoryUploadState::Failed)
+        );
+        assert_eq!(
+            upload_state(&fixture.services, uploading),
+            Some(HistoryUploadState::Failed)
+        );
     }
 }

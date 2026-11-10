@@ -50,8 +50,6 @@ export interface PanelRecent {
   duration?: string;
 }
 
-export const panelLastLink = 'https://i.imgur.com/kq7Ra2P.png';
-
 export function toPanelRecent(capture: RecentCaptureDto, now: number = Date.now()): PanelRecent {
   return {
     id: capture.id,

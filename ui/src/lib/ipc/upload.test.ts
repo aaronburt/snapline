@@ -87,7 +87,10 @@ describe('destination IPC requests', () => {
       req: { kind: 'destination', data: { kind: 'list' } },
     });
 
-    mocks.invoke.mockResolvedValueOnce({ kind: 'destination', data: { kind: 'removed', data: { id: 'x' } } });
+    mocks.invoke.mockResolvedValueOnce({
+      kind: 'destination',
+      data: { kind: 'removed', data: { id: 'x' } },
+    });
     await expect(listDestinations()).resolves.toEqual([]);
   });
 
@@ -125,7 +128,10 @@ describe('destination IPC requests', () => {
       { kind: 'importSxcu' },
       {
         kind: 'destination',
-        data: { kind: 'imported', data: { destination: destinationView, warnings: ['review credentials'] } },
+        data: {
+          kind: 'imported',
+          data: { destination: destinationView, warnings: ['review credentials'] },
+        },
       },
       { destination: destinationView, warnings: ['review credentials'] },
     ],
@@ -143,34 +149,52 @@ describe('destination IPC requests', () => {
       { kind: 'destination', data: { kind: 'exported', data: { path: null } } },
       null,
     ],
-  ] as const)('%s forwards its payload and returns the result', async (_name, operation, request, response, expected) => {
-    mocks.invoke.mockResolvedValue(response);
+  ] as const)(
+    '%s forwards its payload and returns the result',
+    async (_name, operation, request, response, expected) => {
+      mocks.invoke.mockResolvedValue(response);
 
-    await expect(operation()).resolves.toEqual(expected);
-    expect(mocks.invoke).toHaveBeenCalledWith('ipc_upload', {
-      req: { kind: 'destination', data: request },
-    });
-  });
+      await expect(operation()).resolves.toEqual(expected);
+      expect(mocks.invoke).toHaveBeenCalledWith('ipc_upload', {
+        req: { kind: 'destination', data: request },
+      });
+    },
+  );
 
   it('removes a destination by id', async () => {
-    mocks.invoke.mockResolvedValueOnce({ kind: 'destination', data: { kind: 'removed', data: { id: 'sftp-1' } } });
+    mocks.invoke.mockResolvedValueOnce({
+      kind: 'destination',
+      data: { kind: 'removed', data: { id: 'sftp-1' } },
+    });
     await expect(removeDestination('sftp-1')).resolves.toBeUndefined();
     expect(mocks.invoke).toHaveBeenCalledWith('ipc_upload', {
       req: { kind: 'destination', data: { kind: 'remove', data: { id: 'sftp-1' } } },
     });
 
-    mocks.invoke.mockResolvedValueOnce({ kind: 'destination', data: { kind: 'destination', data: destinationView } });
-    await expect(removeDestination('sftp-1')).rejects.toThrow('The destination could not be removed.');
+    mocks.invoke.mockResolvedValueOnce({
+      kind: 'destination',
+      data: { kind: 'destination', data: destinationView },
+    });
+    await expect(removeDestination('sftp-1')).rejects.toThrow(
+      'The destination could not be removed.',
+    );
   });
 
   it.each([
     ['add', () => addDestination('sftp'), 'The destination could not be added.'],
-    ['save', () => saveDestination({ kind: 'custom', headers: [] }), 'The destination could not be saved.'],
+    [
+      'save',
+      () => saveDestination({ kind: 'custom', headers: [] }),
+      'The destination could not be saved.',
+    ],
     ['test', () => testDestination('sftp-1'), 'The test upload could not be started.'],
     ['import', () => importSxcu(), 'The uploader could not be imported.'],
     ['export', () => exportSxcu('sftp-1'), 'The uploader could not be exported.'],
   ] as const)('%s rejects a response of the wrong kind', async (_name, operation, message) => {
-    mocks.invoke.mockResolvedValue({ kind: 'destination', data: { kind: 'removed', data: { id: 'sftp-1' } } });
+    mocks.invoke.mockResolvedValue({
+      kind: 'destination',
+      data: { kind: 'removed', data: { id: 'sftp-1' } },
+    });
 
     await expect(operation()).rejects.toThrow(message);
   });

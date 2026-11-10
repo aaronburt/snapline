@@ -1567,4 +1567,274 @@ mod tests {
         assert_eq!(uploader.calls().len(), 4);
         queue.join().expect("join");
     }
+
+    struct SteppedUploader {
+        started: Sender<()>,
+        release: Mutex<Receiver<()>>,
+        calls: AtomicU64,
+    }
+
+    impl SteppedUploader {
+        fn new() -> (Arc<Self>, Receiver<()>, Sender<()>) {
+            let (started_tx, started_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            (
+                Arc::new(Self {
+                    started: started_tx,
+                    release: Mutex::new(release_rx),
+                    calls: AtomicU64::new(0),
+                }),
+                started_rx,
+                release_tx,
+            )
+        }
+    }
+
+    impl Uploader for SteppedUploader {
+        fn upload(
+            &self,
+            file: &UploadFile,
+            secrets: &dyn SecretStore,
+        ) -> Result<Uploaded, UploadError> {
+            self.upload_controlled(file, secrets, &NoopUploadControl)
+        }
+
+        fn supports_in_flight_cancel(&self) -> bool {
+            true
+        }
+
+        fn reports_progress(&self) -> bool {
+            true
+        }
+
+        fn upload_controlled(
+            &self,
+            file: &UploadFile,
+            _secrets: &dyn SecretStore,
+            control: &dyn UploadControl,
+        ) -> Result<Uploaded, UploadError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            for sent in 1..=file.len {
+                control.sent(sent);
+            }
+            let _ = self.started.send(());
+            let release = self.release.lock().expect("release");
+            loop {
+                if control.cancelled() {
+                    return Err(UploadError::Cancelled);
+                }
+                match release.recv_timeout(Duration::from_millis(5)) {
+                    Ok(()) => return Ok(Uploaded::new("https://example.test/stepped")),
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => {
+                        return Err(UploadError::permanent("released without a result"))
+                    }
+                }
+            }
+        }
+
+        fn delete(
+            &self,
+            _link: &DeletionLink,
+            _secrets: &dyn SecretStore,
+        ) -> Result<(), UploadError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_uploading_job_can_be_cancelled_when_the_uploader_supports_it() {
+        let (uploader, started, _release) = SteppedUploader::new();
+        let (queue, events) =
+            Queue::start(Arc::new(TestSecrets), RetryPolicy::new(3)).expect("queue");
+        let handle = queue.handle();
+        let id = handle
+            .enqueue(UploadJob::new(
+                uploader.clone(),
+                file("large.bin"),
+                "test",
+                None,
+            ))
+            .expect("enqueue");
+        started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("started");
+        let uploading = handle.state(id).expect("state").expect("snapshot");
+        assert_eq!(uploading.status, Status::Uploading);
+        assert!(uploading.cancellable);
+        assert!(uploading.progress_available);
+        handle.cancel(id).expect("cancel in flight");
+        let finished = wait_terminal(&events, id);
+        assert_eq!(finished.status, Status::Cancelled);
+        assert_eq!(finished.error, None);
+        assert!(!finished.cancellable);
+        assert_eq!(uploader.calls.load(Ordering::SeqCst), 1);
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn an_uploading_job_cannot_be_cancelled_without_uploader_support() {
+        let (gate, started, release) = GateUploader::new();
+        let (queue, events) =
+            Queue::start(Arc::new(TestSecrets), RetryPolicy::new(0)).expect("queue");
+        let handle = queue.handle();
+        let id = handle
+            .enqueue(UploadJob::new(gate, file("fixed.png"), "test", None))
+            .expect("enqueue");
+        started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("started");
+        let uploading = handle.state(id).expect("state").expect("snapshot");
+        assert!(!uploading.cancellable);
+        assert!(!uploading.progress_available);
+        assert_eq!(
+            handle.cancel(id).expect_err("not cancellable"),
+            QueueError::NotCancellable
+        );
+        release.send(()).expect("release");
+        assert_eq!(wait_terminal(&events, id).status, Status::Done);
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn progress_events_report_the_bytes_sent_and_finish_at_the_total() {
+        let (uploader, started, release) = SteppedUploader::new();
+        let (queue, events) =
+            Queue::start(Arc::new(TestSecrets), RetryPolicy::new(0)).expect("queue");
+        let handle = queue.handle();
+        let id = handle
+            .enqueue(UploadJob::new(uploader, file("steps.bin"), "test", None))
+            .expect("enqueue");
+        started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("started");
+        release.send(()).expect("release");
+        let mut sent = Vec::new();
+        let finished = loop {
+            let event = events.recv_timeout(Duration::from_secs(5)).expect("event");
+            if event.0.id != id {
+                continue;
+            }
+            if event.0.status == Status::Uploading {
+                assert_eq!(event.0.total, 3);
+                sent.push(event.0.sent);
+            }
+            if event.0.status.terminal() {
+                break event.0;
+            }
+        };
+        assert_eq!(sent, vec![0, 1, 2, 3]);
+        assert_eq!(finished.status, Status::Done);
+        assert_eq!((finished.sent, finished.total), (3, 3));
+        queue.join().expect("join");
+    }
+
+    fn path_file(bytes: &[u8]) -> (tempfile::TempDir, PathBuf, UploadFile) {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory.path().join("source.bin");
+        std::fs::write(&path, bytes).expect("source file");
+        let file = UploadFile::read(&path, "application/octet-stream").expect("upload file");
+        (directory, path, file)
+    }
+
+    fn error_of<T>(result: Result<T, UploadError>) -> UploadError {
+        match result {
+            Ok(_) => panic!("the call succeeded"),
+            Err(error) => error,
+        }
+    }
+
+    const CHANGED: &str =
+        "The file changed after it was added. Add it again to upload the new version.";
+    const SHORTER: &str = "The file became shorter while it was being uploaded.";
+
+    #[test]
+    fn a_path_file_reads_back_its_bytes() {
+        let (_directory, _path, file) = path_file(b"abcdef");
+        assert_eq!(file.len, 6);
+        assert_eq!(file.file_name, "source.bin");
+        assert_eq!(file.read_all(6).expect("bytes"), b"abcdef");
+        let mut streamed = Vec::new();
+        file.open()
+            .expect("open")
+            .read_to_end(&mut streamed)
+            .expect("stream");
+        assert_eq!(streamed, b"abcdef");
+    }
+
+    #[test]
+    fn a_file_with_a_new_length_is_refused() {
+        let (_directory, path, file) = path_file(b"abcdef");
+        std::fs::write(&path, b"abcdefgh").expect("rewrite");
+        assert_eq!(error_of(file.open()), UploadError::permanent(CHANGED));
+        assert_eq!(error_of(file.read_all(64)), UploadError::permanent(CHANGED));
+    }
+
+    #[test]
+    fn a_file_with_a_new_modified_time_is_refused() {
+        let (_directory, path, file) = path_file(b"abcdef");
+        let handle = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("reopen");
+        handle
+            .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1_000_000))
+            .expect("set modified");
+        drop(handle);
+        assert_eq!(std::fs::metadata(&path).expect("metadata").len(), file.len);
+        assert_eq!(error_of(file.open()), UploadError::permanent(CHANGED));
+    }
+
+    #[test]
+    fn a_removed_file_is_refused() {
+        let (_directory, path, file) = path_file(b"abcdef");
+        std::fs::remove_file(&path).expect("remove");
+        assert_eq!(
+            error_of(file.open()),
+            UploadError::permanent(
+                "The file is no longer available. Add it again before uploading."
+            )
+        );
+    }
+
+    #[test]
+    fn a_file_over_the_buffer_limit_is_too_large() {
+        let (_directory, _path, file) = path_file(b"abcdef");
+        assert_eq!(error_of(file.read_all(5)), UploadError::TooLarge);
+        assert_eq!(
+            error_of(
+                UploadFile::new("shot.png", "shot.png", "image/png", vec![0_u8; 6]).read_all(5)
+            ),
+            UploadError::TooLarge
+        );
+    }
+
+    #[test]
+    fn the_stream_never_reads_past_the_recorded_length() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory.path().join("source.bin");
+        std::fs::write(&path, b"abcdef").expect("source file");
+        let mut reader = LengthLimitedReader {
+            file: std::fs::File::open(&path).expect("open"),
+            remaining: 4,
+        };
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).expect("read");
+        assert_eq!(bytes, b"abcd");
+    }
+
+    #[test]
+    fn a_file_that_ends_early_is_an_unexpected_end() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory.path().join("source.bin");
+        std::fs::write(&path, b"abc").expect("source file");
+        let mut reader = LengthLimitedReader {
+            file: std::fs::File::open(&path).expect("open"),
+            remaining: 6,
+        };
+        let mut bytes = Vec::new();
+        let error = reader.read_to_end(&mut bytes).expect_err("short file");
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(error.to_string(), SHORTER);
+    }
 }

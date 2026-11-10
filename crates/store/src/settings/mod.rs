@@ -84,10 +84,6 @@ impl LoadOutcome {
             notice: None,
         }
     }
-
-    pub fn has_notice(&self) -> bool {
-        self.notice.is_some()
-    }
 }
 
 #[derive(Debug, Error)]

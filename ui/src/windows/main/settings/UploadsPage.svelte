@@ -303,7 +303,12 @@
             >
               Add destination
             </Button>
-            <Popover label="Add destination" align="end" bind:open={addOpen} onclose={() => (addOpen = false)}>
+            <Popover
+              label="Add destination"
+              align="end"
+              bind:open={addOpen}
+              onclose={() => (addOpen = false)}
+            >
               <div class="menu">
                 <button type="button" class="hv" onclick={() => add('imgur')}>
                   <Icon name="image" size={16} />

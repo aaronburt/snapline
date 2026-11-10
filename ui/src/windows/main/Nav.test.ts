@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { get } from 'svelte/store';
-import { tick } from 'svelte';
+import { flush } from '../../test/flush';
 import { expectAccessible } from '../../test/axe';
 import Nav from './Nav.svelte';
 import { searchQuery } from './history/search';
@@ -12,12 +12,6 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../lib/ipc/core', () => ({ call: mocks.call }));
-
-async function flush(): Promise<void> {
-  await tick();
-  await Promise.resolve();
-  await tick();
-}
 
 beforeEach(() => {
   mocks.call.mockReset();

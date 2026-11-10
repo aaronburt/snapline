@@ -24,7 +24,14 @@
   import CaptureGrid from './CaptureGrid.svelte';
   import CaptureList from './CaptureList.svelte';
   import DetailPane from './DetailPane.svelte';
-  import { captureCardGap, captureCardWidth, filterValue, formatBytes, groupCaptures, historyFilters } from './data';
+  import {
+    captureCardGap,
+    captureCardWidth,
+    filterValue,
+    formatBytes,
+    groupCaptures,
+    historyFilters,
+  } from './data';
   import { searchQuery } from './search';
 
   let filterLabel = $state('All');
@@ -59,7 +66,9 @@
     }
     return byCapture;
   });
-  const columns = $derived(Math.max(1, Math.floor((viewportWidth + captureCardGap) / (captureCardWidth + captureCardGap))));
+  const columns = $derived(
+    Math.max(1, Math.floor((viewportWidth + captureCardGap) / (captureCardWidth + captureCardGap))),
+  );
 
   function describe(error: unknown): string {
     if (
@@ -163,26 +172,39 @@
           }
         }
       }
-      if ((event.area === 'history' && event.event.kind !== 'ping') ||
-          (event.area === 'upload' && event.event.kind === 'stateChanged' &&
-           ['queued', 'done', 'failed', 'cancelled'].includes(event.event.data.status))) {
+      if (
+        (event.area === 'history' && event.event.kind !== 'ping') ||
+        (event.area === 'upload' &&
+          event.event.kind === 'stateChanged' &&
+          ['queued', 'done', 'failed', 'cancelled'].includes(event.event.data.status))
+      ) {
         void fetchPage(true);
         void refreshStats();
       }
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlisten = stop;
-    }).catch(() => undefined).then(async () => {
-      if (disposed) return;
-      const states = await listUploadStates();
-      if (disposed) return;
-      for (const state of states) {
-        if (state.captureId !== null && !observed?.has(state.id) &&
-            !['done', 'failed', 'cancelled'].includes(state.status)) {
-          uploadsById[state.id] = state;
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch(() => undefined)
+      .then(async () => {
+        if (disposed) return;
+        const states = await listUploadStates();
+        if (disposed) return;
+        for (const state of states) {
+          if (
+            state.captureId !== null &&
+            !observed?.has(state.id) &&
+            !['done', 'failed', 'cancelled'].includes(state.status)
+          ) {
+            uploadsById[state.id] = state;
+          }
         }
-      }
-    }).catch(() => undefined).finally(() => { observed = null; });
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        observed = null;
+      });
     void settingsGet()
       .then((settings) => {
         const destination = settings.uploads.images;
@@ -191,7 +213,10 @@
         }
       })
       .catch(() => undefined);
-    return () => { disposed = true; unlisten?.(); };
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   });
 
   function onscroll(event: Event): void {
@@ -219,7 +244,11 @@
 
   function deselectBackground(event: MouseEvent): void {
     const target = event.target;
-    if (target instanceof Element && target.closest('main.page') && !target.closest('[data-capture-id], button, a, input, select, textarea')) {
+    if (
+      target instanceof Element &&
+      target.closest('main.page') &&
+      !target.closest('[data-capture-id], button, a, input, select, textarea')
+    ) {
       selectedId = null;
     }
   }
@@ -270,7 +299,9 @@
   }
 
   function pin(id: number): void {
-    void pinHistory(id).catch((error: unknown) => { errorMessage = describe(error); });
+    void pinHistory(id).catch((error: unknown) => {
+      errorMessage = describe(error);
+    });
   }
 
   async function uploadFiles(): Promise<void> {
@@ -369,132 +400,141 @@
 <svelte:window {onkeydown} onclick={deselectBackground} />
 
 <div class="history-layout">
-<main class="page">
-  <div class="pagehead">
-    <div class="titles">
-      <h1>History</h1>
-      <div class="sub" aria-live="polite">
-        {stats.count} captures · {formatBytes(stats.bytes)} on disk · {stats.uploadedThisWeek} uploaded
-        this week
+  <main class="page">
+    <div class="pagehead">
+      <div class="titles">
+        <h1>History</h1>
+        <div class="sub" aria-live="polite">
+          {stats.count} captures · {formatBytes(stats.bytes)} on disk · {stats.uploadedThisWeek} uploaded
+          this week
+        </div>
+      </div>
+      <div class="controls">
+        <button type="button" class="upload-file hv" onclick={() => void uploadFiles()}>
+          Upload file…
+        </button>
+        <Segmented
+          options={historyFilters}
+          value={filterLabel}
+          label="Filter by type"
+          onchange={(value) => {
+            filterLabel = value;
+          }}
+        />
+        <div class="view-options">
+          <button
+            type="button"
+            class="hv viewbtn"
+            class:on={view === 'grid'}
+            aria-label="Grid view"
+            aria-pressed={view === 'grid'}
+            onclick={() => {
+              view = 'grid';
+            }}
+          >
+            <Icon name="grid" size={16} />
+          </button>
+          <button
+            type="button"
+            class="hv viewbtn"
+            class:on={view === 'list'}
+            aria-label="List view"
+            aria-pressed={view === 'list'}
+            onclick={() => {
+              view = 'list';
+            }}
+          >
+            <Icon name="list" size={16} strokeWidth={1.8} />
+          </button>
+        </div>
       </div>
     </div>
-    <div class="controls">
-      <button type="button" class="upload-file hv" onclick={() => void uploadFiles()}>
-        Upload file…
-      </button>
-      <Segmented
-        options={historyFilters}
-        value={filterLabel}
-        label="Filter by type"
-        onchange={(value) => {
-          filterLabel = value;
-        }}
-      />
-      <div class="view-options">
-      <button
-        type="button"
-        class="hv viewbtn"
-        class:on={view === 'grid'}
-        aria-label="Grid view"
-        aria-pressed={view === 'grid'}
-        onclick={() => {
-          view = 'grid';
-        }}
-      >
-        <Icon name="grid" size={16} />
-      </button>
-      <button
-        type="button"
-        class="hv viewbtn"
-        class:on={view === 'list'}
-        aria-label="List view"
-        aria-pressed={view === 'list'}
-        onclick={() => {
-          view = 'list';
-        }}
-      >
-        <Icon name="list" size={16} strokeWidth={1.8} />
-      </button>
-      </div>
-    </div>
-  </div>
 
-  {#if errorMessage}
-    <p class="error" role="status">{errorMessage}</p>
+    {#if errorMessage}
+      <p class="error" role="status">{errorMessage}</p>
+    {/if}
+
+    <div
+      class="scroll"
+      bind:this={scroller}
+      bind:clientWidth={viewportWidth}
+      bind:clientHeight={viewportHeight}
+      {onscroll}
+    >
+      {#if loaded && !loading && !errorMessage && items.length === 0}
+        <div class="empty">
+          {#if searching || filter !== 'all'}
+            <EmptyState
+              title="No matching items"
+              text="Clear the search or change the filter to see more of your history."
+            />
+            <div class="empty-actions">
+              {#if searching}
+                <button type="button" class="upload-file hv" onclick={() => searchQuery.set('')}
+                  >Clear search</button
+                >
+              {/if}
+              {#if filter !== 'all'}
+                <button type="button" class="upload-file hv" onclick={() => (filterLabel = 'All')}
+                  >Reset filters</button
+                >
+              {/if}
+            </div>
+          {:else}
+            <EmptyState title="No captures yet" text="Press PrtSc to capture a region." />
+            <button type="button" class="upload-file primary hv" onclick={() => void uploadFiles()}
+              >Upload file…</button
+            >
+          {/if}
+        </div>
+      {:else if view === 'grid'}
+        <CaptureGrid
+          {groups}
+          {activeUploads}
+          {selectedId}
+          {columns}
+          {viewportHeight}
+          bind:scrollTop
+          {scroller}
+          onselect={select}
+          onopen={openFile}
+        />
+      {:else}
+        <CaptureList
+          {items}
+          {activeUploads}
+          {selectedId}
+          {viewportHeight}
+          {viewportWidth}
+          bind:scrollTop
+          {scroller}
+          onselect={select}
+          onopen={openFile}
+          oncancel={cancelRowUpload}
+        />
+      {/if}
+      {#if loading}
+        <div class="loading" role="status"><span class="sr-only">Loading captures</span></div>
+      {/if}
+    </div>
+  </main>
+
+  {#if selected}
+    <DetailPane
+      capture={selected}
+      activeUpload={selected ? (activeUploads[selected.id] ?? null) : null}
+      {defaultDestination}
+      oncopy={copyImage}
+      onshow={showInFolder}
+      onopen={openFile}
+      onannotate={annotate}
+      onpin={pin}
+      onclose={closeDetails}
+      ondelete={(id) => {
+        void askDelete(id);
+      }}
+    />
   {/if}
-
-  <div
-    class="scroll"
-    bind:this={scroller}
-    bind:clientWidth={viewportWidth}
-    bind:clientHeight={viewportHeight}
-    {onscroll}
-  >
-    {#if loaded && !loading && !errorMessage && items.length === 0}
-      <div class="empty">
-        {#if searching || filter !== 'all'}
-          <EmptyState title="No matching items" text="Clear the search or change the filter to see more of your history." />
-          <div class="empty-actions">
-            {#if searching}
-              <button type="button" class="upload-file hv" onclick={() => searchQuery.set('')}>Clear search</button>
-            {/if}
-            {#if filter !== 'all'}
-              <button type="button" class="upload-file hv" onclick={() => (filterLabel = 'All')}>Reset filters</button>
-            {/if}
-          </div>
-        {:else}
-          <EmptyState title="No captures yet" text="Press PrtSc to capture a region." />
-          <button type="button" class="upload-file primary hv" onclick={() => void uploadFiles()}>Upload file…</button>
-        {/if}
-      </div>
-    {:else if view === 'grid'}
-      <CaptureGrid
-        {groups}
-        {activeUploads}
-        {selectedId}
-        {columns}
-        {viewportHeight}
-        bind:scrollTop
-        {scroller}
-        onselect={select}
-        onopen={openFile}
-      />
-    {:else}
-      <CaptureList
-        {items}
-        {activeUploads}
-        {selectedId}
-        {viewportHeight}
-        {viewportWidth}
-        bind:scrollTop
-        {scroller}
-        onselect={select}
-        onopen={openFile}
-        oncancel={cancelRowUpload}
-      />
-    {/if}
-    {#if loading}
-      <div class="loading" role="status"><span class="sr-only">Loading captures</span></div>
-    {/if}
-  </div>
-</main>
-
-{#if selected}
-<DetailPane
-  capture={selected}
-  activeUpload={selected ? activeUploads[selected.id] ?? null : null}
-  {defaultDestination}
-  oncopy={copyImage}
-  onshow={showInFolder}
-  onopen={openFile}
-  onannotate={annotate}
-  onpin={pin}
-  onclose={closeDetails}
-  ondelete={(id) => {
-    void askDelete(id);
-  }}
-/>
-{/if}
 </div>
 
 <style>

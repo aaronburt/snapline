@@ -67,10 +67,6 @@ pub fn scroll(area: Rect, direction: ScrollDirection, notches: u32) -> Result<()
     Ok(())
 }
 
-pub fn scroll_once(area: Rect) -> Result<(), ScrollError> {
-    scroll(area, ScrollDirection::Down, 1)
-}
-
 pub fn escape_pressed() -> bool {
     // SAFETY: GetAsyncKeyState takes a constant virtual-key code and reads this thread's key state.
     let state = unsafe { GetAsyncKeyState(i32::from(VK_ESCAPE.0)) };

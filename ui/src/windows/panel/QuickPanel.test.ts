@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
-import { tick } from 'svelte';
+import { flush, MIDDAY } from '../../test/flush';
 import { expectAccessible } from '../../test/axe';
+import type { AppEvent } from '../../lib/ipc/bindings/AppEvent';
 import type { RecentCaptureDto } from '../../lib/ipc/bindings/RecentCaptureDto';
+import type { UploadState } from '../../lib/ipc/bindings/UploadState';
 import QuickPanel from './QuickPanel.svelte';
 import { relativeTime } from './data';
 
@@ -24,6 +26,12 @@ const ipc = vi.hoisted(() => ({
 
 vi.mock('./ipc', () => ipc);
 
+const events = vi.hoisted(() => ({ onEvent: vi.fn() }));
+
+vi.mock('../../lib/events', () => events);
+
+let handlers: ((event: AppEvent) => void)[] = [];
+
 function recent(id: number, overrides: Partial<RecentCaptureDto> = {}): RecentCaptureDto {
   return {
     id,
@@ -37,14 +45,15 @@ function recent(id: number, overrides: Partial<RecentCaptureDto> = {}): RecentCa
   };
 }
 
-async function flush(): Promise<void> {
-  await tick();
-  await tick();
-  await Promise.resolve();
-  await tick();
-}
-
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(MIDDAY);
+  handlers = [];
+  events.onEvent.mockReset();
+  events.onEvent.mockImplementation((callback: (event: AppEvent) => void) => {
+    handlers.push(callback);
+    return Promise.resolve(() => undefined);
+  });
   for (const mock of Object.values(ipc)) {
     mock.mockClear();
   }
@@ -56,7 +65,10 @@ beforeEach(() => {
   ipc.panelRecent.mockResolvedValue([recent(1), recent(2), recent(3)]);
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe('QuickPanel', () => {
   it('renders the header, capture tiles, real recents and footer', async () => {
@@ -194,6 +206,91 @@ describe('QuickPanel', () => {
     await flush();
     await fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
     expect(ipc.panelCopyLink).toHaveBeenCalledOnce();
+  });
+});
+
+describe('QuickPanel uploads', () => {
+  function upload(overrides: Partial<UploadState> = {}): UploadState {
+    return {
+      id: 9,
+      captureId: null,
+      fileName: 'clip.mp4',
+      dest: 'sftp',
+      runId: null,
+      status: 'uploading',
+      cancellable: true,
+      progressAvailable: true,
+      sent: 1024 * 1024,
+      total: 4 * 1024 * 1024,
+      linkBatch: null,
+      attempts: 1,
+      link: null,
+      pageLink: null,
+      deletionLink: null,
+      error: null,
+      retryInMs: null,
+      ...overrides,
+    };
+  }
+
+  async function emit(state: UploadState): Promise<void> {
+    handlers.forEach((handler) =>
+      handler({ area: 'upload', event: { kind: 'stateChanged', data: state } }),
+    );
+    await flush();
+  }
+
+  it('lists an active upload with its progress and removes it when it ends', async () => {
+    render(QuickPanel);
+    await flush();
+    expect(screen.queryByText('Uploads')).toBeNull();
+    await emit(upload());
+    expect(screen.getByText('clip.mp4')).not.toBeNull();
+    expect(screen.getByText('1.0 MB of 4.0 MB')).not.toBeNull();
+    const bar = screen.getByRole('progressbar', {
+      name: 'Upload progress for clip.mp4',
+    }) as HTMLProgressElement;
+    expect([bar.value, bar.max]).toEqual([1024 * 1024, 4 * 1024 * 1024]);
+    await emit(upload({ sent: 2 * 1024 * 1024 }));
+    expect(screen.getAllByRole('progressbar')).toHaveLength(1);
+    expect(screen.getByText('2.0 MB of 4.0 MB')).not.toBeNull();
+    await emit(upload({ status: 'done', cancellable: false }));
+    expect(screen.queryByText('Uploads')).toBeNull();
+    expect(screen.queryByRole('progressbar')).toBeNull();
+  });
+
+  it('shows an indeterminate bar and no Cancel for a fixed upload', async () => {
+    render(QuickPanel);
+    await flush();
+    await emit(upload({ progressAvailable: false, cancellable: false }));
+    expect(screen.getByText('Uploading')).not.toBeNull();
+    expect(screen.getByRole('progressbar').hasAttribute('value')).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+  });
+
+  it('cancels with the upload id', async () => {
+    render(QuickPanel);
+    await flush();
+    await emit(upload());
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await flush();
+    expect(core.call).toHaveBeenLastCalledWith('ipc_upload', {
+      kind: 'cancel',
+      data: { id: 9 },
+    });
+  });
+
+  it('includes uploads that were already running when the panel opened', async () => {
+    core.call.mockImplementation((_area: string, req: { kind: string }) =>
+      Promise.resolve(
+        req.kind === 'list'
+          ? { kind: 'states', data: [upload({ id: 4, fileName: 'earlier.zip' })] }
+          : { kind: 'lastLink', data: { link: null } },
+      ),
+    );
+    render(QuickPanel);
+    await flush();
+    expect(screen.getByText('earlier.zip')).not.toBeNull();
   });
 });
 

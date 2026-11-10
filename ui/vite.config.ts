@@ -26,6 +26,12 @@ export default defineConfig({
       reporter: ['text', 'html', 'lcov'],
       include: ['src/**/*.{ts,svelte}'],
       exclude: ['src/**/*.test.ts', 'src/test/**', 'src/lib/ipc/bindings/**'],
+      thresholds: {
+        statements: 82,
+        branches: 64,
+        functions: 82,
+        lines: 81,
+      },
     },
   },
 });

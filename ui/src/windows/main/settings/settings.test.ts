@@ -110,7 +110,9 @@ describe('settings updates', () => {
     expect(mocks.invoke.mock.calls).toEqual([
       [
         'ipc_settings',
-        { req: { kind: 'update', data: { patch: { general: { copied_link_format: 'markdown' } } } } },
+        {
+          req: { kind: 'update', data: { patch: { general: { copied_link_format: 'markdown' } } } },
+        },
       ],
       [
         'ipc_settings',
@@ -212,7 +214,9 @@ describe('settings loading helpers', () => {
   });
 
   it('returns safe fallbacks and stores errors when preview or folder selection fails', async () => {
-    mocks.invoke.mockRejectedValueOnce('preview unavailable').mockRejectedValueOnce('picker unavailable');
+    mocks.invoke
+      .mockRejectedValueOnce('preview unavailable')
+      .mockRejectedValueOnce('picker unavailable');
 
     await expect(requestPreview('{app}', 'png')).resolves.toBe('');
     expect(get(settingsError)).toBe('preview unavailable');

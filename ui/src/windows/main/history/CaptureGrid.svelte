@@ -5,7 +5,16 @@
   import UploadProgress from '../../../components/UploadProgress.svelte';
   import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
   import type { UploadState } from '../../../lib/ipc/bindings/UploadState';
-  import { badgeStatus, captureCardWidth, formatBytes, formatDuration, formatTime, pendingUploadLabel, timed, typeTag } from './data';
+  import {
+    badgeStatus,
+    captureCardWidth,
+    formatBytes,
+    formatDuration,
+    formatTime,
+    pendingUploadLabel,
+    timed,
+    typeTag,
+  } from './data';
 
   interface Group {
     key: string;
@@ -126,7 +135,9 @@
   });
 
   function duration(capture: HistoryCaptureDto): string | undefined {
-    return timed(capture) && capture.durationMs !== null ? formatDuration(capture.durationMs) : undefined;
+    return timed(capture) && capture.durationMs !== null
+      ? formatDuration(capture.durationMs)
+      : undefined;
   }
 </script>
 
@@ -171,10 +182,17 @@
               <span class="when"
                 >{formatTime(capture.createdAt)} · {formatBytes(capture.bytes)}</span
               >
-              <Badge status={active ? 'uploading' : badgeStatus(capture)} label={pendingUploadLabel(phase)} />
+              <Badge
+                status={active ? 'uploading' : badgeStatus(capture)}
+                label={pendingUploadLabel(phase)}
+              />
             </div>
             {#if phase === 'uploading'}
-              <UploadProgress determinate={active?.progressAvailable} sent={active?.sent} total={active?.total} />
+              <UploadProgress
+                determinate={active?.progressAvailable}
+                sent={active?.sent}
+                total={active?.total}
+              />
             {/if}
           </div>
         </button>
@@ -269,5 +287,4 @@
     color: var(--text2);
     font: 600 16px var(--type-mono);
   }
-
 </style>

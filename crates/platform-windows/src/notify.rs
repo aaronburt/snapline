@@ -133,10 +133,6 @@ pub fn toast(title: &str, body: &str) -> Result<(), NotifyError> {
     show(&Notice::new(title, body))
 }
 
-pub fn toast_for_capture(title: &str, body: &str, capture_id: u64) -> Result<(), NotifyError> {
-    show(&Notice::for_capture(title, body, capture_id))
-}
-
 pub fn show(notice: &Notice) -> Result<(), NotifyError> {
     if notice.title.is_empty() && notice.body.is_empty() {
         return Err(NotifyError::EmptyNotice);

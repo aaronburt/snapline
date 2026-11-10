@@ -208,6 +208,9 @@ export async function convertResult(jobId: number): Promise<ConvertedDto> {
 }
 
 export async function pinHistory(captureId: number): Promise<void> {
-  const resp = await call<{ kind: 'pinHistory'; data: { captureId: number } }, PinResponse>('ipc_tool', { kind: 'pinHistory', data: { captureId } });
+  const resp = await call<{ kind: 'pinHistory'; data: { captureId: number } }, PinResponse>(
+    'ipc_tool',
+    { kind: 'pinHistory', data: { captureId } },
+  );
   if (resp.kind !== 'pinned') throw new Error('The capture could not be pinned.');
 }

@@ -53,18 +53,11 @@ impl HttpTimeout {
             Self::OneHundredTwentySeconds => 120,
         }
     }
-
-    pub fn from_seconds(seconds: u64) -> Result<Self, UploadError> {
-        match seconds {
-            30 => Ok(Self::ThirtySeconds),
-            60 => Ok(Self::SixtySeconds),
-            120 => Ok(Self::OneHundredTwentySeconds),
-            _ => Err(UploadError::Permanent(
-                "The upload timeout must be 30, 60 or 120 seconds.".to_owned(),
-            )),
-        }
-    }
 }
+
+const SLOWEST_UPLOAD_BYTES_PER_SECOND: u64 = 32 * 1024;
+const SEND_BODY_ALLOWANCE: Duration =
+    Duration::from_secs(crate::queue::MAX_BUFFERED_UPLOAD_BYTES / SLOWEST_UPLOAD_BYTES_PER_SECOND);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProxySetting {
@@ -122,13 +115,6 @@ impl Request {
 
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.set_header(name.into(), value.into());
-        self
-    }
-
-    pub fn with_headers(mut self, headers: impl IntoIterator<Item = (String, String)>) -> Self {
-        for (name, value) in headers {
-            self.set_header(name, value);
-        }
         self
     }
 
@@ -408,7 +394,12 @@ impl HttpClient {
             .http_status_as_error(false)
             .max_redirects(0)
             .user_agent(USER_AGENT)
-            .timeout_global(Some(timeout))
+            .timeout_resolve(Some(timeout))
+            .timeout_connect(Some(timeout))
+            .timeout_send_request(Some(timeout))
+            .timeout_send_body(Some(timeout + SEND_BODY_ALLOWANCE))
+            .timeout_recv_response(Some(timeout))
+            .timeout_recv_body(Some(timeout))
             .tls_config(tls)
             .proxy(proxy)
             .build();
@@ -794,7 +785,32 @@ c4oPTMupbl8Tg8oYB46V5Cg=
         let client = HttpClient::with_duration(Duration::from_millis(50));
         let error = client.get(&url).expect_err("timeout");
         handle.join().expect("server");
-        assert!(error.is_retryable());
+        assert_eq!(
+            error,
+            UploadError::Retryable("The request timed out.".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_body_that_takes_longer_than_the_timeout_to_send_still_uploads() {
+        const BODY_BYTES: usize = 32 * 1024 * 1024;
+        let (url, handle) = serve(|request| {
+            std::thread::sleep(Duration::from_millis(400));
+            let mut body = Vec::new();
+            let _ = request.as_reader().read_to_end(&mut body);
+            StubResponse::from_string(body.len().to_string())
+        });
+        let client = HttpClient::with_duration(Duration::from_millis(150));
+        let response = client
+            .send(Request::post(&url).body("application/octet-stream", vec![7_u8; BODY_BYTES]))
+            .expect("slow upload");
+        handle.join().expect("server");
+        assert_eq!(response.text().expect("text"), BODY_BYTES.to_string());
+    }
+
+    #[test]
+    fn the_send_allowance_covers_the_largest_buffered_upload_on_a_slow_link() {
+        assert_eq!(SEND_BODY_ALLOWANCE, Duration::from_secs(2048));
     }
 
     #[test]

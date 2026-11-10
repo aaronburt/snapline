@@ -94,7 +94,7 @@
       const before = activeUploads.length;
       if (isActiveUpload(state)) {
         if (activeUploads.some((upload) => upload.id === state.id)) {
-          activeUploads = activeUploads.map((upload) => upload.id === state.id ? state : upload);
+          activeUploads = activeUploads.map((upload) => (upload.id === state.id ? state : upload));
         } else {
           activeUploads = [...activeUploads, state];
         }
@@ -104,19 +104,26 @@
       if (activeUploads.length !== before) {
         void reportHeight();
       }
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlisten = stop;
-    }).catch(() => undefined).then(async () => {
-      if (disposed) return;
-      const states = await listUploadStates();
-      if (disposed) return;
-      activeUploads = [
-        ...states.filter((state) => !observed?.has(state.id) && isActiveUpload(state)),
-        ...activeUploads,
-      ];
-      await reportHeight();
-    }).catch(() => undefined).finally(() => { observed = null; });
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch(() => undefined)
+      .then(async () => {
+        if (disposed) return;
+        const states = await listUploadStates();
+        if (disposed) return;
+        activeUploads = [
+          ...states.filter((state) => !observed?.has(state.id) && isActiveUpload(state)),
+          ...activeUploads,
+        ];
+        await reportHeight();
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        observed = null;
+      });
     void reportHeight();
     void loadRecent();
     void loadLastLink();
@@ -127,11 +134,17 @@
   });
 
   function isActiveUpload(state: UploadState): boolean {
-    return state.status === 'queued' || state.status === 'uploading' || state.status === 'backingOff';
+    return (
+      state.status === 'queued' || state.status === 'uploading' || state.status === 'backingOff'
+    );
   }
 
   function uploadName(state: UploadState): string {
-    return state.fileName || recents.find((capture) => capture.id === state.captureId)?.name || 'File upload';
+    return (
+      state.fileName ||
+      recents.find((capture) => capture.id === state.captureId)?.name ||
+      'File upload'
+    );
   }
 
   function formatSize(bytes: number): string {
@@ -267,7 +280,9 @@
             ></progress>
           </div>
           {#if upload.cancellable}
-            <button type="button" class="cancel-upload hv" onclick={() => cancel(upload.id)}>Cancel</button>
+            <button type="button" class="cancel-upload hv" onclick={() => cancel(upload.id)}
+              >Cancel</button
+            >
           {/if}
         </div>
       {/each}

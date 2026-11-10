@@ -20,18 +20,6 @@ export function start(kind: RecordKindDto): Promise<RecordStatusDto> {
   return request(req);
 }
 
-export function startVideo(): Promise<RecordStatusDto> {
-  return start('video');
-}
-
-export function startGif(): Promise<RecordStatusDto> {
-  return start('gif');
-}
-
-export function startWindow(): Promise<RecordStatusDto> {
-  return start('window');
-}
-
 export function stop(): Promise<RecordStatusDto> {
   const req: RecordReq = { kind: 'stop' };
   return request(req);

@@ -79,7 +79,12 @@ describe('pin ipc', () => {
 describe('tool IPC requests', () => {
   const outcome = { action: null, captureId: 8, path: 'C:\\capture.png', cancelled: false };
   const progress = { phase: 'converting', percent: 40, outTimeMs: 300, speed: 1.2, message: null };
-  const converted = { captureId: 31, path: 'C:\\converted.gif', name: 'converted.gif', format: 'gif' };
+  const converted = {
+    captureId: 31,
+    path: 'C:\\converted.gif',
+    name: 'converted.gif',
+    format: 'gif',
+  };
 
   it.each([
     [
@@ -96,7 +101,13 @@ describe('tool IPC requests', () => {
       { kind: 'editorOpened', data: { outcome } },
       outcome,
     ],
-    ['open a file in the editor', editorOpenFile, { kind: 'editorOpenFile' }, { kind: 'editorOpened', data: { outcome } }, outcome],
+    [
+      'open a file in the editor',
+      editorOpenFile,
+      { kind: 'editorOpenFile' },
+      { kind: 'editorOpened', data: { outcome } },
+      outcome,
+    ],
     [
       'open the clipboard in the editor',
       editorOpenClipboard,
@@ -115,7 +126,10 @@ describe('tool IPC requests', () => {
       'scan the current capture',
       qrScan,
       { kind: 'qrScan', data: { captureId: null } },
-      { kind: 'qrScanned', data: { text: 'https://example.test', link: 'https://example.test', isUrl: true } },
+      {
+        kind: 'qrScanned',
+        data: { text: 'https://example.test', link: 'https://example.test', isUrl: true },
+      },
       { text: 'https://example.test', link: 'https://example.test', isUrl: true },
     ],
     [
@@ -156,7 +170,10 @@ describe('tool IPC requests', () => {
     [
       'start a conversion',
       () => convertStart({ kind: 'capture', data: { captureId: 8 } }, 'webmVp9'),
-      { kind: 'convertStart', data: { source: { kind: 'capture', data: { captureId: 8 } }, format: 'webmVp9' } },
+      {
+        kind: 'convertStart',
+        data: { source: { kind: 'capture', data: { captureId: 8 } }, format: 'webmVp9' },
+      },
       { kind: 'convertStarted', data: { jobId: 50 } },
       50,
     ],
@@ -181,12 +198,15 @@ describe('tool IPC requests', () => {
       { kind: 'converted', data: { converted } },
       converted,
     ],
-  ] as const)('%s sends the request and returns its response data', async (_name, operation, request, response, expected) => {
-    mocks.invoke.mockResolvedValue(response);
+  ] as const)(
+    '%s sends the request and returns its response data',
+    async (_name, operation, request, response, expected) => {
+      mocks.invoke.mockResolvedValue(response);
 
-    await expect(operation()).resolves.toEqual(expected);
-    expect(mocks.invoke).toHaveBeenCalledWith('ipc_tool', { req: request });
-  });
+      await expect(operation()).resolves.toEqual(expected);
+      expect(mocks.invoke).toHaveBeenCalledWith('ipc_tool', { req: request });
+    },
+  );
 
   it.each([
     ['availability', () => toolAvailable('qr')],

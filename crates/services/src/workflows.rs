@@ -15,7 +15,7 @@ use crate::{ServiceError, Services};
 pub use crate::workflow_runner::{
     install_runner, installed_runner, CaptureServicePort, HotkeyGate, QueueUploadHandOff,
     QueueUploadPort, RunOutcome, RunnerPorts, ServiceTextPort, ServiceWorkflowOptions,
-    WorkerSavePort, WorkflowGate, WorkflowResumeSink, WorkflowRunner, WorkflowUploadHandOff,
+    WorkerSavePort, WorkflowGate, WorkflowRunner, WorkflowUploadHandOff,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

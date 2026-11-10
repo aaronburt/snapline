@@ -66,8 +66,12 @@
   }
 
   @keyframes transfer {
-    from { transform: translateX(-100%); }
-    to { transform: translateX(335%); }
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(335%);
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {

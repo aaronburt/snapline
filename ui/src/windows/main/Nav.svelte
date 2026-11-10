@@ -42,10 +42,12 @@
     let unlisten: (() => void) | undefined;
     void onEvent((event) => {
       if (event.area === 'history' && event.event.kind !== 'ping') refreshCount();
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlisten = stop;
-    }).catch(() => undefined);
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch(() => undefined);
     refresh();
     window.addEventListener('focus', refresh);
     return () => {
@@ -81,7 +83,10 @@
     const req: AppReq = { kind: 'panelAction', data: { action: 'capture_region' } };
     captureError = '';
     void call<AppReq, AppResp>('ipc_app', req).catch((error: unknown) => {
-      captureError = typeof error === 'object' && error !== null && 'message' in error ? String(error.message) : 'Capture could not be completed.';
+      captureError =
+        typeof error === 'object' && error !== null && 'message' in error
+          ? String(error.message)
+          : 'Capture could not be completed.';
     });
   }
 </script>
@@ -108,10 +113,34 @@
 
   <div class="footer">
     <h2 class="group">Settings</h2>
-    <NavItem label="General" icon="gear" height={40} active={page === 'settings-general'} href="#/settings/general" />
-    <NavItem label="Capture" icon="region" height={40} active={page === 'settings-capture'} href="#/settings/capture" />
-    <NavItem label="Hotkeys" icon="grid" height={40} active={page === 'settings-hotkeys'} href="#/settings/hotkeys" />
-    <NavItem label="Upload destinations" icon="cloud" height={40} active={page === 'settings-uploads'} href="#/settings/uploads" />
+    <NavItem
+      label="General"
+      icon="gear"
+      height={40}
+      active={page === 'settings-general'}
+      href="#/settings/general"
+    />
+    <NavItem
+      label="Capture"
+      icon="region"
+      height={40}
+      active={page === 'settings-capture'}
+      href="#/settings/capture"
+    />
+    <NavItem
+      label="Hotkeys"
+      icon="grid"
+      height={40}
+      active={page === 'settings-hotkeys'}
+      href="#/settings/hotkeys"
+    />
+    <NavItem
+      label="Upload destinations"
+      icon="cloud"
+      height={40}
+      active={page === 'settings-uploads'}
+      href="#/settings/uploads"
+    />
   </div>
 </nav>
 

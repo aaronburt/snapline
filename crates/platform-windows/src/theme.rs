@@ -185,14 +185,16 @@ mod tests {
     #[test]
     #[ignore = "desktop"]
     fn registry_reports_the_current_theme() {
-        let _ = is_light();
-        let _ = Theme::current();
+        assert_eq!(Theme::current().is_light(), is_light());
+        assert_eq!(Theme::current().is_dark(), !is_light());
     }
 
     #[test]
     #[ignore = "desktop"]
     fn rtl_get_version_reports_a_build() {
-        assert!(WindowsBuild::current().build > 0);
-        let _ = has_mica();
+        let build = WindowsBuild::current();
+        assert!(build.build > 0);
+        assert_eq!(has_mica(), is_windows_11());
+        assert_eq!(has_mica(), build.is_windows_11());
     }
 }

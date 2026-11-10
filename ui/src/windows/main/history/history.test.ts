@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { tick } from 'svelte';
+import { flush, MIDDAY } from '../../../test/flush';
 import { expectAccessible } from '../../../test/axe';
 import type { AppEvent } from '../../../lib/ipc/bindings/AppEvent';
 import type { HistoryCaptureDto } from '../../../lib/ipc/bindings/HistoryCaptureDto';
@@ -110,13 +110,6 @@ function uploadState(id: number, overrides: Partial<UploadState> = {}): UploadSt
   };
 }
 
-async function flush(): Promise<void> {
-  await tick();
-  await tick();
-  await Promise.resolve();
-  await tick();
-}
-
 async function selectFirst(): Promise<void> {
   const card = document.querySelector('[data-capture-id="1"]');
   if (!card) throw new Error('Capture not found');
@@ -129,6 +122,8 @@ function page(items: HistoryCaptureDto[], next: { createdAt: number; id: number 
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(MIDDAY);
   searchQuery.set('');
   uploads.call.mockReset();
   uploads.destinations.mockReset();
@@ -171,6 +166,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   searchQuery.set('');
+  vi.useRealTimers();
 });
 
 describe('History data helpers', () => {
@@ -246,7 +242,9 @@ describe('History page', () => {
     await flush();
     expect(mocks.page).toHaveBeenCalledTimes(2);
     expect(mocks.page).toHaveBeenLastCalledWith('all', cursor);
-    expect(container.querySelectorAll('[data-capture-id]').length).toBeLessThan(120);
+    const rendered = container.querySelectorAll('[data-capture-id]').length;
+    expect(rendered).toBeGreaterThan(0);
+    expect(rendered).toBeLessThan(120);
   });
 
   it('selects a capture and shows its details', async () => {
@@ -265,10 +263,14 @@ describe('History page', () => {
     const row = container.querySelector('.gridrow') as HTMLElement;
     expect(row.style.gridTemplateColumns).toContain('200px');
     await selectFirst();
-    expect((container.querySelector('.gridrow') as HTMLElement).style.gridTemplateColumns).toContain('200px');
+    expect(
+      (container.querySelector('.gridrow') as HTMLElement).style.gridTemplateColumns,
+    ).toContain('200px');
     await fireEvent.click(container.querySelector('.scroll') as Element);
     await flush();
-    expect((container.querySelector('.gridrow') as HTMLElement).style.gridTemplateColumns).toContain('200px');
+    expect(
+      (container.querySelector('.gridrow') as HTMLElement).style.gridTemplateColumns,
+    ).toContain('200px');
   });
 
   it('deselects a capture when the history background is clicked', async () => {
@@ -511,17 +513,19 @@ describe('History sharing', () => {
     render(HistoryPage);
     await flush();
     await selectFirst();
-    handlers.forEach((handler) => handler({
-      area: 'upload',
-      event: {
-        kind: 'stateChanged',
-        data: uploadState(42, {
-          captureId: 1,
-          status: 'failed',
-          error: 'The host refused the file.',
-        }),
-      },
-    }));
+    handlers.forEach((handler) =>
+      handler({
+        area: 'upload',
+        event: {
+          kind: 'stateChanged',
+          data: uploadState(42, {
+            captureId: 1,
+            status: 'failed',
+            error: 'The host refused the file.',
+          }),
+        },
+      }),
+    );
     await flush();
     expect(screen.getByText('Upload failed: The host refused the file.')).not.toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -530,5 +534,129 @@ describe('History sharing', () => {
       kind: 'retry',
       data: { id: 42 },
     });
+  });
+});
+
+describe('History uploads in progress', () => {
+  let handlers: ((event: AppEvent) => void)[] = [];
+
+  beforeEach(() => {
+    handlers = [];
+    uploads.onEvent.mockImplementation((callback: (event: AppEvent) => void) => {
+      handlers.push(callback);
+      return Promise.resolve(() => undefined);
+    });
+  });
+
+  async function emit(state: UploadState): Promise<void> {
+    handlers.forEach((handler) =>
+      handler({ area: 'upload', event: { kind: 'stateChanged', data: state } }),
+    );
+    await flush();
+  }
+
+  function uploading(overrides: Partial<UploadState> = {}): UploadState {
+    return uploadState(42, {
+      captureId: 1,
+      status: 'uploading',
+      progressAvailable: true,
+      sent: 30,
+      total: 120,
+      ...overrides,
+    });
+  }
+
+  function bars(): HTMLProgressElement[] {
+    return screen.getAllByRole('progressbar', { name: 'Upload progress' }) as HTMLProgressElement[];
+  }
+
+  it('shows the bytes sent on the card and in Details', async () => {
+    const { container } = render(HistoryPage);
+    await flush();
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    await emit(uploading());
+    expect(bars().map((bar) => [bar.value, bar.max])).toEqual([[30, 120]]);
+    const card = container.querySelector('[data-capture-id="1"]') as HTMLElement;
+    expect(card.contains(bars()[0])).toBe(true);
+    await selectFirst();
+    expect(bars().map((bar) => [bar.value, bar.max])).toEqual([
+      [30, 120],
+      [30, 120],
+    ]);
+    expect(container.querySelector('aside')?.textContent).toContain('30 bytes of 120 bytes');
+    await emit(uploading({ sent: 90 }));
+    expect(bars().map((bar) => bar.value)).toEqual([90, 90]);
+  });
+
+  it('shows an indeterminate bar when the destination cannot report progress', async () => {
+    const { container } = render(HistoryPage);
+    await flush();
+    await emit(uploading({ progressAvailable: false, sent: 0, total: 120 }));
+    await selectFirst();
+    for (const bar of bars()) {
+      expect(bar.hasAttribute('value')).toBe(false);
+    }
+    expect(container.querySelector('aside')?.textContent).toContain('Sending file…');
+  });
+
+  it('cancels from Details with the upload id', async () => {
+    uploads.call.mockResolvedValue({ kind: 'cancelled', data: { id: 42 } });
+    render(HistoryPage);
+    await flush();
+    await emit(uploading());
+    await selectFirst();
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await flush();
+    expect(uploads.call).toHaveBeenLastCalledWith('ipc_upload', {
+      kind: 'cancel',
+      data: { id: 42 },
+    });
+  });
+
+  it('hides Cancel in Details when the upload cannot be cancelled', async () => {
+    render(HistoryPage);
+    await flush();
+    await emit(uploading({ cancellable: false }));
+    await selectFirst();
+    expect(bars()).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+  });
+
+  it('cancels from the list row with the upload id', async () => {
+    uploads.call.mockResolvedValue({ kind: 'cancelled', data: { id: 42 } });
+    const { container } = render(HistoryPage);
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: 'List view' }));
+    await flush();
+    await emit(uploading());
+    const row = container.querySelector('[data-capture-id="1"]') as HTMLElement;
+    expect(row.contains(bars()[0])).toBe(true);
+    const cancel = screen.getByRole('button', { name: 'Cancel upload of capture-1.png' });
+    expect(row.contains(cancel)).toBe(true);
+    await fireEvent.click(cancel);
+    await flush();
+    expect(uploads.call).toHaveBeenLastCalledWith('ipc_upload', {
+      kind: 'cancel',
+      data: { id: 42 },
+    });
+    expect(screen.queryByRole('complementary', { name: 'Capture details' })).toBeNull();
+  });
+
+  it('labels queued and retrying uploads and clears the bar when the upload ends', async () => {
+    const { container } = render(HistoryPage);
+    await flush();
+    const card = (): string =>
+      (container.querySelector('[data-capture-id="1"]') as HTMLElement).textContent ?? '';
+    await emit(uploading({ status: 'queued', sent: 0 }));
+    expect(card()).toContain('Queued');
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    await emit(uploading());
+    expect(bars()).toHaveLength(1);
+    await emit(uploading({ status: 'backingOff', retryInMs: 2000 }));
+    expect(card()).toContain('Waiting to retry');
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    await emit(uploading({ status: 'cancelled', cancellable: false }));
+    expect(card()).not.toContain('Waiting to retry');
+    expect(screen.queryByRole('progressbar')).toBeNull();
   });
 });

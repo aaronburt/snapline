@@ -6,8 +6,6 @@ export const historyFilters = ['All', 'Images', 'Videos', 'GIFs', 'Files'];
 export const captureCardWidth = 200;
 export const captureCardGap = 12;
 
-export const captureCount = '';
-
 export function filterValue(label: string): HistoryFilter {
   if (label === 'Images') {
     return 'images';

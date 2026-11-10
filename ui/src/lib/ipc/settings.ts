@@ -57,6 +57,8 @@ export async function pickFfmpeg(): Promise<SettingsDto> {
 }
 
 export async function resetFfmpegPath(): Promise<SettingsDto> {
-  const response = await call<SettingsReq, SettingsResp>('ipc_settings', { kind: 'resetFfmpegPath' });
+  const response = await call<SettingsReq, SettingsResp>('ipc_settings', {
+    kind: 'resetFfmpegPath',
+  });
   return settingsOf(response);
 }

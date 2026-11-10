@@ -194,6 +194,11 @@ mod tests {
     #[ignore = "desktop"]
     fn the_current_user_proxy_can_be_read() {
         let proxy = system_proxy().expect("read");
-        let _ = proxy.http_url();
+        let expected = if proxy.enabled {
+            proxy.server.as_deref().and_then(parse_proxy_url)
+        } else {
+            None
+        };
+        assert_eq!(proxy.http_url(), expected);
     }
 }
