@@ -110,8 +110,13 @@ fn history_error(error: HistoryError) -> ServiceError {
     }
 }
 
-pub fn run(_action: &ActionId, _services: &Services) -> Result<(), ServiceError> {
-    Err(ServiceError::NotYet)
+pub fn run(action: &ActionId, services: &Services) -> Result<(), ServiceError> {
+    match action.as_str() {
+        crate::shell_actions::OPEN_SAVE_FOLDER => {
+            crate::shell_actions::run(action.as_str(), services)
+        }
+        _ => Err(ServiceError::NotYet),
+    }
 }
 
 #[cfg(test)]

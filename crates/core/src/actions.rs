@@ -178,6 +178,13 @@ pub const CATALOGUE: &[ActionDef] = &[
         available_from_milestone: 1,
     },
     ActionDef {
+        id: "upload_copy_last_link",
+        label: "Copy last link",
+        default_chord: None,
+        group: "uploads",
+        available_from_milestone: 6,
+    },
+    ActionDef {
         id: "app_open",
         label: "Open Snapline",
         default_chord: None,
@@ -187,6 +194,13 @@ pub const CATALOGUE: &[ActionDef] = &[
     ActionDef {
         id: "app_settings",
         label: "Settings",
+        default_chord: None,
+        group: "app",
+        available_from_milestone: 1,
+    },
+    ActionDef {
+        id: "app_open_save_folder",
+        label: "Open save folder",
         default_chord: None,
         group: "app",
         available_from_milestone: 1,

@@ -63,6 +63,62 @@ pub enum CaptureOutcome {
     Copied { width: u32, height: u32 },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowChoice {
+    pub id: WindowId,
+    pub title: String,
+    pub app: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowPick {
+    Active,
+    Window(WindowId),
+}
+
+pub const ACTIVE_WINDOW_LABEL: &str = "Active window";
+pub const MENU_TITLE_LIMIT: usize = 60;
+
+pub fn truncate_title(title: &str, limit: usize) -> String {
+    let title = title.trim();
+    if title.chars().count() <= limit {
+        return title.to_owned();
+    }
+    let kept: String = title.chars().take(limit.saturating_sub(1)).collect();
+    format!("{}\u{2026}", kept.trim_end())
+}
+
+pub fn choice_label(choice: &WindowChoice) -> String {
+    let title = truncate_title(&choice.title, MENU_TITLE_LIMIT);
+    match choice.app.as_deref().filter(|app| !app.is_empty()) {
+        Some(app) => format!("{app} \u{2014} {title}"),
+        None => title,
+    }
+}
+
+pub fn menu_labels(choices: &[WindowChoice]) -> Vec<String> {
+    std::iter::once(ACTIVE_WINDOW_LABEL.to_owned())
+        .chain(choices.iter().map(choice_label))
+        .collect()
+}
+
+pub fn resolve_pick(
+    choices: &[WindowChoice],
+    selected: Option<usize>,
+) -> Result<Option<WindowPick>, ServiceError> {
+    if choices.is_empty() {
+        return Err(no_windows());
+    }
+    match selected {
+        None => Ok(None),
+        Some(0) => Ok(Some(WindowPick::Active)),
+        Some(index) => choices
+            .get(index - 1)
+            .map(|choice| Some(WindowPick::Window(choice.id)))
+            .ok_or_else(window_missing),
+    }
+}
+
 pub trait Countdown: Send + Sync {
     fn run(&self, seconds: u8) -> Result<(), ServiceError>;
 }
@@ -79,6 +135,14 @@ pub trait CaptureContext: Send + Sync {
 
     fn window_under_cursor(&self) -> Option<WindowId> {
         None
+    }
+
+    fn list_windows(&self) -> Vec<WindowChoice> {
+        Vec::new()
+    }
+
+    fn choose_window(&self, _choices: &[WindowChoice]) -> Result<Option<WindowPick>, ServiceError> {
+        Ok(Some(WindowPick::Active))
     }
 
     fn window_at(&self, _point: Point) -> Option<WindowId> {
@@ -238,9 +302,15 @@ impl CaptureService {
 
     pub(crate) fn window_image(&self) -> Result<Option<Shot>, ServiceError> {
         let settings = self.inner.context.capture_settings()?;
+        let active = self.inner.context.foreground_window();
+        let choices = self.inner.context.list_windows();
+        let Some(pick) = self.inner.context.choose_window(&choices)? else {
+            return Ok(None);
+        };
         self.wait(settings.capture.capture_delay)?;
-        let Some(window) = self.inner.context.foreground_window() else {
-            return Err(window_missing());
+        let window = match pick {
+            WindowPick::Active => active.ok_or_else(window_missing)?,
+            WindowPick::Window(id) => id,
         };
         self.window_image_id(
             window,
@@ -603,6 +673,10 @@ fn display_changed() -> ServiceError {
     )
 }
 
+fn no_windows() -> ServiceError {
+    ServiceError::Invalid("There are no windows to capture.".to_owned())
+}
+
 fn window_missing() -> ServiceError {
     ServiceError::Invalid(snapline_core::ports::CaptureError::WindowMissing.to_string())
 }
@@ -636,6 +710,9 @@ mod tests {
         cursor: Mutex<Option<Point>>,
         foreground: Mutex<Option<WindowId>>,
         under_cursor: Mutex<Option<WindowId>>,
+        choices: Mutex<Vec<WindowChoice>>,
+        selection: Mutex<Option<Option<usize>>>,
+        menus: Mutex<Vec<Vec<String>>>,
         at_point: Mutex<Vec<(Rect, WindowId)>>,
         apps: Mutex<HashMap<WindowId, String>>,
         theme: OverlayTheme,
@@ -672,6 +749,21 @@ mod tests {
 
         fn window_under_cursor(&self) -> Option<WindowId> {
             *self.under_cursor.lock().expect("under cursor")
+        }
+
+        fn list_windows(&self) -> Vec<WindowChoice> {
+            self.choices.lock().expect("choices").clone()
+        }
+
+        fn choose_window(
+            &self,
+            choices: &[WindowChoice],
+        ) -> Result<Option<WindowPick>, ServiceError> {
+            let Some(selection) = *self.selection.lock().expect("selection") else {
+                return Ok(Some(WindowPick::Active));
+            };
+            self.menus.lock().expect("menus").push(menu_labels(choices));
+            resolve_pick(choices, selection)
         }
 
         fn window_at(&self, point: Point) -> Option<WindowId> {
@@ -872,6 +964,9 @@ mod tests {
             cursor: Mutex::new(None),
             foreground: Mutex::new(None),
             under_cursor: Mutex::new(None),
+            choices: Mutex::new(Vec::new()),
+            selection: Mutex::new(None),
+            menus: Mutex::new(Vec::new()),
             at_point: Mutex::new(Vec::new()),
             apps: Mutex::new(HashMap::new()),
             theme: OverlayTheme::Dark,
@@ -1140,6 +1235,124 @@ mod tests {
         let copies = harness.clipboard.images.lock().expect("images");
         assert_eq!(copies.len(), 1);
         assert_eq!(copies[0].pixel(0, 0).expect("pixel"), [9, 8, 7, 255]);
+    }
+
+    fn window_choice(id: u64, title: &str, app: Option<&str>) -> WindowChoice {
+        WindowChoice {
+            id: WindowId::new(id),
+            title: title.to_owned(),
+            app: app.map(str::to_owned),
+        }
+    }
+
+    fn window_menu_harness(directory: &std::path::Path, selection: Option<usize>) -> Harness {
+        let harness = harness(directory, desktop_of(vec![]), selected(Rect::ZERO, 1));
+        *harness.context.foreground.lock().expect("foreground") = Some(WindowId::new(42));
+        *harness.context.choices.lock().expect("choices") = vec![
+            window_choice(7, "Notes", Some("notepad.exe")),
+            window_choice(8, "Browser", Some("chrome.exe")),
+        ];
+        *harness.context.selection.lock().expect("selection") = Some(selection);
+        let mut windows = harness.capture.windows.lock().expect("windows");
+        windows.insert(WindowId::new(42), solid(10, 10, [1, 1, 1, 255]));
+        windows.insert(WindowId::new(7), solid(20, 20, [2, 2, 2, 255]));
+        windows.insert(WindowId::new(8), solid(30, 30, [3, 3, 3, 255]));
+        drop(windows);
+        harness
+    }
+
+    #[test]
+    fn the_chosen_window_handle_is_the_one_captured() {
+        let directory = tempfile::tempdir().expect("temp");
+        let harness = window_menu_harness(directory.path(), Some(2));
+        let outcome = harness.service.capture_window().expect("window");
+        assert_eq!(
+            outcome,
+            CaptureOutcome::Copied {
+                width: 30,
+                height: 30
+            }
+        );
+        assert_eq!(
+            harness.capture.calls.lock().expect("calls")[0].0,
+            WindowId::new(8)
+        );
+        let menus = harness.context.menus.lock().expect("menus");
+        assert_eq!(
+            menus[0],
+            vec![
+                "Active window".to_owned(),
+                "notepad.exe \u{2014} Notes".to_owned(),
+                "chrome.exe \u{2014} Browser".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_active_window_entry_captures_the_window_in_front_before_the_menu() {
+        let directory = tempfile::tempdir().expect("temp");
+        let harness = window_menu_harness(directory.path(), Some(0));
+        harness.service.capture_window().expect("window");
+        assert_eq!(
+            harness.capture.calls.lock().expect("calls")[0].0,
+            WindowId::new(42)
+        );
+    }
+
+    #[test]
+    fn dismissing_the_window_menu_cancels_without_an_error() {
+        let directory = tempfile::tempdir().expect("temp");
+        let harness = window_menu_harness(directory.path(), None);
+        let outcome = harness.service.capture_window().expect("window");
+        assert_eq!(outcome, CaptureOutcome::Cancelled);
+        assert!(harness.capture.calls.lock().expect("calls").is_empty());
+        assert!(harness.clipboard.images.lock().expect("images").is_empty());
+    }
+
+    #[test]
+    fn an_empty_window_list_reports_that_there_is_nothing_to_capture() {
+        let directory = tempfile::tempdir().expect("temp");
+        let harness = window_menu_harness(directory.path(), Some(0));
+        harness.context.choices.lock().expect("choices").clear();
+        let error = harness.service.capture_window().expect_err("empty");
+        assert_eq!(error.to_string(), "There are no windows to capture.");
+    }
+
+    #[test]
+    fn long_titles_are_truncated_for_the_menu() {
+        assert_eq!(truncate_title("short", 10), "short");
+        assert_eq!(truncate_title("  padded  ", 10), "padded");
+        let long = "x".repeat(100);
+        let truncated = truncate_title(&long, MENU_TITLE_LIMIT);
+        assert_eq!(truncated.chars().count(), MENU_TITLE_LIMIT);
+        assert!(truncated.ends_with('\u{2026}'));
+        assert_eq!(truncate_title("ab\u{e9}def", 4), "ab\u{e9}\u{2026}");
+    }
+
+    #[test]
+    fn labels_show_the_app_when_it_is_known() {
+        assert_eq!(
+            choice_label(&window_choice(1, "Doc", Some("word.exe"))),
+            "word.exe \u{2014} Doc"
+        );
+        assert_eq!(choice_label(&window_choice(1, "Doc", None)), "Doc");
+        assert_eq!(choice_label(&window_choice(1, "Doc", Some(""))), "Doc");
+    }
+
+    #[test]
+    fn picks_resolve_to_the_matching_entry() {
+        let choices = vec![window_choice(7, "A", None), window_choice(8, "B", None)];
+        assert_eq!(resolve_pick(&choices, None), Ok(None));
+        assert_eq!(
+            resolve_pick(&choices, Some(0)),
+            Ok(Some(WindowPick::Active))
+        );
+        assert_eq!(
+            resolve_pick(&choices, Some(2)),
+            Ok(Some(WindowPick::Window(WindowId::new(8))))
+        );
+        assert!(resolve_pick(&choices, Some(3)).is_err());
+        assert!(resolve_pick(&[], Some(0)).is_err());
     }
 
     #[test]
@@ -1501,6 +1714,9 @@ mod tests {
             cursor: Mutex::new(None),
             foreground: Mutex::new(None),
             under_cursor: Mutex::new(None),
+            choices: Mutex::new(Vec::new()),
+            selection: Mutex::new(None),
+            menus: Mutex::new(Vec::new()),
             at_point: Mutex::new(Vec::new()),
             apps: Mutex::new(HashMap::new()),
             theme: OverlayTheme::Dark,
