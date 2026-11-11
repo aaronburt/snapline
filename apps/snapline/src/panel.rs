@@ -175,6 +175,32 @@ fn to_i32(value: f64) -> i32 {
 }
 
 pub fn show(app: &AppHandle, x: f64, y: f64, width: f64, height: f64) {
+    if crate::native_panel::enabled() {
+        crate::native_panel::show(app, TrayRect::new(x, y, width, height));
+    } else {
+        show_web(app, x, y, width, height);
+    }
+}
+
+pub fn place_native(app: &AppHandle, tray: TrayRect, width: f64, height: f64) -> (i32, i32) {
+    let Some(monitor) = app
+        .monitor_from_point(tray.centre_x(), tray.centre_y())
+        .ok()
+        .flatten()
+    else {
+        return (to_i32(tray.x), to_i32(tray.y));
+    };
+    let (x, y) = placement(
+        tray,
+        work_bounds(&monitor),
+        monitor_bounds(&monitor),
+        width,
+        height,
+    );
+    (to_i32(x), to_i32(y))
+}
+
+pub fn show_web(app: &AppHandle, x: f64, y: f64, width: f64, height: f64) {
     let tray = TrayRect::new(x, y, width, height);
     let existing = app.get_webview_window(PANEL_LABEL).is_some();
     with_state(|state| {
