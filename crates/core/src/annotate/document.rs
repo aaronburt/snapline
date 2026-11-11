@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::geometry::{Point, Px, Rect, Size};
 use crate::image::{Image, ImageError};
 
@@ -7,7 +9,7 @@ use super::shape::{Annotation, Shape, ShapeId, Style};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
-    image: Image,
+    image: Arc<Image>,
     crop: Rect,
     annotations: Vec<Annotation>,
     next_id: u64,
@@ -16,6 +18,10 @@ pub struct Document {
 
 impl Document {
     pub fn new(image: Image) -> Self {
+        Self::shared(Arc::new(image))
+    }
+
+    pub fn shared(image: Arc<Image>) -> Self {
         let crop = Rect::new(
             Px::ZERO,
             Px::ZERO,
@@ -31,7 +37,7 @@ impl Document {
         }
     }
 
-    pub const fn image(&self) -> &Image {
+    pub fn image(&self) -> &Image {
         &self.image
     }
 
@@ -39,7 +45,7 @@ impl Document {
         self.crop
     }
 
-    pub const fn full_rect(&self) -> Rect {
+    pub fn full_rect(&self) -> Rect {
         Rect::new(
             Px::ZERO,
             Px::ZERO,
@@ -171,7 +177,7 @@ impl Document {
     }
 
     pub fn render_full(&self) -> Result<Image, ImageError> {
-        let mut raster = Raster::from_image(self.image.clone());
+        let mut raster = Raster::from_image(Image::clone(&self.image));
         for annotation in &self.annotations {
             raster.draw(&annotation.shape, &self.image);
         }

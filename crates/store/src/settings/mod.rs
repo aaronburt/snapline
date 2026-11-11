@@ -220,7 +220,7 @@ fn keep_bad_file(path: &Path) -> Result<LoadOutcome, SettingsError> {
 mod tests {
     use super::capture::{
         CaptureDelay, FrameRate, FullscreenCapture, GifFrameRate, GifMaxWidth, MagnifierZoom,
-        ScrollLimit, VideoFormat, VideoQuality,
+        VideoFormat, VideoQuality,
     };
     use super::general::{ImageFormat, LinkFormat, Subfolders, WorkflowStepKind};
     use super::hotkeys::DEFAULT_BINDINGS;
@@ -295,9 +295,6 @@ mod tests {
         assert_eq!(settings.capture.gif_frame_rate, GifFrameRate::Fps15);
         assert_eq!(settings.capture.gif_max_width, GifMaxWidth::Px800);
         assert!(settings.capture.gif_optimise_palette);
-        assert_eq!(settings.capture.scroll_delay_ms, 300);
-        assert_eq!(settings.capture.scroll_limit, ScrollLimit::Thirty);
-        assert!(settings.capture.remove_sticky_headers);
 
         assert_eq!(settings.hotkeys.bindings.len(), DEFAULT_BINDINGS.len());
         for (action, chord) in DEFAULT_BINDINGS {
@@ -508,5 +505,51 @@ mod tests {
         assert!(loaded.notice.is_none());
         assert_eq!(loaded.settings.version, 2);
         assert!(loaded.settings.workflows.list.is_empty());
+    }
+
+    #[test]
+    fn a_file_from_before_scrolling_capture_was_removed_still_loads() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("settings.toml");
+        std::fs::write(
+            &path,
+            r#"version = 2
+
+[capture]
+scroll_delay_ms = 500
+scroll_limit = "ten"
+remove_sticky_headers = false
+
+[hotkeys.bindings]
+capture_scrolling = "Ctrl+Alt+S"
+capture_region = "PrtSc"
+
+[[workflows.list]]
+id = "old-scroll"
+name = "Old scroll"
+enabled = true
+steps = [{ step = "capture", kind = "scrolling" }, { step = "save" }]
+"#,
+        )
+        .expect("write");
+
+        let loaded = load(&path).expect("load");
+        assert!(loaded.notice.is_none());
+        assert_eq!(
+            loaded.settings.hotkeys.bindings.get("capture_region"),
+            Some(&"PrtSc".to_owned())
+        );
+        assert_eq!(
+            loaded.settings.workflows.list[0].steps,
+            vec![
+                snapline_core::workflow::Step::Capture {
+                    kind: snapline_core::workflow::CaptureKind::Region
+                },
+                snapline_core::workflow::Step::Save,
+            ]
+        );
+        assert!(!DEFAULT_BINDINGS
+            .iter()
+            .any(|(action, _)| *action == "capture_scrolling"));
     }
 }

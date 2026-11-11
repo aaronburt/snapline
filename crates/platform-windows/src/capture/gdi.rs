@@ -1,5 +1,6 @@
 use std::ffi::c_void;
 use std::mem::size_of;
+use std::sync::Arc;
 
 use snapline_core::image::Image;
 use snapline_core::ports::{CaptureError, FrozenDesktop, FrozenMonitor, Monitor};
@@ -25,7 +26,10 @@ pub fn freeze_all(options: CaptureOptions) -> Result<FrozenDesktop, CaptureError
     let mut frozen = Vec::with_capacity(monitors.len());
     for monitor in monitors {
         let image = capture_monitor(&screen, &monitor, options)?;
-        frozen.push(FrozenMonitor { monitor, image });
+        frozen.push(FrozenMonitor {
+            monitor,
+            image: Arc::new(image),
+        });
     }
     Ok(FrozenDesktop { monitors: frozen })
 }

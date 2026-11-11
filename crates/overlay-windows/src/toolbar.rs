@@ -32,6 +32,8 @@ pub(crate) enum ToolbarAction {
     Save,
     Pin,
     Upload,
+    Record,
+    Gif,
     Cancel,
 }
 
@@ -63,6 +65,8 @@ impl ToolbarAction {
             Self::Save => "Save",
             Self::Pin => "Pin to screen",
             Self::Upload => "Upload",
+            Self::Record => "Record video",
+            Self::Gif => "Record GIF",
             Self::Cancel => "Cancel",
         }
     }
@@ -261,6 +265,24 @@ pub(crate) fn layout(
         gap,
         &mut placed,
     );
+    if !editing {
+        item(
+            &mut buttons,
+            &mut x,
+            ToolbarAction::Record,
+            TOOL_SIZE * scale,
+            gap,
+            &mut placed,
+        );
+        item(
+            &mut buttons,
+            &mut x,
+            ToolbarAction::Gif,
+            TOOL_SIZE * scale,
+            gap,
+            &mut placed,
+        );
+    }
     if editing {
         item(
             &mut buttons,
@@ -280,7 +302,7 @@ pub(crate) fn layout(
         );
     }
     x += 4.0 * scale;
-    let upload_width = 24.0 * scale + 16.0 * scale + 6.0 * scale + upload_label;
+    let upload_width = 18.0 * scale + 14.0 * scale + 5.0 * scale + upload_label;
     item(
         &mut buttons,
         &mut x,
@@ -586,6 +608,25 @@ fn draw_button(
                 18.0 * scale,
             );
         }
+        ToolbarAction::Record | ToolbarAction::Gif => {
+            icons::draw(
+                icons,
+                gpu,
+                if button.action == ToolbarAction::Record {
+                    Icon::Record
+                } else {
+                    Icon::Gif
+                },
+                if button.action == ToolbarAction::Record {
+                    palette.red
+                } else {
+                    palette.text
+                },
+                centre_x,
+                centre_y,
+                18.0 * scale,
+            );
+        }
         ToolbarAction::Pin => {
             icons::draw(
                 icons,
@@ -598,6 +639,8 @@ fn draw_button(
             );
         }
         ToolbarAction::Save | ToolbarAction::Upload => {
+            let inset = (height - 28.0 * scale).max(0.0) / 2.0;
+            let (y, height) = (y + inset, height - inset * 2.0);
             d2d::fill_round(
                 context,
                 rect_f(x, y, width, height),
@@ -605,7 +648,7 @@ fn draw_button(
                 palette.accent,
             );
             let label_width = readout::measure_upload_label(gpu, scale);
-            let content = 16.0 * scale + 6.0 * scale + label_width;
+            let content = 14.0 * scale + 5.0 * scale + label_width;
             let icon_x = x + (width - content) / 2.0;
             icons::draw(
                 icons,
@@ -618,13 +661,13 @@ fn draw_button(
                 palette.on_accent,
                 icon_x,
                 centre_y,
-                16.0 * scale,
+                14.0 * scale,
             );
             readout::draw_upload_label(
                 gpu,
                 palette,
                 scale,
-                x + (width - content) / 2.0 + 16.0 * scale + 6.0 * scale,
+                x + (width - content) / 2.0 + 14.0 * scale + 5.0 * scale,
                 y,
                 height,
                 if button.action == ToolbarAction::Save {
@@ -699,6 +742,8 @@ mod tests {
         assert!(actions.contains(&ToolbarAction::Save));
         assert!(!actions.contains(&ToolbarAction::Upload));
         assert!(!actions.contains(&ToolbarAction::Pin));
+        assert!(actions.contains(&ToolbarAction::Record));
+        assert!(actions.contains(&ToolbarAction::Gif));
         let upload: Vec<_> = layout(0, monitor(), 1.0, 47.0, false, true)
             .buttons
             .iter()
@@ -706,6 +751,29 @@ mod tests {
             .collect();
         assert!(upload.contains(&ToolbarAction::Upload));
         assert!(!upload.contains(&ToolbarAction::Save));
+    }
+
+    #[test]
+    fn the_editor_toolbar_has_no_record_buttons() {
+        let toolbar = layout(0, monitor(), 1.0, 47.0, true, false);
+        let actions = actions(&toolbar);
+        assert!(!actions.contains(&ToolbarAction::Record));
+        assert!(!actions.contains(&ToolbarAction::Gif));
+    }
+
+    #[test]
+    fn record_buttons_sit_between_copy_and_the_finish_button() {
+        let toolbar = layout(0, monitor(), 1.0, 47.0, false, false);
+        let actions = actions(&toolbar);
+        let copy = actions
+            .iter()
+            .position(|a| *a == ToolbarAction::Copy)
+            .unwrap();
+        assert_eq!(actions[copy + 1], ToolbarAction::Record);
+        assert_eq!(actions[copy + 2], ToolbarAction::Gif);
+        assert_eq!(actions[copy + 3], ToolbarAction::Save);
+        assert_eq!(ToolbarAction::Record.label(), "Record video");
+        assert_eq!(ToolbarAction::Gif.label(), "Record GIF");
     }
 
     #[test]

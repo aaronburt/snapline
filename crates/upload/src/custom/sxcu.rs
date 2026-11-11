@@ -265,6 +265,7 @@ pub fn import(bytes: &[u8]) -> Result<ImportedSxcu, SxcuError> {
     if bytes.len() > MAX_FILE_BYTES {
         return Err(SxcuError::TooLarge);
     }
+    let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
     let raw: RawSxcu = serde_json::from_slice(bytes).map_err(|_| SxcuError::InvalidJson)?;
     from_raw(raw)
 }
@@ -557,6 +558,13 @@ mod tests {
             Ok(imported) => imported,
             Err(error) => panic!("the example did not import: {error}"),
         }
+    }
+
+    #[test]
+    fn imports_utf8_byte_order_mark() {
+        let mut bytes = vec![0xef, 0xbb, 0xbf];
+        bytes.extend_from_slice(EXAMPLE.as_bytes());
+        assert_eq!(import(&bytes).expect("BOM import").config, imported().config);
     }
 
     #[test]

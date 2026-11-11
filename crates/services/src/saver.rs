@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use snapline_core::image::{Image, ImageFormat};
 use snapline_core::naming::{self, NameContext, NameFormat, TokenSource};
-use snapline_core::ports::{Clipboard, Clock, CodecError, ImageCodec, Notice, Notifier, Sound};
+use snapline_core::ports::{
+    Clipboard, Clock, CodecError, ImageCodec, NoticeButton, Notifier, RichNotice, Sound,
+};
 use snapline_store::history::{CaptureId, CaptureKind, HistoryRepo, NewCapture};
 use snapline_store::io;
 use snapline_store::settings::general::{
@@ -17,7 +19,7 @@ use crate::ServiceError;
 
 pub const THUMBNAIL_WIDTH: u32 = 320;
 pub const COUNTER_KEY: &str = "counter";
-pub const SAVED_TITLE: &str = "Saved";
+pub const SAVED_TITLE: &str = "Screenshot saved";
 
 #[derive(Clone)]
 pub struct ServicePorts {
@@ -100,6 +102,7 @@ pub struct CaptureRequest {
     pub source_app: Option<String>,
     pub window_title: String,
     pub(crate) workflow_save: bool,
+    pub(crate) quiet: bool,
 }
 
 impl CaptureRequest {
@@ -109,6 +112,7 @@ impl CaptureRequest {
             source_app,
             window_title: window_title.into(),
             workflow_save: false,
+            quiet: false,
         }
     }
 }
@@ -256,7 +260,8 @@ impl Saver {
             .map_err(|error| SaveError::Codec(error.to_string()))?;
         let bytes = i64::try_from(encoded.len())
             .map_err(|_| SaveError::Io("The encoded image is too large.".to_owned()))?;
-        io::write_atomic(&path, &encoded).map_err(|error| SaveError::Io(error.to_string()))?;
+        io::write_atomic(&path, &encoded)
+            .map_err(|error| SaveError::Io(save_folder_message(&folder, &error)))?;
 
         let next_counter = counter;
         if let Err(error) = self.settings.set_counter(next_counter) {
@@ -278,14 +283,25 @@ impl Saver {
             })
             .map_err(|error| SaveError::History(error.to_string()))?;
 
-        if let Err(error) = self.write_thumbnail(id, &image, quality) {
-            tracing::warn!(%error, "the thumbnail could not be written");
-        }
+        let thumbnail = match self.write_thumbnail(id, &image, quality) {
+            Ok(path) => Some(path),
+            Err(error) => {
+                tracing::warn!(%error, "the thumbnail could not be written");
+                None
+            }
+        };
 
-        if general.notifications {
-            self.ports
-                .notifier
-                .toast(Notice::for_capture(SAVED_TITLE, &file_name, id));
+        if general.notifications && !request.quiet {
+            let mut notice = saved_notice(
+                &path,
+                &file_name,
+                image.width(),
+                image.height(),
+                request.source_app.as_deref(),
+                thumbnail,
+            );
+            notice.tag = Some(capture_tag(id));
+            self.ports.notifier.toast_rich(notice);
         }
 
         Ok(SaveOutcome {
@@ -349,6 +365,72 @@ impl Saver {
         io::write_atomic(&path, &bytes).map_err(|error| SaveError::Io(error.to_string()))?;
         Ok(path)
     }
+}
+
+pub fn file_url(path: &Path) -> String {
+    let mut url = String::from("file:///");
+    for character in path.to_string_lossy().chars() {
+        match character {
+            '\\' => url.push('/'),
+            ' ' => url.push_str("%20"),
+            '#' => url.push_str("%23"),
+            '%' => url.push_str("%25"),
+            '?' => url.push_str("%3F"),
+            other => url.push(other),
+        }
+    }
+    url
+}
+
+pub fn capture_tag(id: i64) -> String {
+    format!("capture-{id}")
+}
+
+fn saved_notice(
+    path: &Path,
+    file_name: &str,
+    width: u32,
+    height: u32,
+    source_app: Option<&str>,
+    thumbnail: Option<PathBuf>,
+) -> RichNotice {
+    let folder = path.parent();
+    let folder_name = folder
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned());
+    let mut detail = format!("{width}x{height}");
+    if let Some(app) = source_app.filter(|app| !app.is_empty()) {
+        detail.push_str(&format!(" from {app}"));
+    }
+    if let Some(name) = folder_name.filter(|name| !name.is_empty()) {
+        detail.push_str(&format!(" in {name}"));
+    }
+    let image_url = file_url(path);
+    let mut buttons = vec![NoticeButton {
+        label: "Open image".to_owned(),
+        target: image_url.clone(),
+    }];
+    if let Some(folder) = folder {
+        buttons.push(NoticeButton {
+            label: "Open folder".to_owned(),
+            target: file_url(folder),
+        });
+    }
+    RichNotice {
+        title: SAVED_TITLE.to_owned(),
+        lines: vec![file_name.to_owned(), detail],
+        image: thumbnail,
+        open: Some(image_url),
+        buttons,
+        tag: None,
+    }
+}
+
+fn save_folder_message(folder: &Path, error: &std::io::Error) -> String {
+    format!(
+        "Snapline could not save the capture to {}. Check the save folder in Settings. Details: {error}",
+        folder.display()
+    )
 }
 
 pub fn expand_profile(value: &str, profile: &Path) -> String {
@@ -542,11 +624,19 @@ mod tests {
 
     #[derive(Default)]
     struct FakeNotifier {
-        notices: Mutex<Vec<Notice>>,
+        notices: Mutex<Vec<RichNotice>>,
     }
 
     impl Notifier for FakeNotifier {
         fn toast(&self, notice: Notice) {
+            self.notices.lock().expect("notices").push(RichNotice {
+                title: notice.title,
+                lines: vec![notice.body],
+                ..RichNotice::default()
+            });
+        }
+
+        fn toast_rich(&self, notice: RichNotice) {
             self.notices.lock().expect("notices").push(notice);
         }
     }
@@ -709,6 +799,23 @@ mod tests {
         let mut settings = Settings::default();
         settings.general.save_folder = "%USERPROFILE%\\Pictures\\Snapline".to_owned();
         settings
+    }
+
+    #[test]
+    fn an_unwritable_save_folder_gives_a_message_with_the_folder_and_settings_hint() {
+        let mut fixture = Fixture::new(settings_with_folder());
+        std::fs::create_dir_all(&fixture.profile).expect("profile");
+        std::fs::write(fixture.profile.join("Pictures"), b"not a folder").expect("blocker");
+        let error = fixture
+            .run(Fixture::default_request())
+            .expect_err("save must fail");
+        let SaveError::Io(message) = error else {
+            panic!("expected an io error");
+        };
+        assert!(message.contains(&fixture.base_folder().display().to_string()));
+        assert!(message.contains("Check the save folder in Settings"));
+        assert!(message.contains("Details:"));
+        assert_eq!(fixture.count(), 0);
     }
 
     #[test]
@@ -923,12 +1030,54 @@ mod tests {
         assert_eq!(thumb_call.height, 180);
         let notices = fixture.notifier.notices.lock().expect("notices");
         assert_eq!(notices.len(), 1);
-        assert_eq!(notices[0].title, "Saved");
+        assert_eq!(notices[0].title, "Screenshot saved");
         assert_eq!(
-            notices[0].body,
+            notices[0].lines[0],
             outcome.file_name.as_deref().expect("file name")
         );
-        assert_eq!(notices[0].capture_id, Some(id));
+        assert!(notices[0].lines[1].contains(" from chrome.exe"));
+        assert_eq!(notices[0].image.as_deref(), Some(thumbnail.as_path()));
+        let image_url = file_url(outcome.path.as_deref().expect("path"));
+        assert_eq!(notices[0].open.as_deref(), Some(image_url.as_str()));
+        let labels: Vec<&str> = notices[0]
+            .buttons
+            .iter()
+            .map(|button| button.label.as_str())
+            .collect();
+        assert_eq!(labels, ["Open image", "Open folder"]);
+        assert_eq!(
+            notices[0].tag.as_deref(),
+            Some(format!("capture-{id}").as_str())
+        );
+    }
+
+    #[test]
+    fn the_saved_notice_describes_the_capture_and_escapes_nothing_itself() {
+        let notice = saved_notice(
+            Path::new("C:\\Shots\\My Folder\\a b.png"),
+            "a b.png",
+            1920,
+            1080,
+            Some("code.exe"),
+            None,
+        );
+        assert_eq!(notice.lines[1], "1920x1080 from code.exe in My Folder");
+        assert_eq!(notice.image, None);
+        assert_eq!(
+            notice.open.as_deref(),
+            Some("file:///C:/Shots/My%20Folder/a%20b.png")
+        );
+        assert_eq!(notice.buttons[1].target, "file:///C:/Shots/My%20Folder");
+    }
+
+    #[test]
+    fn a_capture_followed_by_an_upload_shows_no_capture_toast() {
+        let mut fixture = Fixture::new(settings_with_folder());
+        let mut request = Fixture::default_request();
+        request.quiet = true;
+        let outcome = fixture.run(request).expect("save");
+        assert!(outcome.saved);
+        assert!(fixture.notifier.notices.lock().expect("notices").is_empty());
     }
 
     #[test]

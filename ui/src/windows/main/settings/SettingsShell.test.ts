@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, render, screen } from '@testing-library/svelte';
 import { expectAccessible } from '../../../test/axe';
 import SettingsShell from './SettingsShell.svelte';
 import { currentRoute, resolve } from '../../../router';
@@ -13,21 +13,14 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('SettingsShell', () => {
-  it('shows the settings search', async () => {
-    const { container } = render(SettingsShell);
+  it('filters the current page without listing matches on other pages', async () => {
+    const { container, rerender } = render(SettingsShell, { query: 'launch' });
     await expectAccessible(container);
-    expect(screen.getByPlaceholderText('Find a setting')).not.toBeNull();
-  });
-
-  it('filters the current page and lists matches on other pages', async () => {
-    render(SettingsShell);
-    const search = screen.getByPlaceholderText('Find a setting');
-    await fireEvent.input(search, { target: { value: 'launch' } });
     expect(screen.getByText('Launch at sign-in')).not.toBeNull();
     expect(screen.queryByText('On other pages')).toBeNull();
-    await fireEvent.input(search, { target: { value: 'retry' } });
-    expect(screen.getByText('On other pages')).not.toBeNull();
-    expect(screen.getByRole('link', { name: /Retry failed uploads/ })).not.toBeNull();
+    await rerender({ query: 'retry' });
+    expect(screen.queryByText('On other pages')).toBeNull();
+    expect(screen.queryByRole('link', { name: /Retry failed uploads/ })).toBeNull();
     expect(screen.queryByText('Launch at sign-in')).toBeNull();
   });
 });

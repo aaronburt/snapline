@@ -25,6 +25,7 @@
   } from './data';
 
   interface Props {
+    width?: number;
     capture: HistoryCaptureDto | null;
     activeUpload: UploadState | null;
     defaultDestination: string;
@@ -54,6 +55,7 @@
   }
 
   let {
+    width = 320,
     capture,
     activeUpload,
     defaultDestination,
@@ -450,7 +452,7 @@
 
 <svelte:window onpointerdown={onOutside} onkeydown={onMenuKey} />
 
-<aside aria-label="Capture details">
+<aside aria-label="Capture details" style:--detail-width="{width}px">
   {#if capture}
     <div class="detail-heading">
       <h2 class="heading">Details</h2>
@@ -507,6 +509,7 @@
           class="iconbtn accent"
           aria-label="Annotate"
           title="Annotate"
+          disabled={capture.missing}
           onclick={() => onannotate(capture.id)}
         >
           <Icon name="edit" size={14} strokeWidth={1.8} />
@@ -518,6 +521,7 @@
           class="hv iconbtn"
           aria-label="Copy image"
           title="Copy image"
+          disabled={capture.missing}
           onclick={() => oncopy(capture.id)}
         >
           <Icon name="copy" size={14} strokeWidth={1.8} />
@@ -527,6 +531,7 @@
         type="button"
         class="hv iconbtn"
         aria-label="Show in folder"
+        title="Show in folder"
         disabled={capture.missing}
         onclick={() => onshow(capture.id)}
       >
@@ -537,6 +542,8 @@
           type="button"
           class="hv iconbtn"
           aria-label="Pin to screen"
+          title="Pin to screen"
+          disabled={capture.missing}
           onclick={() => onpin(capture.id)}
         >
           <Icon name="pin" size={14} strokeWidth={1.8} />
@@ -778,9 +785,9 @@
 
 <style>
   aside {
-    flex: 1 0 320px;
+    flex: 0 0 var(--detail-width);
     min-width: 280px;
-    max-width: 360px;
+    max-width: 480px;
     border-left: 1px solid var(--stroke);
     padding: 20px;
     display: flex;

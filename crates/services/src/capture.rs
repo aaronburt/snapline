@@ -15,8 +15,8 @@ use snapline_core::image::Image;
 use snapline_core::overlay::SnapSet;
 use snapline_core::ports::{
     Clipboard, FrozenDesktop, FrozenMonitor, MagnifierSettings as CoreMagnifierSettings,
-    MagnifierZoom as CoreMagnifierZoom, OverlayError, OverlayHost, OverlayRequest, OverlayTheme,
-    ScreenCapture,
+    MagnifierZoom as CoreMagnifierZoom, OverlayAction, OverlayError, OverlayHost, OverlayRequest,
+    OverlayTheme, ScreenCapture,
 };
 use snapline_store::settings::capture::{CaptureDelay, FullscreenCapture, MagnifierZoom};
 use snapline_store::settings::Settings;
@@ -96,6 +96,10 @@ pub trait CaptureContext: Send + Sync {
     fn overlay_theme(&self) -> OverlayTheme {
         OverlayTheme::Dark
     }
+
+    fn start_recording(&self, _gif: bool, _rect: Rect, _monitor: u32) -> Result<(), ServiceError> {
+        Err(ServiceError::NotYet)
+    }
 }
 
 impl CaptureContext for Services {
@@ -108,6 +112,17 @@ impl CaptureContext for Services {
             "capture": { "last_region": region.to_json() }
         }))
         .map(|_| ())
+    }
+
+    fn start_recording(&self, gif: bool, rect: Rect, monitor: u32) -> Result<(), ServiceError> {
+        let kind = if gif {
+            crate::dto::record::RecordKindDto::Gif
+        } else {
+            crate::dto::record::RecordKindDto::Video
+        };
+        crate::recording::start_recording_region(self, kind, rect, monitor)
+            .map(|_| ())
+            .map_err(|error| ServiceError::Invalid(error.to_string()))
     }
 }
 
@@ -176,6 +191,21 @@ impl CaptureService {
             Err(OverlayError::Cancelled) => return Ok(None),
             Err(error) => return Err(ServiceError::Invalid(error.to_string())),
         };
+        if let Some(action @ (OverlayAction::Record | OverlayAction::Gif)) = result.action {
+            let monitor = result
+                .monitor
+                .or_else(|| {
+                    monitor_for(&desktop, None, result.selection.center())
+                        .map(|frozen| frozen.monitor.id)
+                })
+                .ok_or_else(no_monitor)?;
+            self.inner.context.start_recording(
+                action == OverlayAction::Gif,
+                result.selection,
+                monitor,
+            )?;
+            return Ok(None);
+        }
         let source_app = self.app_at(result.selection.center());
         let frozen = monitor_for(&desktop, result.monitor, result.selection.center())
             .or_else(|| desktop.monitors.first())
@@ -476,7 +506,8 @@ fn cursor_index(desktop: &FrozenDesktop, cursor: Option<Point>) -> Option<usize>
 
 fn take_monitor(desktop: &mut FrozenDesktop, index: Option<usize>) -> Result<Image, ServiceError> {
     let index = index.ok_or_else(no_monitor)?;
-    Ok(desktop.monitors.swap_remove(index).image)
+    let image = desktop.monitors.swap_remove(index).image;
+    Ok(Arc::try_unwrap(image).unwrap_or_else(|shared| (*shared).clone()))
 }
 
 fn compose_all(desktop: &FrozenDesktop) -> Result<Image, ServiceError> {
@@ -609,6 +640,7 @@ mod tests {
         apps: Mutex<HashMap<WindowId, String>>,
         theme: OverlayTheme,
         feedback: Mutex<Vec<(u32, u32, bool)>>,
+        recordings: Mutex<Vec<(bool, Rect, u32)>>,
     }
 
     impl CaptureContext for TestContext {
@@ -624,6 +656,14 @@ mod tests {
 
         fn save_last_region(&self, region: LastRegion) -> Result<(), ServiceError> {
             <Services as CaptureContext>::save_last_region(&self.services, region)
+        }
+
+        fn start_recording(&self, gif: bool, rect: Rect, monitor: u32) -> Result<(), ServiceError> {
+            self.recordings
+                .lock()
+                .expect("recordings")
+                .push((gif, rect, monitor));
+            Ok(())
         }
 
         fn foreground_window(&self) -> Option<WindowId> {
@@ -773,7 +813,10 @@ mod tests {
         FrozenDesktop {
             monitors: items
                 .into_iter()
-                .map(|(monitor, image)| FrozenMonitor { monitor, image })
+                .map(|(monitor, image)| FrozenMonitor {
+                    monitor,
+                    image: Arc::new(image),
+                })
                 .collect(),
         }
     }
@@ -833,6 +876,7 @@ mod tests {
             apps: Mutex::new(HashMap::new()),
             theme: OverlayTheme::Dark,
             feedback: Mutex::new(Vec::new()),
+            recordings: Mutex::new(Vec::new()),
         });
         let log = Arc::new(Mutex::new(Vec::new()));
         let capture = Arc::new(FakeCapture {
@@ -967,6 +1011,39 @@ mod tests {
             .lock()
             .expect("clipboard")
             .is_empty());
+    }
+
+    #[test]
+    fn a_record_choice_starts_a_recording_of_the_selection_and_takes_no_screenshot() {
+        let directory = tempfile::tempdir().expect("temp");
+        let desktop = desktop_of(vec![(monitor(7, 0, 0, 10, 10, true), pattern(10, 10))]);
+        let selection = Rect::new(Px(1), Px(1), Px(5), Px(5));
+        for (action, gif) in [
+            (PortOverlayAction::Record, false),
+            (PortOverlayAction::Gif, true),
+        ] {
+            let mut result = selected(selection, 7).expect("selection");
+            result.action = Some(action);
+            let harness = harness(directory.path(), desktop.clone(), Ok(result));
+            let shot = harness.service.region_result(true).expect("capture");
+            assert!(shot.is_none());
+            assert_eq!(
+                *harness.context.recordings.lock().expect("recordings"),
+                vec![(gif, selection, 7)]
+            );
+            assert!(harness
+                .context
+                .feedback
+                .lock()
+                .expect("feedback")
+                .is_empty());
+            assert!(harness
+                .clipboard
+                .images
+                .lock()
+                .expect("clipboard")
+                .is_empty());
+        }
     }
 
     #[test]
@@ -1428,6 +1505,7 @@ mod tests {
             apps: Mutex::new(HashMap::new()),
             theme: OverlayTheme::Dark,
             feedback: Mutex::new(Vec::new()),
+            recordings: Mutex::new(Vec::new()),
         });
         let overlay = Arc::new(FakeOverlay {
             result: Mutex::new(Err(PortOverlayError::Cancelled)),
@@ -1511,9 +1589,9 @@ mod tests {
     }
 
     #[test]
-    fn scrolling_capture_stays_not_yet() {
+    fn unknown_capture_actions_stay_not_yet() {
         let error =
-            run(&ActionId::new("capture_scrolling"), &Services::new()).expect_err("scrolling");
+            run(&ActionId::new("capture_scrolling"), &Services::new()).expect_err("removed");
         assert_eq!(error, ServiceError::NotYet);
         let error = run(&ActionId::new("capture_nonsense"), &Services::new()).expect_err("unknown");
         assert_eq!(error, ServiceError::NotYet);

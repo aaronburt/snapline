@@ -1,7 +1,7 @@
 use snapline_core::image::Image;
 use snapline_core::ports::{
     Clipboard as ClipboardPort, ClipboardError as PortClipboardError, CodecError,
-    ImageCodec as ImageCodecPort, Notice, Notifier, SecretError as PortSecretError,
+    ImageCodec as ImageCodecPort, Notice, Notifier, RichNotice, SecretError as PortSecretError,
     SecretStore as SecretStorePort, Sound, SoundId as PortSoundId,
 };
 use snapline_core::secret::{Secret, SecretKey};
@@ -99,6 +99,38 @@ impl Notifier for ToastNotifier {
             capture_id: notice.capture_id.and_then(|id| u64::try_from(id).ok()),
         };
         if let Err(error) = notify::show(&platform) {
+            tracing::warn!(%error, "could not show a notification");
+        }
+    }
+
+    fn toast_open(&self, notice: Notice, target: String) {
+        let platform = PlatformNotice {
+            title: notice.title,
+            body: notice.body,
+            capture_id: None,
+        };
+        if let Err(error) = notify::show_with_target(&platform, &target) {
+            tracing::warn!(%error, "could not show a notification");
+        }
+    }
+
+    fn toast_rich(&self, notice: RichNotice) {
+        let platform = notify::RichNotice {
+            title: notice.title,
+            lines: notice.lines,
+            image: notice.image,
+            open: notice.open,
+            tag: notice.tag,
+            buttons: notice
+                .buttons
+                .into_iter()
+                .map(|button| notify::RichButton {
+                    label: button.label,
+                    target: button.target,
+                })
+                .collect(),
+        };
+        if let Err(error) = notify::show_rich(&platform) {
             tracing::warn!(%error, "could not show a notification");
         }
     }

@@ -104,14 +104,24 @@ pub fn temp_path(path: &Path) -> PathBuf {
 }
 
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic_with(path, |file| {
+        file.write_all(bytes)?;
+        file.sync_all()
+    })
+}
+
+fn write_atomic_with(
+    path: &Path,
+    fill: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
+) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let temporary = temp_path(path);
-    {
-        let mut file = std::fs::File::create(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
+    let written = std::fs::File::create(&temporary).and_then(|mut file| fill(&mut file));
+    if let Err(error) = written {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error);
     }
     if let Err(error) = std::fs::rename(&temporary, path) {
         let _ = std::fs::remove_file(&temporary);
@@ -128,6 +138,29 @@ pub fn bundled_ffmpeg(exe_dir: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn a_failed_write_removes_the_temporary_file() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let target = directory.path().join("capture.png");
+        let error = write_atomic_with(&target, |file| {
+            file.write_all(b"partial")?;
+            Err(io::Error::other("disk full"))
+        })
+        .expect_err("write must fail");
+        assert_eq!(error.to_string(), "disk full");
+        assert!(!temp_path(&target).exists());
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn a_successful_write_leaves_only_the_target() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let target = directory.path().join("capture.png");
+        write_atomic(&target, b"image").expect("write");
+        assert_eq!(std::fs::read(&target).expect("read"), b"image");
+        assert!(!temp_path(&target).exists());
+    }
 
     #[test]
     fn portable_mode_moves_settings_history_thumbs_and_logs() {

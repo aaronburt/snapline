@@ -128,12 +128,12 @@ impl HistoryService {
                 let capture = self.capture(&paths, id)?;
                 let message = if capture.owned {
                     format!(
-                        "Delete {}? The file goes to the Recycle Bin.",
+                        "{}\n\nThe file goes to the Recycle Bin.",
                         file_name(&capture)
                     )
                 } else {
                     format!(
-                        "Delete {} from History? The original file stays where it is.",
+                        "{}\n\nThe original file stays where it is; only the History entry is removed.",
                         file_name(&capture)
                     )
                 };
@@ -193,6 +193,26 @@ impl HistoryService {
                 self.host()?.open_url(url)?;
                 Ok(HistoryResp::OpenUrl)
             }
+        }
+    }
+
+    pub fn open_from_notification(&self, id: i64) -> Result<(), ServiceError> {
+        let paths = self.paths()?;
+        let capture = self.capture(&paths, id)?;
+        let host = self.host()?;
+        let link = capture
+            .upload
+            .as_ref()
+            .and_then(|upload| upload.url.as_deref())
+            .filter(|url| is_web_url(url));
+        if let Some(url) = link {
+            return host.open_url(url);
+        }
+        let path = Path::new(&capture.path);
+        if capture.owned {
+            host.open_file(path)
+        } else {
+            host.show_in_folder(path)
         }
     }
 
@@ -750,7 +770,7 @@ mod tests {
         assert_eq!(response, HistoryResp::ConfirmDelete { confirmed: true });
         assert_eq!(
             host.calls(),
-            vec!["confirm:Delete named.png? The file goes to the Recycle Bin.".to_owned()]
+            vec!["confirm:named.png\n\nThe file goes to the Recycle Bin.".to_owned()]
         );
     }
 
@@ -830,6 +850,33 @@ mod tests {
         assert!(matches!(
             service.handle(HistoryReq::OpenUrl { id: local_id }),
             Err(ServiceError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn notification_opens_the_upload_link_or_the_file() {
+        let fixture = fixture();
+        let (linked, _path) = fixture.capture("toast-link.png", CaptureKind::Image, BASE);
+        fixture.upload(
+            linked,
+            StoreUploadState::Done,
+            Some("https://example.com/toast-link.png"),
+        );
+        let (unlinked, path) = fixture.capture("toast-file.png", CaptureKind::Image, BASE + 1);
+        let service = fixture.service();
+        service
+            .open_from_notification(linked)
+            .expect("linked capture");
+        service
+            .open_from_notification(unlinked)
+            .expect("unlinked capture");
+        let calls = fixture.host.calls();
+        assert_eq!(calls[0], "url:https://example.com/toast-link.png");
+        assert_eq!(calls.len(), 2);
+        assert!(calls[1].ends_with(&path.to_string_lossy().into_owned()));
+        assert!(matches!(
+            service.open_from_notification(9_999),
+            Err(ServiceError::NotFound)
         ));
     }
 }

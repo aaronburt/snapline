@@ -21,7 +21,6 @@ export const captureKindLabels: Record<CaptureStepKindDto, string> = {
   region: 'region',
   window: 'window',
   screen: 'screen',
-  scrolling: 'scrolling',
   last_region: 'last region',
 };
 
@@ -95,11 +94,7 @@ export function stepLabel(step: StepDto): string {
 export function stepIcon(step: StepDto): IconName {
   switch (step.step) {
     case 'capture':
-      return step.kind === 'scrolling'
-        ? 'scroll'
-        : step.kind === 'last_region'
-          ? 'stop'
-          : step.kind;
+      return step.kind === 'last_region' ? 'stop' : step.kind;
     case 'record':
       return step.kind === 'gif' ? 'gifMark' : step.kind === 'window' ? 'window' : 'record';
     case 'copy_image':

@@ -180,7 +180,7 @@ mod tests {
                     .cloned()
                     .map(|monitor| FrozenMonitor {
                         monitor,
-                        image: Image::bgra(4, 4).expect("image"),
+                        image: std::sync::Arc::new(Image::bgra(4, 4).expect("image")),
                     })
                     .collect(),
             })

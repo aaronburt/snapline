@@ -17,6 +17,7 @@
   import {
     addDestination,
     exportSxcu,
+    importSxcu,
     listDestinations,
     removeDestination,
     saveDestination,
@@ -47,6 +48,7 @@
   const rows = $derived($settings.uploads);
   let destinations = $state<DestinationView[]>([]);
   let destinationError = $state('');
+  let importWarnings = $state<string[]>([]);
   let activeView = $state<DestinationView | null>(null);
   let addOpen = $state(false);
 
@@ -195,6 +197,22 @@
     }
   }
 
+  async function importUploader(): Promise<void> {
+    addOpen = false;
+    destinationError = '';
+    importWarnings = [];
+    try {
+      const result = await importSxcu();
+      if (result.destination) {
+        destinations = [...destinations, result.destination];
+        activeView = result.destination;
+        importWarnings = result.warnings;
+      }
+    } catch (failure) {
+      destinationError = errorText(failure);
+    }
+  }
+
   function open(view: DestinationView): void {
     activeView = view;
     destinationError = '';
@@ -330,6 +348,10 @@
                   <Icon name="cloud" size={16} />
                   Custom uploader
                 </button>
+                <button type="button" class="hv" onclick={importUploader}>
+                  <Icon name="cloud" size={16} />
+                  Import ShareX .sxcu
+                </button>
               </div>
             </Popover>
           </div>
@@ -352,6 +374,13 @@
 
       {#if destinationError}
         <p class="error" role="alert">{destinationError}</p>
+      {/if}
+      {#if importWarnings.length > 0}
+        <div role="status">
+          {#each importWarnings as warning}
+            <p>{warning}</p>
+          {/each}
+        </div>
       {/if}
 
       {#if activeView}

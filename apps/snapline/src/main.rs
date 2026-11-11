@@ -46,8 +46,9 @@ use snapline_services::editor::{
 use snapline_services::hotkeys::{HotkeyInput, PrtscRegistry};
 use snapline_services::recording::{
     self, AudioOptions, AudioPort, AudioSession, BorderHandle, BorderHost, BorderRequest,
-    EventSink, FfmpegExit, FfmpegProcess, FfmpegProgress, FfmpegRunner, MediaPort, PickOptions,
-    PickedTarget, PickedWindow, RecordingPorts, TargetPicker, WorkerRecordingStore,
+    ControlsHandle, ControlsHost, ControlsRequest, EventSink, FfmpegExit, FfmpegProcess,
+    FfmpegProgress, FfmpegRunner, MediaPort, PickOptions, PickedTarget, PickedWindow,
+    RecordingPorts, TargetPicker, WorkerRecordingStore,
 };
 use snapline_services::saver::{CaptureRequest, ServicePorts, SystemClock};
 use snapline_services::tools::convert::{
@@ -164,6 +165,9 @@ fn editor_action(action: snapline_overlay::OverlayAction) -> EditorAction {
         snapline_overlay::OverlayAction::Save => EditorAction::Save,
         snapline_overlay::OverlayAction::Pin => EditorAction::Pin,
         snapline_overlay::OverlayAction::Upload => EditorAction::Upload,
+        snapline_overlay::OverlayAction::Record | snapline_overlay::OverlayAction::Gif => {
+            EditorAction::Copy
+        }
     }
 }
 
@@ -174,6 +178,30 @@ impl EditorFileDialog for EditorFileDialogImpl {
         snapline_win::image_dialog::pick_images()
             .map(|mut paths| paths.pop())
             .map_err(|error| ServiceError::Io(error.to_string()))
+    }
+}
+
+struct SxcuFileDialog;
+
+impl snapline_services::destinations::SxcuDialog for SxcuFileDialog {
+    fn open(&self) -> Result<Option<Vec<u8>>, ServiceError> {
+        use std::io::Read;
+        let Some(path) = snapline_win::dialogs::pick_sxcu()
+            .map_err(|error| ServiceError::Io(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        let file = std::fs::File::open(path)
+            .map_err(|_| ServiceError::Io("The .sxcu file could not be opened.".to_owned()))?;
+        let mut bytes = Vec::new();
+        file.take(65537)
+            .read_to_end(&mut bytes)
+            .map_err(|_| ServiceError::Io("The .sxcu file could not be read.".to_owned()))?;
+        Ok(Some(bytes))
+    }
+
+    fn save(&self, _suggested_name: &str, _contents: &str) -> Result<Option<String>, ServiceError> {
+        Err(ServiceError::NotYet)
     }
 }
 
@@ -305,40 +333,10 @@ struct AppCaptureContext {
 }
 
 impl CaptureContext for AppCaptureContext {
-    fn capture_complete(&self, image: &snapline_core::image::Image, sound: bool) {
+    fn capture_complete(&self, _image: &snapline_core::image::Image, sound: bool) {
         if sound {
             snapline_win::sound::play(snapline_win::sound::SoundId::Shutter);
         }
-        let image = image.clone();
-        let _ = std::thread::Builder::new()
-            .name("snapline-preview".to_owned())
-            .spawn(move || {
-                let Some(monitor) = snapline_win::monitors::enumerate()
-                    .into_iter()
-                    .find(|monitor| monitor.primary)
-                else {
-                    return;
-                };
-                let target = 320_u32.min(
-                    ((u64::from(image.width()) * 200) / u64::from(image.height().max(1))).max(1)
-                        as u32,
-                );
-                let Ok(preview) = snapline_services::saver::scale_to_width(&image, target) else {
-                    return;
-                };
-                let area = monitor.work_area;
-                let origin = Point::new(
-                    Px(area.right().0 - preview.width() as i32 - 24),
-                    Px(area.bottom().0 - preview.height() as i32 - 24),
-                );
-                let mut request =
-                    snapline_overlay::pin::PinRequest::new(preview).with_capture_origin(origin);
-                request.preview = true;
-                if let Ok(handle) = snapline_overlay::pin::open(request) {
-                    std::thread::sleep(std::time::Duration::from_secs(4));
-                    drop(handle);
-                }
-            });
     }
 
     fn capture_settings(&self) -> Result<Settings, ServiceError> {
@@ -347,6 +345,15 @@ impl CaptureContext for AppCaptureContext {
 
     fn save_last_region(&self, region: LastRegion) -> Result<(), ServiceError> {
         <Services as CaptureContext>::save_last_region(&self.services, region)
+    }
+
+    fn start_recording(
+        &self,
+        gif: bool,
+        rect: snapline_core::geometry::Rect,
+        monitor: u32,
+    ) -> Result<(), ServiceError> {
+        <Services as CaptureContext>::start_recording(&self.services, gif, rect, monitor)
     }
 
     fn foreground_window(&self) -> Option<snapline_core::ids::WindowId> {
@@ -593,6 +600,47 @@ impl BorderHandle for RecordingBorderHandle {
     }
 }
 
+struct RecordingControlsImpl;
+
+impl ControlsHost for RecordingControlsImpl {
+    fn show(
+        &self,
+        request: &ControlsRequest,
+    ) -> Result<Box<dyn ControlsHandle>, recording::RecordError> {
+        let monitors = snapline_win::monitors::enumerate();
+        let monitor = monitors
+            .iter()
+            .find(|monitor| monitor.id == request.monitor)
+            .or_else(|| {
+                monitors
+                    .iter()
+                    .find(|monitor| monitor.bounds.contains(request.rect.center()))
+            })
+            .or_else(|| monitors.first())
+            .cloned()
+            .ok_or_else(|| {
+                recording::RecordError::Border("There is no monitor for the controls.".to_owned())
+            })?;
+        snapline_overlay::record_controls::RecordControls::show(
+            request.rect,
+            monitor,
+            overlay_theme(current_overlay_theme()),
+            Arc::clone(&request.stop),
+            Arc::clone(&request.cancel),
+        )
+        .map(|handle| Box::new(RecordingControlsHandle(handle)) as Box<dyn ControlsHandle>)
+        .map_err(|error| recording::RecordError::Border(error.to_string()))
+    }
+}
+
+struct RecordingControlsHandle(snapline_overlay::record_controls::RecordControlsHandle);
+
+impl ControlsHandle for RecordingControlsHandle {
+    fn close(&mut self) {
+        self.0.close();
+    }
+}
+
 struct RecordingFfmpegImpl;
 
 impl FfmpegRunner for RecordingFfmpegImpl {
@@ -764,7 +812,12 @@ impl MediaPort for RecordingMediaImpl {
         let status = Command::new(ffmpeg)
             .args(["-y", "-ss", "0", "-i"])
             .arg(video)
-            .args(["-frames:v", "1", "-f", "image2"])
+            .args(["-frames:v", "1", "-vf"])
+            .arg(format!(
+                "scale=w='min({},iw)':h=-2",
+                snapline_services::saver::THUMBNAIL_WIDTH
+            ))
+            .args(["-f", "image2"])
             .arg(&output)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -809,6 +862,7 @@ fn recording_ports(app: tauri::AppHandle) -> RecordingPorts {
     RecordingPorts {
         picker: Arc::new(RecordingPickerImpl),
         border: Arc::new(RecordingBorderImpl),
+        controls: Arc::new(RecordingControlsImpl),
         ffmpeg: Arc::new(RecordingFfmpegImpl),
         audio: Arc::new(RecordingAudioImpl),
         media: Arc::new(RecordingMediaImpl),
@@ -818,6 +872,7 @@ fn recording_ports(app: tauri::AppHandle) -> RecordingPorts {
                 .clone(),
         )),
         events: Arc::new(RecordingEventsImpl { app }),
+        publisher: Arc::new(recording::RunnerPublisher),
     }
 }
 
@@ -894,7 +949,9 @@ fn forward_input(app: &tauri::AppHandle, event: InputEvent) {
             let services = app.state::<Services>().inner().clone();
             let background = action.as_str().starts_with("workflow:");
             let run = move || {
-                if let Err(error) = snapline_services::actions::dispatch(&action, &services) {
+                if let Err(error) =
+                    snapline_services::actions::dispatch_notifying(&action, &services)
+                {
                     if !matches!(error, ServiceError::NotYet) {
                         tracing::warn!(%action, %error, "hotkey action failed");
                     }
@@ -944,6 +1001,7 @@ fn main() -> anyhow::Result<()> {
     };
     let registry: Arc<dyn snapline_services::uploads::DestinationSource> = Arc::new(
         snapline_services::destinations::Registry::new(&services, secrets.clone())
+            .with_dialog(Arc::new(SxcuFileDialog))
             .with_sftp(host_keys, Arc::new(HostKeyDialog)),
     );
     let upload_destinations = registry.clone();
@@ -1066,11 +1124,27 @@ fn main() -> anyhow::Result<()> {
             tray::handle_second_instance(app, &argv);
         }))
         .setup(move |app| {
+            if let Err(error) = snapline_win::notify::register_app_name() {
+                tracing::warn!(%error, "the notification identity could not be registered");
+            }
             if let Err(error) =
                 snapline_services::uploads::maintain_history(&startup_services, true)
             {
                 tracing::warn!(%error, "upload history could not be maintained");
             }
+            let activation_services = startup_services.clone();
+            snapline_win::notify::set_activation_handler(move |activation| {
+                let Some(capture_id) = activation.capture_id.and_then(|id| i64::try_from(id).ok())
+                else {
+                    return;
+                };
+                if let Err(error) = activation_services
+                    .history()
+                    .open_from_notification(capture_id)
+                {
+                    tracing::warn!(%error, "the notified capture could not be opened");
+                }
+            });
             let maintenance_services = startup_services.clone();
             let _ = std::thread::Builder::new()
                 .name("snapline-history-maintenance".to_owned())
@@ -1179,6 +1253,7 @@ struct IntakeLink {
     url: String,
     name: String,
     page_url: Option<String>,
+    capture_id: Option<i64>,
 }
 
 #[derive(Default)]
@@ -1197,6 +1272,7 @@ impl IntakeLinkBatches {
                 url,
                 name: state.file_name.clone(),
                 page_url: state.page_link.clone(),
+                capture_id: state.capture_id,
             }),
             UploadStatus::Failed | UploadStatus::Cancelled => None,
             _ => return,
@@ -1210,10 +1286,11 @@ impl IntakeLinkBatches {
         let Some(completed) = self.0.remove(&batch.id) else {
             return;
         };
+        let completed: Vec<IntakeLink> = completed.into_values().flatten().collect();
+        let capture_id = completed.iter().find_map(|link| link.capture_id);
         let format = intake_link_format(services);
         let links: Vec<_> = completed
-            .into_values()
-            .flatten()
+            .iter()
             .map(|link| format.format(&link.url, &link.name, link.page_url.as_deref()))
             .collect();
         if links.is_empty() {
@@ -1228,7 +1305,10 @@ impl IntakeLinkBatches {
         } else {
             format!("{} links copied to the clipboard.", links.len())
         };
-        ToastNotifier.toast(Notice::new("Upload links copied", message));
+        ToastNotifier.toast(Notice {
+            capture_id,
+            ..Notice::new("Upload links copied", message)
+        });
     }
 }
 

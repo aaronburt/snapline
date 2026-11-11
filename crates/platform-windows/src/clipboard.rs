@@ -87,7 +87,7 @@ impl Clipboard {
     }
 
     pub fn set_image(&self, image: &Image) -> Result<(), ClipboardError> {
-        let dib = dibv5_bytes(image)?;
+        let layout = dibv5_layout(image)?;
         let png = match self.png {
             Some(codec) => match codec.encode(image) {
                 Ok(bytes) => Some(bytes),
@@ -109,7 +109,7 @@ impl Clipboard {
             if let (Some(format), Some(bytes)) = (png_format, png.as_deref()) {
                 store_blob(format, bytes)?;
             }
-            store_blob(dib_format(), &dib)
+            store_dibv5(image, &layout)
         })();
         if result.is_err() {
             // SAFETY: the clipboard is still open on this thread; clearing removes any partial data.
@@ -220,6 +220,31 @@ struct GlobalBuffer {
 }
 
 impl GlobalBuffer {
+    fn filled<F>(length: usize, fill: F) -> Result<Self, ClipboardError>
+    where
+        F: FnOnce(&mut [u8]) -> Result<(), ClipboardError>,
+    {
+        let length = length.max(1);
+        // SAFETY: the size is non-zero and the returned handle is owned by the buffer until it is dropped or transferred.
+        let handle =
+            unsafe { GlobalAlloc(GMEM_MOVEABLE, length) }.map_err(ClipboardError::Allocate)?;
+        let buffer = Self { handle };
+        // SAFETY: the handle is live and owned by the buffer, which releases it if this call fails.
+        let pointer = unsafe { GlobalLock(buffer.handle) };
+        if pointer.is_null() {
+            return Err(ClipboardError::Allocate(Error::from_thread()));
+        }
+        // SAFETY: the locked block is exactly `length` writable bytes and is not aliased while the slice lives.
+        let slice = unsafe { std::slice::from_raw_parts_mut(pointer.cast::<u8>(), length) };
+        slice.fill(0);
+        let outcome = fill(slice);
+        // SAFETY: the block was locked once above and is unlocked once here.
+        unsafe {
+            let _ = GlobalUnlock(buffer.handle);
+        }
+        outcome.map(|()| buffer)
+    }
+
     fn from_bytes(bytes: &[u8]) -> Result<Self, ClipboardError> {
         let length = bytes.len().max(1);
         // SAFETY: the size is non-zero and the returned handle is owned by the buffer until it is dropped or transferred.
@@ -247,6 +272,15 @@ impl Drop for GlobalBuffer {
             let _ = GlobalFree(Some(self.handle));
         }
     }
+}
+
+fn store_dibv5(image: &Image, layout: &Dibv5Layout) -> Result<(), ClipboardError> {
+    let buffer = GlobalBuffer::filled(layout.total, |bytes| write_dibv5(image, layout, bytes))?;
+    // SAFETY: the clipboard is open and the allocation is unlocked; on success the clipboard takes ownership of the handle.
+    unsafe { SetClipboardData(dib_format(), Some(HANDLE(buffer.handle.0))) }
+        .map_err(ClipboardError::Store)?;
+    forget(buffer);
+    Ok(())
 }
 
 fn store_blob(format: u32, bytes: &[u8]) -> Result<(), ClipboardError> {
@@ -314,7 +348,21 @@ fn utf16_bytes(text: &str) -> Vec<u8> {
     bytes
 }
 
+#[cfg(test)]
 fn dibv5_bytes(image: &Image) -> Result<Vec<u8>, ClipboardError> {
+    let layout = dibv5_layout(image)?;
+    let mut bytes = vec![0_u8; layout.total];
+    write_dibv5(image, &layout, &mut bytes)?;
+    Ok(bytes)
+}
+
+struct Dibv5Layout {
+    header: BITMAPV5HEADER,
+    stride: usize,
+    total: usize,
+}
+
+fn dibv5_layout(image: &Image) -> Result<Dibv5Layout, ClipboardError> {
     let width = i32::try_from(image.width()).map_err(|_| ClipboardError::Malformed)?;
     let height = i32::try_from(image.height()).map_err(|_| ClipboardError::Malformed)?;
     let stride = image
@@ -360,19 +408,33 @@ fn dibv5_bytes(image: &Image) -> Result<Vec<u8>, ClipboardError> {
         bV5ProfileSize: 0,
         bV5Reserved: 0,
     };
-    let mut bytes = vec![0_u8; total];
-    bytes[..size_of::<BITMAPV5HEADER>()].copy_from_slice(header_bytes(&header));
     let stride = usize::try_from(stride).map_err(|_| ClipboardError::Malformed)?;
+    Ok(Dibv5Layout {
+        header,
+        stride,
+        total,
+    })
+}
+
+fn write_dibv5(
+    image: &Image,
+    layout: &Dibv5Layout,
+    bytes: &mut [u8],
+) -> Result<(), ClipboardError> {
+    if bytes.len() != layout.total {
+        return Err(ClipboardError::Malformed);
+    }
+    bytes[..size_of::<BITMAPV5HEADER>()].copy_from_slice(header_bytes(&layout.header));
     for y in 0..image.height() {
         let row = image.row(y).ok_or(ClipboardError::Malformed)?;
         let offset = size_of::<BITMAPV5HEADER>()
             + usize::try_from(y)
                 .map_err(|_| ClipboardError::Malformed)?
-                .checked_mul(stride)
+                .checked_mul(layout.stride)
                 .ok_or(ClipboardError::Malformed)?;
-        bytes[offset..offset + stride].copy_from_slice(row);
+        bytes[offset..offset + layout.stride].copy_from_slice(row);
     }
-    Ok(bytes)
+    Ok(())
 }
 
 fn header_bytes(header: &BITMAPV5HEADER) -> &[u8] {
@@ -569,6 +631,33 @@ mod tests {
         assert_eq!(bytes.len(), 124 + 24);
         assert_eq!(&bytes[124..128], &[1, 2, 3, 255]);
         assert_eq!(&bytes[136..140], &[10, 11, 12, 255]);
+    }
+
+    #[test]
+    fn direct_global_write_matches_the_vec_encoding() {
+        for image in [sample_image(), padded_image()] {
+            let expected = encode(&image);
+            let layout = match dibv5_layout(&image) {
+                Ok(layout) => layout,
+                Err(error) => panic!("the layout could not be built: {error}"),
+            };
+            let buffer = match GlobalBuffer::filled(layout.total, |bytes| {
+                write_dibv5(&image, &layout, bytes)
+            }) {
+                Ok(buffer) => buffer,
+                Err(error) => panic!("the global buffer could not be filled: {error}"),
+            };
+            // SAFETY: the buffer owns a live allocation that is locked once here and unlocked once below.
+            let pointer = unsafe { GlobalLock(buffer.handle) };
+            assert!(!pointer.is_null());
+            let mut copy = vec![0_u8; expected.len()];
+            // SAFETY: the locked block holds at least `expected.len()` bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(pointer.cast::<u8>(), copy.as_mut_ptr(), copy.len());
+                let _ = GlobalUnlock(buffer.handle);
+            }
+            assert_eq!(copy, expected);
+        }
     }
 
     #[test]

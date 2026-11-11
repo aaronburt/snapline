@@ -93,6 +93,30 @@ pub fn pick_ffmpeg() -> Result<Option<PathBuf>, DialogError> {
     Ok(Some(path))
 }
 
+pub fn pick_sxcu() -> Result<Option<PathBuf>, DialogError> {
+    let _com = Com::start().map_err(DialogError::FilesOpen)?;
+    let dialog: IFileOpenDialog =
+        unsafe { CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER) }
+            .map_err(DialogError::FilesOpen)?;
+    let options = unsafe { dialog.GetOptions() }.map_err(DialogError::FilesOpen)?;
+    unsafe { dialog.SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST) }
+        .map_err(DialogError::FilesOpen)?;
+    unsafe { dialog.SetTitle(&HSTRING::from("Choose a ShareX .sxcu file")) }
+        .map_err(DialogError::FilesOpen)?;
+    match unsafe { dialog.Show(None) } {
+        Ok(()) => {}
+        Err(error) if error.code() == HRESULT::from_win32(ERROR_CANCELLED.0) => return Ok(None),
+        Err(error) => return Err(DialogError::FilesOpen(error)),
+    }
+    let item = unsafe { dialog.GetResult() }.map_err(DialogError::FilesRead)?;
+    let name = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH) }.map_err(DialogError::FilesRead)?;
+    let value = unsafe { name.to_string() };
+    unsafe { CoTaskMemFree(Some(name.0.cast())) };
+    Ok(Some(PathBuf::from(
+        value.map_err(|error| DialogError::FilesRead(error.into()))?,
+    )))
+}
+
 struct Com;
 
 impl Com {

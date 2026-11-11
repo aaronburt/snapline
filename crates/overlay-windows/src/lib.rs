@@ -24,6 +24,7 @@ pub mod pin;
 pub mod port_impl;
 pub mod readout;
 pub mod record_border;
+pub mod record_controls;
 pub mod ruler;
 pub mod text_input;
 pub mod thread;
@@ -76,6 +77,8 @@ pub enum OverlayAction {
     Save,
     Pin,
     Upload,
+    Record,
+    Gif,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

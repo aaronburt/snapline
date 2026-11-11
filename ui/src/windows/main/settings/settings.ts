@@ -45,16 +45,12 @@ export interface CaptureSettings {
   gifFrameRate: string;
   gifWidth: string;
   optimisePalette: boolean;
-  scrollDelay: number;
-  maxScrolls: string;
-  removeStickyHeaders: boolean;
 }
 
 export interface HotkeySettings {
   captureRegion: string;
   captureWindow: string;
   captureFullScreen: string;
-  scrollingCapture: string;
   lastRegion: string;
   recordVideo: string;
   recordGif: string;
@@ -109,7 +105,6 @@ export const RECORDING_FRAME_RATE_OPTIONS = ['24', '30', '60'];
 export const QUALITY_OPTIONS = ['High (recommended)', 'Balanced', 'Small file', 'Lossless'];
 export const GIF_FRAME_RATE_OPTIONS = ['10', '15', '20', '30'];
 export const GIF_WIDTH_OPTIONS = ['Original size', '1280 px wide', '800 px wide', '480 px wide'];
-export const MAX_SCROLL_OPTIONS = ['10', '20', '30', '50', 'Unlimited'];
 export const RETRY_OPTIONS = ["Don't retry", 'Once', '3 times', '5 times'];
 export const TIMEOUT_OPTIONS = ['30 s', '60 s', '120 s'];
 export const HISTORY_OPTIONS = ['Forever', '1 year', '90 days', '30 days'];
@@ -136,7 +131,6 @@ const HOTKEY_ACTIONS = {
   captureRegion: 'capture_region',
   captureWindow: 'capture_window',
   captureFullScreen: 'capture_screen',
-  scrollingCapture: 'capture_scrolling',
   lastRegion: 'capture_last_region',
   recordVideo: 'record_video',
   recordGif: 'record_gif',
@@ -350,22 +344,6 @@ function gifWidthValue(label: string): string {
   );
 }
 
-function scrollLimitLabel(value: string): string {
-  return choose(
-    value,
-    { ten: '10', twenty: '20', thirty: '30', fifty: '50', unlimited: 'Unlimited' },
-    '30',
-  );
-}
-
-function scrollLimitValue(label: string): string {
-  return choose(
-    label,
-    { '10': 'ten', '20': 'twenty', '30': 'thirty', '50': 'fifty', Unlimited: 'unlimited' },
-    'thirty',
-  );
-}
-
 function retryLabel(value: string): string {
   return choose(
     value,
@@ -473,15 +451,11 @@ export function toView(dto: SettingsDto): Settings {
       gifFrameRate: gifFrameRateLabel(dto.capture.gifFrameRate),
       gifWidth: gifWidthLabel(dto.capture.gifMaxWidth),
       optimisePalette: dto.capture.gifOptimisePalette,
-      scrollDelay: dto.capture.scrollDelayMs,
-      maxScrolls: scrollLimitLabel(dto.capture.scrollLimit),
-      removeStickyHeaders: dto.capture.removeStickyHeaders,
     },
     hotkeys: {
       captureRegion: chord(HOTKEY_ACTIONS.captureRegion, 'PrtSc'),
       captureWindow: chord(HOTKEY_ACTIONS.captureWindow, 'Alt+PrtSc'),
       captureFullScreen: chord(HOTKEY_ACTIONS.captureFullScreen, 'Ctrl+PrtSc'),
-      scrollingCapture: chord(HOTKEY_ACTIONS.scrollingCapture, 'Ctrl+Alt+S'),
       lastRegion: chord(HOTKEY_ACTIONS.lastRegion, 'Ctrl+Shift+R'),
       recordVideo: chord(HOTKEY_ACTIONS.recordVideo, 'Shift+PrtSc'),
       recordGif: chord(HOTKEY_ACTIONS.recordGif, 'Ctrl+Shift+G'),
@@ -554,15 +528,11 @@ export function defaultSettings(): Settings {
       gifFrameRate: '15',
       gifWidth: '800 px wide',
       optimisePalette: true,
-      scrollDelay: 300,
-      maxScrolls: '30',
-      removeStickyHeaders: true,
     },
     hotkeys: {
       captureRegion: 'PrtSc',
       captureWindow: 'Alt+PrtSc',
       captureFullScreen: 'Ctrl+PrtSc',
-      scrollingCapture: 'Ctrl+Alt+S',
       lastRegion: 'Ctrl+Shift+R',
       recordVideo: 'Shift+PrtSc',
       recordGif: 'Ctrl+Shift+G',
@@ -731,12 +701,6 @@ function capturePatch<K extends keyof CaptureSettings>(key: K, value: CaptureSet
       return { gif_max_width: gifWidthValue(String(value)) };
     case 'optimisePalette':
       return { gif_optimise_palette: value };
-    case 'scrollDelay':
-      return { scroll_delay_ms: value };
-    case 'maxScrolls':
-      return { scroll_limit: scrollLimitValue(String(value)) };
-    case 'removeStickyHeaders':
-      return { remove_sticky_headers: value };
     default:
       return {};
   }
@@ -754,8 +718,6 @@ function hotkeyPatch<K extends keyof HotkeySettings>(key: K, value: HotkeySettin
       return { bindings: { [HOTKEY_ACTIONS.captureWindow]: value } };
     case 'captureFullScreen':
       return { bindings: { [HOTKEY_ACTIONS.captureFullScreen]: value } };
-    case 'scrollingCapture':
-      return { bindings: { [HOTKEY_ACTIONS.scrollingCapture]: value } };
     case 'lastRegion':
       return { bindings: { [HOTKEY_ACTIONS.lastRegion]: value } };
     case 'recordVideo':

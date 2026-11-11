@@ -33,13 +33,6 @@ export const panelCaptures: PanelCapture[] = [
     icon: 'screen',
     action: 'capture_screen',
   },
-  {
-    id: 'scrolling',
-    label: 'Scrolling',
-    chord: 'Ctrl+Alt+S',
-    icon: 'scroll',
-    action: 'capture_scrolling',
-  },
 ];
 
 export interface PanelRecent {

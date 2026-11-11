@@ -6,7 +6,6 @@ pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("capture_region", "PrtSc"),
     ("capture_window", "Alt+PrtSc"),
     ("capture_screen", "Ctrl+PrtSc"),
-    ("capture_scrolling", "Ctrl+Alt+S"),
     ("capture_last_region", "Ctrl+Shift+R"),
     ("record_video", "Shift+PrtSc"),
     ("record_gif", "Ctrl+Shift+G"),

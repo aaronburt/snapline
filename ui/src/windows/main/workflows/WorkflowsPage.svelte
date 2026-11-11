@@ -18,7 +18,19 @@
     workflowInput,
   } from './data';
 
+  let { query = '' }: { query?: string } = $props();
   let workflows = $state<WorkflowInfo[]>([]);
+  const filtered = $derived(
+    workflows.filter((workflow) => {
+      const term = query.trim().toLocaleLowerCase();
+      return (
+        !term ||
+        [displayName(workflow), chordFor(workflow, live), ...workflow.steps.map(stepLabel)].some(
+          (value) => value.toLocaleLowerCase().includes(term),
+        )
+      );
+    }),
+  );
   let live = $state<HotkeysState>({ bindings: [], blocked: [], paused: false });
   let loaded = $state(false);
   let message = $state('');
@@ -89,8 +101,12 @@
     <EmptyState title="No workflows yet" />
   {/if}
 
+  {#if loaded && workflows.length > 0 && filtered.length === 0}
+    <EmptyState title="No matching workflows" text="Try a different search." />
+  {/if}
+
   <div class="list">
-    {#each workflows as workflow (workflow.id)}
+    {#each filtered as workflow (workflow.id)}
       {@const blocked = isBlocked(workflow, live)}
       {@const clash = clashLine(workflow, live)}
       <article class="card">

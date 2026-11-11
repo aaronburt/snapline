@@ -93,7 +93,6 @@ pub enum CaptureStepKindDto {
     Region,
     Window,
     Screen,
-    Scrolling,
     LastRegion,
 }
 
@@ -137,7 +136,6 @@ impl From<CaptureKind> for CaptureStepKindDto {
             CaptureKind::Region => Self::Region,
             CaptureKind::Window => Self::Window,
             CaptureKind::Screen => Self::Screen,
-            CaptureKind::Scrolling => Self::Scrolling,
             CaptureKind::LastRegion => Self::LastRegion,
         }
     }
@@ -149,7 +147,6 @@ impl From<CaptureStepKindDto> for CaptureKind {
             CaptureStepKindDto::Region => Self::Region,
             CaptureStepKindDto::Window => Self::Window,
             CaptureStepKindDto::Screen => Self::Screen,
-            CaptureStepKindDto::Scrolling => Self::Scrolling,
             CaptureStepKindDto::LastRegion => Self::LastRegion,
         }
     }

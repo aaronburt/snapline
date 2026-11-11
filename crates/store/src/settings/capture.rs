@@ -29,9 +29,6 @@ pub struct Capture {
     pub gif_frame_rate: GifFrameRate,
     pub gif_max_width: GifMaxWidth,
     pub gif_optimise_palette: bool,
-    pub scroll_delay_ms: u32,
-    pub scroll_limit: ScrollLimit,
-    pub remove_sticky_headers: bool,
     #[serde(flatten)]
     pub extra: toml::Table,
 }
@@ -61,9 +58,6 @@ impl Default for Capture {
             gif_frame_rate: GifFrameRate::Fps15,
             gif_max_width: GifMaxWidth::Px800,
             gif_optimise_palette: true,
-            scroll_delay_ms: 300,
-            scroll_limit: ScrollLimit::Thirty,
-            remove_sticky_headers: true,
             extra: toml::Table::new(),
         }
     }
@@ -196,21 +190,5 @@ pub enum GifMaxWidth {
 impl Default for GifMaxWidth {
     fn default() -> Self {
         Self::Px800
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ScrollLimit {
-    Ten,
-    Twenty,
-    Thirty,
-    Fifty,
-    Unlimited,
-}
-
-impl Default for ScrollLimit {
-    fn default() -> Self {
-        Self::Thirty
     }
 }

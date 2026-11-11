@@ -3,7 +3,6 @@ export const icons = {
     'M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M9 9h6v6H9z',
   window: 'M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM3 9h18',
   screen: 'M3 5h18v11H3zM8 20h8M12 16v4',
-  scroll: 'M7 3h10v18H7zM12 8v7M9 12l3 3 3-3',
   record: 'M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
   gif: 'M4 4h16v16H4zM8 4v16M16 4v16M4 9h4M4 15h4M16 9h4M16 15h4',
   gifMark: 'M4 5h16v14H4zM9 10H7v4h2v-1.5M12 10v4M15 14v-4h2.5M15 12h2',
@@ -74,7 +73,6 @@ export const icons = {
   palette:
     'M12 21a9 9 0 1 1 9-9c0 2-1.5 3-3 3h-2a2 2 0 0 0-1 3.7A1.5 1.5 0 0 1 12 21zM7.5 11h.01M10 7.5h.01M14.5 7.5h.01',
   stop: 'M6 6h12v12H6z',
-  sticky: 'M4 4h16v4H4zM4 11h16M4 15h16M4 19h10',
   snap: 'M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM7 8h6v5H7z',
   freeze: 'M12 2v20M4 6l16 12M20 6L4 18',
   shadow: 'M4 4h13v13H4zM20 7v13H7',

@@ -4,6 +4,7 @@
   import { currentRoute } from '../../router';
   import { info } from '../../lib/ipc/app';
   import Nav from './Nav.svelte';
+  import ResizeDivider from './ResizeDivider.svelte';
   import HistoryPage from './history/HistoryPage.svelte';
   import WorkflowsPage from './workflows/WorkflowsPage.svelte';
   import WorkflowEditor from './workflows/WorkflowEditor.svelte';
@@ -18,6 +19,9 @@
   const page = $derived($currentRoute.page);
   const isSettings = $derived(page.startsWith('settings-'));
   let hasMica = $state(false);
+  let settingsQuery = $state('');
+  let workflowQuery = $state('');
+  let navWidth = $state(248);
 
   onMount(() => {
     let disposed = false;
@@ -41,16 +45,17 @@
 </script>
 
 <div class="root" class:mica={hasMica}>
-  <div class="body">
-    <Nav {page} />
+  <div class="body" style:--sidebar-width="{navWidth}px">
+    <Nav {page} bind:settingsQuery bind:workflowQuery />
+    <ResizeDivider label="Resize navigation" value={navWidth} min={190} max={360} onresize={(width) => (navWidth = width)} />
     <div class="content">
       {#if isSettings}
-        <SettingsShell />
+        <SettingsShell query={settingsQuery} />
       {:else}
         {#if page === 'history'}
           <HistoryPage />
         {:else if page === 'workflows'}
-          <WorkflowsPage />
+          <WorkflowsPage query={workflowQuery} />
         {:else if page === 'workflow-editor'}
           <WorkflowEditor />
         {/if}

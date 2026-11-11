@@ -3,25 +3,32 @@
   import { onEvent } from '../../lib/events';
   import Icon from '../../components/Icon.svelte';
   import NavItem from '../../components/NavItem.svelte';
-  import Toast from '../../components/Toast.svelte';
   import type { AppReq } from '../../lib/ipc/bindings/AppReq';
   import type { AppResp } from '../../lib/ipc/bindings/AppResp';
   import { call } from '../../lib/ipc/core';
-  import { currentRoute, navigate } from '../../router';
   import { searchQuery } from './history/search';
 
   interface Props {
     page: string;
+    settingsQuery?: string;
+    workflowQuery?: string;
   }
 
-  let { page }: Props = $props();
+  let { page, settingsQuery = $bindable(''), workflowQuery = $bindable('') }: Props = $props();
 
   let find = $state($searchQuery);
   let findTimer: ReturnType<typeof setTimeout> | undefined;
   let count = $state('');
-  let captureError = $state('');
 
   const section = $derived(page.startsWith('workflow') ? 'workflows' : page);
+  const isSettings = $derived(page.startsWith('settings-'));
+  const searchLabel = $derived(
+    isSettings
+      ? 'Search settings'
+      : section === 'workflows'
+        ? 'Search workflows'
+        : 'Search captures',
+  );
 
   async function loadCount(): Promise<void> {
     const req: AppReq = { kind: 'stats' };
@@ -58,21 +65,28 @@
   });
 
   $effect(() => {
-    if ($searchQuery !== find && findTimer === undefined) {
-      find = $searchQuery;
-    }
+    const value = isSettings
+      ? settingsQuery
+      : section === 'workflows'
+        ? workflowQuery
+        : $searchQuery;
+    if (find !== value && findTimer === undefined) find = value;
   });
 
   function onfind(event: Event): void {
     find = (event.currentTarget as HTMLInputElement).value;
     clearTimeout(findTimer);
-    findTimer = setTimeout(() => {
-      findTimer = undefined;
-      searchQuery.set(find);
-      if ($currentRoute.page !== 'history') {
-        navigate('/history');
-      }
-    }, 200);
+    if (isSettings) {
+      settingsQuery = find;
+    } else if (section === 'workflows') {
+      workflowQuery = find;
+    } else {
+      const value = find;
+      findTimer = setTimeout(() => {
+        findTimer = undefined;
+        searchQuery.set(value);
+      }, 200);
+    }
   }
 
   onDestroy(() => {
@@ -81,13 +95,7 @@
 
   function newCapture(): void {
     const req: AppReq = { kind: 'panelAction', data: { action: 'capture_region' } };
-    captureError = '';
-    void call<AppReq, AppResp>('ipc_app', req).catch((error: unknown) => {
-      captureError =
-        typeof error === 'object' && error !== null && 'message' in error
-          ? String(error.message)
-          : 'Capture could not be completed.';
-    });
+    void call<AppReq, AppResp>('ipc_app', req).catch(() => undefined);
   }
 </script>
 
@@ -95,8 +103,9 @@
   <label class="find">
     <input
       type="search"
-      aria-label="Search captures"
-      placeholder="Search captures"
+      aria-label={searchLabel}
+      placeholder={searchLabel}
+      disabled={page === 'workflow-editor'}
       value={find}
       oninput={onfind}
     />
@@ -143,8 +152,6 @@
     />
   </div>
 </nav>
-
-<Toast message={captureError} onclose={() => (captureError = '')} />
 
 <style>
   nav {

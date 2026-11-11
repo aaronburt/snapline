@@ -14,7 +14,6 @@
     GIF_FRAME_RATE_OPTIONS,
     GIF_WIDTH_OPTIONS,
     MAGNIFIER_ZOOM_OPTIONS,
-    MAX_SCROLL_OPTIONS,
     MICROPHONE_OPTIONS,
     MONITOR_OPTIONS,
     QUALITY_OPTIONS,
@@ -130,17 +129,6 @@
   );
   const showGif = $derived(
     matches('GIF') || gifFrameRateVisible || gifWidthVisible || paletteVisible,
-  );
-
-  const scrollDelayVisible = $derived(
-    matches('Delay between scrolls', 'Raise this for pages that load content as you scroll'),
-  );
-  const maxScrollsVisible = $derived(matches('Stop after this many scrolls'));
-  const stickyVisible = $derived(
-    matches('Remove sticky headers', 'Hide headers and footers that repeat on every scroll'),
-  );
-  const showScrolling = $derived(
-    matches('Scrolling capture') || scrollDelayVisible || maxScrollsVisible || stickyVisible,
   );
 
   const monitors = $derived([
@@ -432,42 +420,6 @@
           description="Smaller files, slightly slower to encode"
           checked={rows.optimisePalette}
           onchange={(value) => updateCapture('optimisePalette', value)}
-        />
-      {/if}
-    </SettingsSection>
-  {/if}
-
-  {#if showScrolling}
-    <SettingsSection title="Scrolling capture">
-      {#if scrollDelayVisible}
-        <RangeRow
-          icon="scroll"
-          title="Delay between scrolls"
-          description="Raise this for pages that load content as you scroll"
-          min={100}
-          max={1000}
-          step={50}
-          unit=" ms"
-          value={rows.scrollDelay}
-          onchange={(value) => updateCapture('scrollDelay', value)}
-        />
-      {/if}
-      {#if maxScrollsVisible}
-        <SelectRow
-          icon="stop"
-          title="Stop after this many scrolls"
-          options={MAX_SCROLL_OPTIONS}
-          value={rows.maxScrolls}
-          onchange={(value) => updateCapture('maxScrolls', value)}
-        />
-      {/if}
-      {#if stickyVisible}
-        <ToggleRow
-          icon="sticky"
-          title="Remove sticky headers"
-          description="Hide headers and footers that repeat on every scroll"
-          checked={rows.removeStickyHeaders}
-          onchange={(value) => updateCapture('removeStickyHeaders', value)}
         />
       {/if}
     </SettingsSection>

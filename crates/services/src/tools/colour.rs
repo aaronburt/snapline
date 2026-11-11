@@ -298,7 +298,7 @@ mod tests {
         FrozenDesktop {
             monitors: vec![FrozenMonitor {
                 monitor: monitor(),
-                image: Image::bgra(4, 4).expect("image"),
+                image: std::sync::Arc::new(Image::bgra(4, 4).expect("image")),
             }],
         }
     }

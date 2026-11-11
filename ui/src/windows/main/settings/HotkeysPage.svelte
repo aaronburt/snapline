@@ -59,13 +59,6 @@
           icon: 'screen',
         },
         {
-          key: 'scrollingCapture',
-          owner: 'capture_scrolling',
-          label: 'Scrolling capture',
-          description: '',
-          icon: 'scroll',
-        },
-        {
           key: 'lastRegion',
           owner: 'capture_last_region',
           label: 'Last region again',

@@ -26,6 +26,8 @@ pub(crate) enum Icon {
     Save,
     Pin,
     Upload,
+    Record,
+    Gif,
     Cancel,
 }
 
@@ -49,6 +51,8 @@ impl Icon {
             Self::Save => "M12 4v11M7 10l5 5 5-5M4 20h16",
             Self::Pin => "M9 4h6l-1 6 3 3H7l3-3zM12 13v8",
             Self::Upload => "M12 15V4M7 9l5-5 5 5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4",
+            Self::Record => "M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM12 12h.01",
+            Self::Gif => "M4 5h16v14H4zM10 9l5 3-5 3z",
             Self::Cancel => "M6 6l12 12M18 6L6 18",
         }
     }

@@ -268,34 +268,6 @@ export const settingRegistry: SettingEntry[] = [
     description: 'Smaller files, slightly slower to encode',
   },
   {
-    page: 'settings-capture',
-    pageLabel: 'Capture',
-    route: '/settings/capture',
-    title: 'Scrolling capture',
-    description: '',
-  },
-  {
-    page: 'settings-capture',
-    pageLabel: 'Capture',
-    route: '/settings/capture',
-    title: 'Delay between scrolls',
-    description: 'Raise this for pages that load content as you scroll',
-  },
-  {
-    page: 'settings-capture',
-    pageLabel: 'Capture',
-    route: '/settings/capture',
-    title: 'Stop after this many scrolls',
-    description: '',
-  },
-  {
-    page: 'settings-capture',
-    pageLabel: 'Capture',
-    route: '/settings/capture',
-    title: 'Remove sticky headers',
-    description: 'Hide headers and footers that repeat on every scroll',
-  },
-  {
     page: 'settings-hotkeys',
     pageLabel: 'Hotkeys',
     route: '/settings/hotkeys',
@@ -314,13 +286,6 @@ export const settingRegistry: SettingEntry[] = [
     pageLabel: 'Hotkeys',
     route: '/settings/hotkeys',
     title: 'Capture full screen',
-    description: '',
-  },
-  {
-    page: 'settings-hotkeys',
-    pageLabel: 'Hotkeys',
-    route: '/settings/hotkeys',
-    title: 'Scrolling capture',
     description: '',
   },
   {

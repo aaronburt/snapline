@@ -107,7 +107,7 @@ impl WindowManager {
         }
         builder = match kind {
             WindowKind::Main => builder
-                .inner_size(1280.0, 880.0)
+                .inner_size(1000.0, 700.0)
                 .min_inner_size(900.0, 600.0)
                 .resizable(true)
                 .center(),

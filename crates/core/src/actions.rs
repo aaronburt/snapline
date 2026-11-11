@@ -66,13 +66,6 @@ pub const CATALOGUE: &[ActionDef] = &[
         available_from_milestone: 3,
     },
     ActionDef {
-        id: "capture_scrolling",
-        label: "Scrolling capture",
-        default_chord: Some("Ctrl+Alt+S"),
-        group: "capture",
-        available_from_milestone: 9,
-    },
-    ActionDef {
         id: "capture_last_region",
         label: "Last region again",
         default_chord: Some("Ctrl+Shift+R"),
@@ -103,6 +96,13 @@ pub const CATALOGUE: &[ActionDef] = &[
     ActionDef {
         id: "record_stop",
         label: "Stop recording",
+        default_chord: None,
+        group: "recording",
+        available_from_milestone: 8,
+    },
+    ActionDef {
+        id: "record_cancel",
+        label: "Cancel recording",
         default_chord: None,
         group: "recording",
         available_from_milestone: 8,
@@ -244,7 +244,6 @@ mod tests {
             ("capture_region", Some("PrtSc")),
             ("capture_window", Some("Alt+PrtSc")),
             ("capture_screen", Some("Ctrl+PrtSc")),
-            ("capture_scrolling", Some("Ctrl+Alt+S")),
             ("capture_last_region", Some("Ctrl+Shift+R")),
             ("record_video", Some("Shift+PrtSc")),
             ("record_gif", Some("Ctrl+Shift+G")),

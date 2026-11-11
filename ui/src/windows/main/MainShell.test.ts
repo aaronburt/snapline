@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { flush } from '../../test/flush';
 import { expectAccessible } from '../../test/axe';
 import { currentRoute, resolve } from '../../router';
@@ -54,5 +54,19 @@ describe('MainShell accessibility', () => {
     expect(screen.getByRole('navigation', { name: 'Main' })).not.toBeNull();
     expect(screen.getByRole('heading', { level: 1, name: 'Workflows' })).not.toBeNull();
     await expectAccessible(container);
+  });
+  it('searches settings from the sidebar and keeps the query when changing settings pages', async () => {
+    currentRoute.set(resolve('#/settings/general'));
+    render(MainShell);
+    const search = screen.getByRole('searchbox', { name: 'Search settings' });
+    expect(screen.getAllByRole('searchbox')).toHaveLength(1);
+    await fireEvent.input(search, { target: { value: 'retry' } });
+    expect(screen.queryByText('Retry failed uploads')).toBeNull();
+    currentRoute.set(resolve('#/settings/uploads'));
+    await flush();
+    expect(
+      (screen.getByRole('searchbox', { name: 'Search settings' }) as HTMLInputElement).value,
+    ).toBe('retry');
+    expect(screen.getByText('Retry failed uploads')).not.toBeNull();
   });
 });

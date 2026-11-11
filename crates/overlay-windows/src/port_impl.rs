@@ -36,6 +36,8 @@ impl core_ports::OverlayHost for OverlayHostImpl {
                 OverlayAction::Save => core_ports::OverlayAction::Save,
                 OverlayAction::Pin => core_ports::OverlayAction::Pin,
                 OverlayAction::Upload => core_ports::OverlayAction::Upload,
+                OverlayAction::Record => core_ports::OverlayAction::Record,
+                OverlayAction::Gif => core_ports::OverlayAction::Gif,
             }),
             selection: result.selection,
             monitor: result.monitor,

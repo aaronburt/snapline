@@ -88,8 +88,20 @@ pub async fn ipc_app(
         }
         AppReq::PanelAction { action } => {
             let services = services.inner().clone();
+            let notify_services = services.clone();
+            let action_name = action.clone();
             let action = ActionId::new(action);
+            let hide_first = matches!(
+                action.as_str(),
+                "capture_window" | "capture_screen" | "capture_last_region"
+            );
+            if hide_first && from_panel {
+                manager.close_panel(window.app_handle());
+            }
             let result = tauri::async_runtime::spawn_blocking(move || {
+                if hide_first {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
                 if action.as_str() == "capture_region" {
                     snapline_services::workflows::installed_runner()?
                         .run_default_from_capture()
@@ -100,13 +112,17 @@ pub async fn ipc_app(
             })
             .await
             .map_err(IpcError::join)?;
+            if let Err(error) = &result {
+                snapline_services::actions::notify_failure(error, &notify_services);
+            }
             if from_panel {
                 manager.close_panel(window.app_handle());
             }
             match result {
                 Ok(()) => {}
                 Err(ServiceError::NotYet) => {
-                    tracing::info!("the panel action is not available yet");
+                    tracing::warn!(%action_name, "the panel action is not available yet");
+                    snapline_services::actions::notify_unavailable(&action_name, &notify_services);
                 }
                 Err(error) => {
                     return Err(IpcError::from_service(error));

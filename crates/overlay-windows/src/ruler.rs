@@ -228,7 +228,7 @@ struct Context {
     scale: f32,
     origin: Point,
     size: Size,
-    image: snapline_core::image::Image,
+    image: std::sync::Arc<snapline_core::image::Image>,
     theme: Theme,
     on_copy: Option<RulerCopy>,
     hwnd: Option<HWND>,

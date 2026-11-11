@@ -19,7 +19,9 @@ use snapline_upload::queue::{self, UploadFile};
 
 use crate::capture;
 use crate::dto::hotkeys::{HotkeysReq, HotkeysResp};
-use crate::recording::RecordError;
+use crate::recording::{
+    recording_saved_notice, recording_upload_failed_notice, RecordError, SavedRecording,
+};
 use crate::saver::{CaptureRequest, SystemClock};
 use crate::uploads::DestinationSource;
 use crate::worker;
@@ -246,7 +248,6 @@ impl CapturePort for CaptureServicePort {
             CaptureKind::Window => service.window_image(),
             CaptureKind::Screen => service.screen_image(),
             CaptureKind::LastRegion => service.last_region_image(),
-            CaptureKind::Scrolling => return Err(WorkflowError::NotAvailableYet),
         }
         .map_err(|error| WorkflowError::Failed(error.to_string()))?
         .map(|shot| shot.image)
@@ -266,7 +267,6 @@ impl CapturePort for CaptureServicePort {
             CaptureKind::Window => service.window_image(),
             CaptureKind::Screen => service.screen_image(),
             CaptureKind::LastRegion => service.last_region_image(),
-            CaptureKind::Scrolling => return Err(WorkflowError::NotAvailableYet),
         }
         .map_err(|error| WorkflowError::Failed(error.to_string()))?
         .ok_or(WorkflowError::Cancelled)?;
@@ -329,6 +329,7 @@ impl SavePort for WorkerSavePort {
         let source_app = request.source_app.map(str::to_owned);
         let mut capture = CaptureRequest::new(image.clone(), source_app, window_title);
         capture.workflow_save = true;
+        capture.quiet = request.upload_follows;
         let outcome = self
             .worker
             .save_capture(capture)
@@ -491,6 +492,7 @@ impl UploadPort for QueueUploadPort {
                         converted: request.converted,
                         file_name: request.file_name,
                         source_app: request.source_app,
+                        upload_follows: true,
                     })?
                 }
             },
@@ -627,11 +629,11 @@ impl WorkflowRunner {
             }
             return self.run_workflow(rest);
         }
-        if id == "capture_region" {
+        if let Some(kind) = capture_kind_for(id) {
             if !self.allowed(id)? {
                 return Ok(RunOutcome::Skipped);
             }
-            return self.run_default_from_capture();
+            return self.run_default_capture(kind);
         }
         Err(ServiceError::NotYet)
     }
@@ -678,6 +680,109 @@ impl WorkflowRunner {
         }
     }
 
+    pub fn publish_recording(&self, saved: &SavedRecording) -> Result<(), ServiceError> {
+        let settings = self.inner.services.settings_snapshot()?;
+        let local = self.recording_thumbnail(saved);
+        if !settings.uploads.videos_and_gifs.is_upload() {
+            if settings.general.notifications {
+                self.inner
+                    .ports
+                    .notify
+                    .toast_rich(recording_saved_notice(saved, local));
+            }
+            return Ok(());
+        }
+        let copy_link: Vec<Step> = settings
+            .workflows
+            .list
+            .iter()
+            .find(|workflow| workflow.is_default())
+            .cloned()
+            .unwrap_or_else(|| default_from_general(&settings.general.default_workflow))
+            .steps
+            .into_iter()
+            .filter(|step| matches!(step, Step::CopyLink { .. }))
+            .collect();
+        match self.hand_off_recording(saved, copy_link) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.inner
+                    .ports
+                    .notify
+                    .toast_rich(recording_upload_failed_notice(
+                        saved,
+                        &error.to_string(),
+                        local,
+                    ));
+                Err(error)
+            }
+        }
+    }
+
+    pub fn recording_cancelled(&self) {
+        let notifications = self
+            .inner
+            .services
+            .settings_snapshot()
+            .map(|settings| settings.general.notifications)
+            .unwrap_or(true);
+        if notifications {
+            self.inner
+                .ports
+                .notify
+                .toast(snapline_core::ports::Notice::new(
+                    "Recording cancelled",
+                    "The recording was discarded.",
+                ));
+        }
+    }
+
+    fn hand_off_recording(
+        &self,
+        saved: &SavedRecording,
+        copy_link: Vec<Step>,
+    ) -> Result<(), ServiceError> {
+        let mut pending =
+            self.inner.pending.lock().map_err(|_| {
+                ServiceError::Internal("The workflow state is unavailable.".to_owned())
+            })?;
+        let upload_id = self
+            .inner
+            .ports
+            .upload
+            .hand_off(UploadRequest {
+                dest: None,
+                image: None,
+                saved_file: Some(&saved.path),
+                recording: None,
+                converted: None,
+                file_name: Some(&saved.file_name),
+                source_app: None,
+            })
+            .map_err(|error| ServiceError::Invalid(error.to_string()))?;
+        if copy_link.is_empty() {
+            return Ok(());
+        }
+        let mut workflow = Workflow::new("recording-upload", "Recording upload");
+        workflow.steps = std::iter::once(Step::Upload { dest: None })
+            .chain(copy_link)
+            .collect();
+        let context = RunContext {
+            saved_file: Some(saved.path.clone()),
+            file_name: Some(saved.file_name.clone()),
+            upload_id: Some(upload_id),
+            ..RunContext::default()
+        };
+        pending.insert(upload_id.get(), Pending { workflow, context });
+        Ok(())
+    }
+
+    fn recording_thumbnail(&self, saved: &SavedRecording) -> Option<PathBuf> {
+        let id = saved.capture_id?;
+        let paths = self.inner.services.paths().ok()?;
+        crate::thumbs::existing_thumbnail(&paths.thumbs_dir, id).map(|(path, _)| path)
+    }
+
     fn allowed(&self, owner: &str) -> Result<bool, ServiceError> {
         self.inner.gate.allows(owner)
     }
@@ -694,6 +799,10 @@ impl WorkflowRunner {
     }
 
     pub fn run_default_from_capture(&self) -> Result<RunOutcome, ServiceError> {
+        self.run_default_capture(CaptureKind::Region)
+    }
+
+    pub fn run_default_capture(&self, kind: CaptureKind) -> Result<RunOutcome, ServiceError> {
         let settings = self.inner.services.settings_snapshot()?;
         let mut workflow = settings
             .workflows
@@ -725,17 +834,10 @@ impl WorkflowRunner {
             Step::CopyLink { .. } => has_upload,
             _ => true,
         });
-        if !workflow
-            .steps
-            .first()
-            .is_some_and(|step| step.is_capture_or_record())
-        {
-            workflow.steps.insert(
-                0,
-                Step::Capture {
-                    kind: CaptureKind::Region,
-                },
-            );
+        match workflow.steps.first_mut() {
+            Some(Step::Capture { kind: first }) => *first = kind,
+            Some(Step::Record { .. }) => {}
+            _ => workflow.steps.insert(0, Step::Capture { kind }),
         }
         self.execute(&workflow)
     }
@@ -771,7 +873,7 @@ impl WorkflowRunner {
                 Ok(RunOutcome::Ran(report))
             }
             Err(error) => {
-                if context.explicit_capture_output
+                if (context.explicit_capture_output || context.saved_file.is_some())
                     && !matches!(error.kind, workflow::RunErrorKind::Cancelled { .. })
                 {
                     self.inner
@@ -785,6 +887,16 @@ impl WorkflowRunner {
                 Err(map_run_error(error))
             }
         }
+    }
+}
+
+fn capture_kind_for(id: &str) -> Option<CaptureKind> {
+    match id {
+        "capture_region" => Some(CaptureKind::Region),
+        "capture_window" => Some(CaptureKind::Window),
+        "capture_screen" => Some(CaptureKind::Screen),
+        "capture_last_region" => Some(CaptureKind::LastRegion),
+        _ => None,
     }
 }
 
@@ -876,6 +988,7 @@ mod tests {
         images: Mutex<Vec<Image>>,
         texts: Mutex<Vec<String>>,
         uploads: Mutex<Vec<Option<String>>>,
+        rich: Mutex<Vec<snapline_core::ports::RichNotice>>,
         next_upload: AtomicU64,
         capture_available: AtomicBool,
         text_available: AtomicBool,
@@ -890,6 +1003,7 @@ mod tests {
                 images: Mutex::new(Vec::new()),
                 texts: Mutex::new(Vec::new()),
                 uploads: Mutex::new(Vec::new()),
+                rich: Mutex::new(Vec::new()),
                 next_upload: AtomicU64::new(7),
                 capture_available: AtomicBool::new(true),
                 text_available: AtomicBool::new(true),
@@ -932,7 +1046,7 @@ mod tests {
     impl CapturePort for FakePorts {
         fn capture(&self, kind: CaptureKind) -> Result<Image, WorkflowError> {
             self.log(format!("capture:{}", kind.label().to_ascii_lowercase()));
-            if kind == CaptureKind::Scrolling || !self.capture_available.load(Ordering::SeqCst) {
+            if !self.capture_available.load(Ordering::SeqCst) {
                 return Err(WorkflowError::NotAvailableYet);
             }
             Ok(sample_image())
@@ -1017,6 +1131,11 @@ mod tests {
     impl Notifier for FakePorts {
         fn toast(&self, _notice: Notice) {
             self.log("notify");
+        }
+
+        fn toast_rich(&self, notice: snapline_core::ports::RichNotice) {
+            self.log(format!("rich:{}", notice.title));
+            self.rich.lock().expect("rich").push(notice);
         }
     }
 
@@ -1140,7 +1259,7 @@ mod tests {
     }
 
     #[test]
-    fn a_scrolling_capture_is_not_available_yet() {
+    fn a_saved_scrolling_workflow_runs_as_a_region_capture() {
         let directory = tempfile::tempdir().expect("temp");
         let services = services(directory.path());
         let ports = Arc::new(FakePorts::default());
@@ -1148,20 +1267,18 @@ mod tests {
             &services,
             flow(
                 "scroll",
-                "Scrolling capture",
+                "Old scrolling capture",
                 true,
                 serde_json::json!([
                     { "step": "capture", "kind": "scrolling" },
-                    { "step": "save" },
-                    { "step": "notify" }
+                    { "step": "save" }
                 ]),
             ),
         );
-        let error = runner(&services, &ports, true)
+        runner(&services, &ports, true)
             .run_workflow("scroll")
-            .expect_err("not available");
-        assert_eq!(error.to_string(), "Scrolling capture is not available yet");
-        assert_eq!(ports.entries(), vec!["capture:scrolling".to_owned()]);
+            .expect("runs");
+        assert_eq!(ports.entries()[0], "capture:region".to_owned());
     }
 
     #[test]
@@ -1217,6 +1334,145 @@ mod tests {
         let entries = ports.entries();
         assert!(entries.iter().any(|entry| entry == "annotate"));
         assert!(!entries.iter().any(|entry| entry.starts_with("upload")));
+    }
+
+    fn saved_recording() -> SavedRecording {
+        SavedRecording {
+            capture_id: Some(4),
+            path: PathBuf::from(r"C:\Pics\clip.mp4"),
+            file_name: "clip.mp4".to_owned(),
+            bytes: 2_097_152,
+            width: 640,
+            height: 360,
+            duration_ms: 12_000,
+            kind: crate::recording::RecordedKind::Video,
+        }
+    }
+
+    fn choose_video_destination(services: &Services) {
+        services
+            .update_settings(&serde_json::json!({
+                "uploads": { "videos_and_gifs": "my-host" }
+            }))
+            .expect("settings");
+    }
+
+    #[test]
+    fn a_recording_without_a_destination_shows_a_recording_saved_toast() {
+        let directory = tempfile::tempdir().expect("temp");
+        let services = services(directory.path());
+        let ports = Arc::new(FakePorts::default());
+        runner(&services, &ports, true)
+            .publish_recording(&saved_recording())
+            .expect("publish");
+        assert_eq!(ports.entries(), ["rich:Recording saved"]);
+        let rich = ports.rich.lock().expect("rich");
+        assert_eq!(rich[0].lines, ["clip.mp4", "2.0 MB, 0:12"]);
+        assert_eq!(rich[0].tag.as_deref(), Some("capture-4"));
+        assert_eq!(rich[0].buttons[0].label, "Open video");
+        assert_eq!(rich[0].buttons[1].label, "Open folder");
+    }
+
+    #[test]
+    fn a_cancelled_recording_shows_one_short_notice_with_no_buttons() {
+        let directory = tempfile::tempdir().expect("temp");
+        let services = services(directory.path());
+        let ports = Arc::new(FakePorts::default());
+        runner(&services, &ports, true).recording_cancelled();
+        assert_eq!(ports.entries(), ["notify"]);
+        assert!(ports.rich.lock().expect("rich").is_empty());
+    }
+
+    #[test]
+    fn a_recording_with_notifications_off_stays_quiet() {
+        let directory = tempfile::tempdir().expect("temp");
+        let services = services(directory.path());
+        services
+            .update_settings(&serde_json::json!({ "general": { "notifications": false } }))
+            .expect("settings");
+        let ports = Arc::new(FakePorts::default());
+        runner(&services, &ports, true)
+            .publish_recording(&saved_recording())
+            .expect("publish");
+        assert!(ports.entries().is_empty());
+    }
+
+    #[test]
+    fn a_recording_with_a_destination_uploads_and_copies_the_link_without_a_saved_toast() {
+        let directory = tempfile::tempdir().expect("temp");
+        let services = services(directory.path());
+        choose_video_destination(&services);
+        let ports = Arc::new(FakePorts::default());
+        let runner = runner(&services, &ports, true);
+        runner
+            .publish_recording(&saved_recording())
+            .expect("publish");
+        assert_eq!(ports.entries(), ["upload"]);
+        assert!(ports.texts.lock().expect("texts").is_empty());
+        runner
+            .resume_upload(
+                7,
+                "https://i.example.com/clip.mp4",
+                None,
+                Some("clip.mp4".to_owned()),
+            )
+            .expect("resume")
+            .expect("pending run");
+        assert_eq!(
+            *ports.texts.lock().expect("texts"),
+            ["https://i.example.com/clip.mp4"]
+        );
+        assert!(!ports
+            .entries()
+            .iter()
+            .any(|entry| entry.starts_with("rich:")));
+    }
+
+    #[test]
+    fn a_recording_upload_that_cannot_start_shows_upload_failed() {
+        let directory = tempfile::tempdir().expect("temp");
+        let services = services(directory.path());
+        choose_video_destination(&services);
+        let ports = Arc::new(FakePorts::default());
+        ports.upload_available.store(false, Ordering::SeqCst);
+        let result = runner(&services, &ports, true).publish_recording(&saved_recording());
+        assert!(result.is_err());
+        assert_eq!(ports.entries(), ["upload", "rich:Upload failed"]);
+        let rich = ports.rich.lock().expect("rich");
+        assert_eq!(rich[0].tag.as_deref(), Some("capture-4"));
+        assert_eq!(rich[0].buttons[0].label, "Open video");
+    }
+
+    #[test]
+    fn the_window_screen_and_last_region_actions_run_the_default_workflow() {
+        for (action, label) in [
+            ("capture_window", "capture:window"),
+            ("capture_screen", "capture:screen"),
+            ("capture_last_region", "capture:last region"),
+        ] {
+            let directory = tempfile::tempdir().expect("temp");
+            let services = services(directory.path());
+            let ports = Arc::new(FakePorts::default());
+            let outcome = runner(&services, &ports, true)
+                .run_action(&ActionId::new(action))
+                .expect("run");
+            assert!(matches!(outcome, RunOutcome::Ran(_)), "{action}");
+            let entries = ports.entries();
+            assert_eq!(entries.first().map(String::as_str), Some(label), "{action}");
+            assert!(entries.iter().any(|entry| entry == "save"), "{action}");
+        }
+    }
+
+    #[test]
+    fn a_blocked_window_capture_is_skipped() {
+        let directory = tempfile::tempdir().expect("temp");
+        let services = services(directory.path());
+        let ports = Arc::new(FakePorts::default());
+        let outcome = runner(&services, &ports, false)
+            .run_action(&ActionId::new("capture_window"))
+            .expect("run");
+        assert_eq!(outcome, RunOutcome::Skipped);
+        assert!(ports.entries().is_empty());
     }
 
     #[test]

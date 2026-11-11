@@ -15,6 +15,7 @@ pub struct SaveRequest<'a> {
     pub converted: Option<&'a Path>,
     pub file_name: Option<&'a str>,
     pub source_app: Option<&'a str>,
+    pub upload_follows: bool,
 }
 
 pub struct UploadRequest<'a> {
@@ -185,7 +186,16 @@ pub fn run(
             break;
         }
         if let Some(action) = context.capture_action.take() {
-            if let Some(steps) = steps_for_action(action) {
+            if let Some(mut steps) = steps_for_action(action) {
+                if steps.iter().any(|step| matches!(step, Step::Upload { .. })) {
+                    steps.extend(
+                        workflow
+                            .steps
+                            .iter()
+                            .filter(|step| matches!(step, Step::CopyLink { .. }))
+                            .cloned(),
+                    );
+                }
                 context.explicit_capture_output = true;
                 explicit = true;
                 chosen = steps;
@@ -248,7 +258,7 @@ fn steps_for_action(action: crate::ports::OverlayAction) -> Option<Vec<Step>> {
         OverlayAction::Copy => Some(vec![Step::CopyImage]),
         OverlayAction::Save => Some(vec![Step::Save]),
         OverlayAction::Upload => Some(vec![Step::Save, Step::Upload { dest: None }]),
-        OverlayAction::Pin => None,
+        OverlayAction::Pin | OverlayAction::Record | OverlayAction::Gif => None,
     }
 }
 
@@ -412,6 +422,10 @@ fn execute_step(
                 converted: context.converted.as_deref(),
                 file_name: context.file_name.as_deref(),
                 source_app: context.source_app.as_deref(),
+                upload_follows: workflow
+                    .steps
+                    .iter()
+                    .any(|step| matches!(step, Step::Upload { .. })),
             };
             if request.image.is_none() && request.recording.is_none() && request.converted.is_none()
             {
@@ -905,6 +919,52 @@ mod tests {
     }
 
     #[test]
+    fn a_chosen_upload_still_defers_the_configured_copy_link() {
+        let fake = Fake::new();
+        fake.capture_action
+            .set(Some(crate::ports::OverlayAction::Upload));
+        let workflow = flow(
+            "Capture",
+            vec![
+                capture(CaptureKind::Region),
+                Step::CopyImage,
+                Step::Save,
+                Step::Upload { dest: None },
+                Step::CopyLink {
+                    format: LinkFormat::Direct,
+                },
+            ],
+        );
+        let mut context = RunContext::default();
+        let report = run(&workflow, &fake.ports(), &mut context).expect("run");
+        assert_eq!(fake.upload_calls.borrow().len(), 1);
+        assert!(report.upload_id.is_some());
+        assert_eq!(report.deferred.len(), 1);
+        assert!(fake.clipboard_images.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_chosen_save_does_not_defer_a_copy_link() {
+        let fake = Fake::new();
+        fake.capture_action
+            .set(Some(crate::ports::OverlayAction::Save));
+        let workflow = flow(
+            "Capture",
+            vec![
+                capture(CaptureKind::Region),
+                Step::Upload { dest: None },
+                Step::CopyLink {
+                    format: LinkFormat::Direct,
+                },
+            ],
+        );
+        let mut context = RunContext::default();
+        let report = run(&workflow, &fake.ports(), &mut context).expect("run");
+        assert!(report.deferred.is_empty());
+        assert!(fake.upload_calls.borrow().is_empty());
+    }
+
+    #[test]
     fn a_chosen_capture_output_keeps_the_other_configured_steps() {
         let fake = Fake::new();
         fake.capture_action
@@ -985,22 +1045,20 @@ mod tests {
     }
 
     #[test]
-    fn scrolling_capture_reports_not_available_before_running_later_steps() {
+    fn a_not_available_capture_reports_before_running_later_steps() {
         let fake = Fake::new();
         fake.capture_mode.set(Mode::NotAvailable);
         let workflow = flow(
-            "Scroll",
-            vec![capture(CaptureKind::Scrolling), Step::Save, Step::Notify],
+            "Capture",
+            vec![capture(CaptureKind::Window), Step::Save, Step::Notify],
         );
         let mut context = RunContext::default();
         let error = run(&workflow, &fake.ports(), &mut context).expect_err("not available");
         assert_eq!(
             error.kind,
-            RunErrorKind::NotAvailableYet {
-                step: "Scrolling capture"
-            }
+            RunErrorKind::NotAvailableYet { step: "Capture" }
         );
-        assert_eq!(error.to_string(), "Scrolling capture is not available yet");
+        assert_eq!(error.to_string(), "Capture is not available yet");
         assert!(error.report.outcomes.is_empty());
         assert_eq!(fake.save_calls.get(), 0);
         assert!(fake.notices.borrow().is_empty());

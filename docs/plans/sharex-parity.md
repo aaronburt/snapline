@@ -22,7 +22,7 @@ Read from the repository on 2026-11-10. "Wired" means reachable by a user; "back
 
 | Area | State | Where |
 | --- | --- | --- |
-| Region, window, screen, scrolling, last-region capture | Wired | `core/src/workflow/step.rs`, `services/src/capture.rs` |
+| Region, window, screen, last-region capture | Wired | `core/src/workflow/step.rs`, `services/src/capture.rs` |
 | Video, GIF and window recording (FFmpeg `ddagrab`, audio through named pipes) | Wired | `core/src/ffmpeg_args.rs`, `services/src/recording.rs` |
 | Annotation: rect, ellipse, arrow, pen, highlight, text, step, blur, crop | Wired | `core/src/annotate/shape.rs`, `overlay-windows/src/canvas_d2d.rs` |
 | Workflow engine with 12 step types | Wired | `core/src/workflow/{step,run,mod}.rs` |

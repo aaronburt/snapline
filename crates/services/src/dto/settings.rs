@@ -132,9 +132,6 @@ pub struct CaptureDto {
     pub gif_frame_rate: GifFrameRateDto,
     pub gif_max_width: GifMaxWidthDto,
     pub gif_optimise_palette: bool,
-    pub scroll_delay_ms: u32,
-    pub scroll_limit: ScrollLimitDto,
-    pub remove_sticky_headers: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -209,16 +206,6 @@ pub enum GifMaxWidthDto {
     Px1280,
     Px800,
     Px480,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum ScrollLimitDto {
-    Ten,
-    Twenty,
-    Thirty,
-    Fifty,
-    Unlimited,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -438,9 +425,6 @@ impl From<&store::Capture> for CaptureDto {
             gif_frame_rate: GifFrameRateDto::from(value.gif_frame_rate),
             gif_max_width: GifMaxWidthDto::from(value.gif_max_width),
             gif_optimise_palette: value.gif_optimise_palette,
-            scroll_delay_ms: value.scroll_delay_ms,
-            scroll_limit: ScrollLimitDto::from(value.scroll_limit),
-            remove_sticky_headers: value.remove_sticky_headers,
         }
     }
 }
@@ -526,18 +510,6 @@ impl From<store::capture::GifMaxWidth> for GifMaxWidthDto {
             store::capture::GifMaxWidth::Px1280 => Self::Px1280,
             store::capture::GifMaxWidth::Px800 => Self::Px800,
             store::capture::GifMaxWidth::Px480 => Self::Px480,
-        }
-    }
-}
-
-impl From<store::capture::ScrollLimit> for ScrollLimitDto {
-    fn from(value: store::capture::ScrollLimit) -> Self {
-        match value {
-            store::capture::ScrollLimit::Ten => Self::Ten,
-            store::capture::ScrollLimit::Twenty => Self::Twenty,
-            store::capture::ScrollLimit::Thirty => Self::Thirty,
-            store::capture::ScrollLimit::Fifty => Self::Fifty,
-            store::capture::ScrollLimit::Unlimited => Self::Unlimited,
         }
     }
 }
@@ -668,7 +640,7 @@ mod tests {
         assert_eq!(dto.general.image_format, ImageFormatDto::Png);
         assert_eq!(dto.capture.magnifier_zoom, MagnifierZoomDto::X4);
         assert_eq!(dto.capture.ffmpeg_path, None);
-        assert_eq!(dto.hotkeys.bindings.len(), 11);
+        assert_eq!(dto.hotkeys.bindings.len(), 10);
         assert_eq!(dto.uploads.images, "save_locally_only");
         assert_eq!(dto.uploads.retry, RetryDto::ThreeTimes);
         assert!(dto.workflows.list.is_empty());

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use snapline_core::geometry::{Px, Rect};
 use snapline_core::image::Image;
 use snapline_core::ports::{CaptureError, FrozenDesktop, FrozenMonitor};
@@ -51,7 +53,7 @@ pub fn freeze_all(options: CaptureOptions) -> Result<FrozenDesktop, CaptureError
         match capture {
             Some(capture) => frozen.push(FrozenMonitor {
                 monitor,
-                image: capture.image.clone(),
+                image: Arc::clone(&capture.image),
             }),
             None => return Err(CaptureError::DisplayChanged),
         }
@@ -209,7 +211,7 @@ fn capture_adapter(
                 captures.push(OutputCapture {
                     device: name,
                     bounds: rect_from(desc.DesktopCoordinates),
-                    image,
+                    image: Arc::new(image),
                 });
             }
             Err(error) => {
@@ -312,7 +314,7 @@ fn wide_string(device: &[u16; 32]) -> String {
 struct OutputCapture {
     device: String,
     bounds: Rect,
-    image: Image,
+    image: Arc<Image>,
 }
 
 struct FrameGuard<'a> {

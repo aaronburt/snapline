@@ -41,11 +41,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowThreadProcessId, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassExW,
     SetCursor, SetForegroundWindow, SetWindowPos, ShowWindow, TrackPopupMenuEx, TranslateMessage,
     UnregisterClassW, CS_DBLCLKS, GWLP_USERDATA, HTCLIENT, IDC_ARROW, MA_ACTIVATE, MF_STRING, MSG,
-    SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOW, SW_SHOWNOACTIVATE,
-    TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CANCELMODE, WM_CLOSE, WM_DESTROY,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_PAINT, WM_RBUTTONUP, WM_SETCURSOR, WM_SYSKEYDOWN,
-    WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOW, TPM_NONOTIFY,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CANCELMODE, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
+    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_NCCREATE, WM_PAINT, WM_RBUTTONUP, WM_SETCURSOR, WM_SYSKEYDOWN, WNDCLASSEXW,
+    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::d2d::{self, Gpu};
@@ -103,7 +103,6 @@ pub struct PinRequest {
     pub theme: Theme,
     pub on_copy: Option<PinClipboard>,
     pub on_save: Option<PinSave>,
-    pub preview: bool,
 }
 
 impl PinRequest {
@@ -114,7 +113,6 @@ impl PinRequest {
             theme: Theme::Dark,
             on_copy: None,
             on_save: None,
-            preview: false,
         }
     }
 
@@ -277,7 +275,6 @@ struct Surface {
 }
 
 struct Context {
-    preview: bool,
     gpu: Gpu,
     hwnd: HWND,
     image: Image,
@@ -302,7 +299,6 @@ impl Context {
             theme,
             on_copy,
             on_save,
-            preview,
         } = request;
         let cursor = cursor_point().unwrap_or(Point::ORIGIN);
         let work_area = capture_origin
@@ -316,7 +312,6 @@ impl Context {
         let name = format!("{CLASS_NAME}{}", NEXT_CLASS.fetch_add(1, Ordering::Relaxed));
         let class_name: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
         Ok(Self {
-            preview,
             gpu,
             hwnd: HWND::default(),
             image,
@@ -340,20 +335,11 @@ impl Context {
         let size = self.geometry.window.size();
         let surface = create_surface(&self.gpu, self.hwnd, size, &self.image)?;
         self.surface = Some(surface);
-        if !self.preview {
-            self.focus();
-        }
+        self.focus();
         self.redraw();
         // SAFETY: the window handle is a live top level window owned by this thread.
         unsafe {
-            let _ = ShowWindow(
-                self.hwnd,
-                if self.preview {
-                    SW_SHOWNOACTIVATE
-                } else {
-                    SW_SHOW
-                },
-            );
+            let _ = ShowWindow(self.hwnd, SW_SHOW);
             let _ = UpdateWindow(self.hwnd);
         }
         Ok(())

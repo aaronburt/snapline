@@ -26,6 +26,8 @@ describe('destination form mappings', () => {
 
   it('shows JSON paths but stores ShareX templates', () => {
     expect(pathDisplay('{json:$.data.url}')).toBe('$.data.url');
+    expect(pathDisplay('{json:data.url}')).toBe('$.data.url');
+    expect(pathDisplay('{json:[0].url}')).toBe('$[0].url');
     expect(pathValue('$.data.url')).toBe('{json:$.data.url}');
     expect(pathValue('{response}')).toBe('{response}');
     expect(pathValue('')).toBe('');

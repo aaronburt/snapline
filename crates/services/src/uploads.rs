@@ -32,6 +32,138 @@ pub enum Event {
 pub const LAST_LINK_KEY: &str = "last_link";
 pub const TEST_RUN_ID: &str = "snapline-destination-test";
 
+pub const UPLOAD_COMPLETE_TITLE: &str = "Upload complete";
+
+pub struct LocalCapture {
+    pub path: std::path::PathBuf,
+    pub thumbnail: Option<std::path::PathBuf>,
+}
+
+pub fn upload_notice(
+    state: &UploadState,
+    local: Option<&LocalCapture>,
+) -> Option<snapline_core::ports::RichNotice> {
+    use crate::saver::file_url;
+    use snapline_core::ports::{NoticeButton, RichNotice};
+
+    if !notifies_for(&state.file_name) {
+        return None;
+    }
+    let link = state.link.as_deref().filter(|link| !link.is_empty());
+    let folder = local.and_then(|local| local.path.parent());
+    let mut buttons = Vec::new();
+    let mut lines = vec![state.file_name.clone()];
+    let open = if let Some(link) = link {
+        lines.push(link.to_owned());
+        buttons.push(NoticeButton {
+            label: "Open link".to_owned(),
+            target: link.to_owned(),
+        });
+        link.to_owned()
+    } else {
+        let folder = folder?;
+        lines.push(folder.display().to_string());
+        file_url(folder)
+    };
+    if let Some(folder) = folder {
+        buttons.push(NoticeButton {
+            label: "Open folder".to_owned(),
+            target: file_url(folder),
+        });
+    }
+    Some(RichNotice {
+        title: UPLOAD_COMPLETE_TITLE.to_owned(),
+        lines,
+        image: local.and_then(|local| local.thumbnail.clone()),
+        open: Some(open),
+        buttons,
+        tag: state.capture_id.map(crate::saver::capture_tag),
+    })
+}
+
+fn notifies_for(file_name: &str) -> bool {
+    matches!(
+        snapline_core::media::classify(file_name, &[]),
+        MediaKind::Image | MediaKind::Video | MediaKind::Gif
+    )
+}
+
+fn open_label(file_name: &str) -> &'static str {
+    match snapline_core::media::classify(file_name, &[]) {
+        MediaKind::Video | MediaKind::Gif => "Open video",
+        _ => "Open image",
+    }
+}
+
+pub const UPLOAD_FAILED_TITLE: &str = "Upload failed";
+
+pub fn upload_failed_notice(
+    state: &UploadState,
+    local: Option<&LocalCapture>,
+) -> Option<snapline_core::ports::RichNotice> {
+    use crate::saver::file_url;
+    use snapline_core::ports::{NoticeButton, RichNotice};
+
+    if state.status != UploadStatus::Failed || !notifies_for(&state.file_name) {
+        return None;
+    }
+    let reason = state
+        .error
+        .clone()
+        .filter(|error| !error.is_empty())
+        .unwrap_or_else(|| "The upload did not finish.".to_owned());
+    let mut buttons = Vec::new();
+    let mut open = None;
+    if let Some(local) = local {
+        let image_url = file_url(&local.path);
+        buttons.push(NoticeButton {
+            label: open_label(&state.file_name).to_owned(),
+            target: image_url.clone(),
+        });
+        if let Some(folder) = local.path.parent() {
+            buttons.push(NoticeButton {
+                label: "Open folder".to_owned(),
+                target: file_url(folder),
+            });
+        }
+        open = Some(image_url);
+    }
+    Some(RichNotice {
+        title: UPLOAD_FAILED_TITLE.to_owned(),
+        lines: vec![state.file_name.clone(), reason],
+        image: local.and_then(|local| local.thumbnail.clone()),
+        open,
+        buttons,
+        tag: state.capture_id.map(crate::saver::capture_tag),
+    })
+}
+
+fn notify_uploaded(services: &Services, state: &UploadState) {
+    let Some(notifier) = services.notifier() else {
+        return;
+    };
+    let local = state.capture_id.and_then(|id| local_capture(services, id));
+    let notice = if state.status == UploadStatus::Failed {
+        upload_failed_notice(state, local.as_ref())
+    } else {
+        upload_notice(state, local.as_ref())
+    };
+    if let Some(notice) = notice {
+        notifier.toast_rich(notice);
+    }
+}
+
+fn local_capture(services: &Services, id: i64) -> Option<LocalCapture> {
+    let paths = services.paths().ok()?;
+    let repo = HistoryRepo::open_read(&paths.history_file).ok()?;
+    let capture = repo.get(id).ok()??;
+    let thumbnail = crate::thumbs::existing_thumbnail(&paths.thumbs_dir, id).map(|(path, _)| path);
+    Some(LocalCapture {
+        path: std::path::PathBuf::from(capture.path),
+        thumbnail,
+    })
+}
+
 pub fn missing_destination_message(media: MediaKind) -> String {
     let label = match media {
         MediaKind::Image => "images",
@@ -402,12 +534,17 @@ impl UploaderThread {
         let sink_services = services.clone();
         let sink = move |event: queue::UploadEvent| {
             let state = UploadState::from(&event.0);
+            if state.status == UploadStatus::Failed && state.run_id.as_deref() != Some(TEST_RUN_ID)
+            {
+                notify_uploaded(&sink_services, &state);
+            }
             if state.status == UploadStatus::Done && state.run_id.as_deref() != Some(TEST_RUN_ID) {
                 if let Some(link) = state.link.as_deref() {
                     if let Err(error) = record_last_link(&sink_services, link) {
                         tracing::warn!(%error, "the last link could not be saved");
                     }
                 }
+                notify_uploaded(&sink_services, &state);
             }
             let _ = events.send(AppEvent::Upload(Event::StateChanged(state)));
         };
@@ -803,6 +940,141 @@ mod tests {
             fixture.services.upload().handle(UploadReq::LastLink),
             Ok(UploadResp::LastLink { link: None })
         );
+    }
+
+    fn done_state(file_name: &str, link: Option<&str>) -> UploadState {
+        UploadState {
+            id: 1,
+            capture_id: Some(7),
+            file_name: file_name.to_owned(),
+            dest: "imgur".to_owned(),
+            run_id: None,
+            status: UploadStatus::Done,
+            cancellable: false,
+            progress_available: false,
+            sent: 1,
+            total: 1,
+            link_batch: None,
+            attempts: 1,
+            link: link.map(str::to_owned),
+            page_link: None,
+            deletion_link: None,
+            error: None,
+            retry_in_ms: None,
+        }
+    }
+
+    #[test]
+    fn an_image_upload_notice_carries_the_link_thumbnail_and_buttons() {
+        let local = LocalCapture {
+            path: std::path::PathBuf::from(r"C:\Users\Aaron\Pictures\Snap line\shot.png"),
+            thumbnail: Some(std::path::PathBuf::from(r"C:\Thumbs\7.webp")),
+        };
+        let notice = upload_notice(
+            &done_state("shot.png", Some("https://example.test/shot.png")),
+            Some(&local),
+        )
+        .expect("notice");
+        assert_eq!(notice.title, "Upload complete");
+        assert_eq!(notice.tag.as_deref(), Some("capture-7"));
+        assert_eq!(notice.lines, ["shot.png", "https://example.test/shot.png"]);
+        assert_eq!(
+            notice.open.as_deref(),
+            Some("https://example.test/shot.png")
+        );
+        assert_eq!(notice.image, local.thumbnail);
+        let buttons: Vec<(&str, &str)> = notice
+            .buttons
+            .iter()
+            .map(|button| (button.label.as_str(), button.target.as_str()))
+            .collect();
+        assert_eq!(
+            buttons,
+            [
+                ("Open link", "https://example.test/shot.png"),
+                ("Open folder", "file:///C:/Users/Aaron/Pictures/Snap%20line"),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_upload_without_a_link_falls_back_to_the_folder() {
+        let local = LocalCapture {
+            path: std::path::PathBuf::from(r"C:\Pics\shot.png"),
+            thumbnail: None,
+        };
+        let notice = upload_notice(&done_state("shot.png", None), Some(&local)).expect("notice");
+        assert_eq!(notice.open.as_deref(), Some("file:///C:/Pics"));
+        assert_eq!(notice.buttons.len(), 1);
+        assert_eq!(notice.buttons[0].label, "Open folder");
+        assert!(upload_notice(&done_state("shot.png", None), None).is_none());
+    }
+
+    #[test]
+    fn a_failed_image_upload_gets_a_final_notice_with_the_reason() {
+        let mut state = done_state("shot.png", None);
+        state.status = UploadStatus::Failed;
+        state.error = Some("The server refused the file.".to_owned());
+        let local = LocalCapture {
+            path: std::path::PathBuf::from(r"C:\Pics\shot.png"),
+            thumbnail: None,
+        };
+        let notice = upload_failed_notice(&state, Some(&local)).expect("notice");
+        assert_eq!(notice.title, "Upload failed");
+        assert_eq!(notice.lines[1], "The server refused the file.");
+        assert_eq!(notice.tag.as_deref(), Some("capture-7"));
+        assert_eq!(notice.open.as_deref(), Some("file:///C:/Pics/shot.png"));
+        assert_eq!(notice.buttons.len(), 2);
+        assert!(upload_failed_notice(&done_state("shot.png", None), Some(&local)).is_none());
+    }
+
+    #[test]
+    fn an_upload_without_a_history_row_has_no_tag() {
+        let mut state = done_state("shot.png", Some("https://example.test/a.png"));
+        state.capture_id = None;
+        let notice = upload_notice(&state, None).expect("notice");
+        assert_eq!(notice.tag, None);
+    }
+
+    #[test]
+    fn a_link_only_upload_has_just_the_link_button() {
+        let notice = upload_notice(
+            &done_state("shot.png", Some("https://example.test/a.png")),
+            None,
+        )
+        .expect("notice");
+        assert_eq!(notice.buttons.len(), 1);
+        assert_eq!(notice.buttons[0].label, "Open link");
+    }
+
+    #[test]
+    fn a_video_upload_gets_an_upload_complete_notice_with_the_link() {
+        let state = done_state("clip.mp4", Some("https://example.test/clip.mp4"));
+        let notice = upload_notice(&state, None).expect("notice");
+        assert_eq!(notice.title, "Upload complete");
+        assert_eq!(notice.tag.as_deref(), Some("capture-7"));
+        assert_eq!(notice.buttons[0].label, "Open link");
+        let gif = done_state("clip.gif", Some("https://example.test/clip.gif"));
+        assert!(upload_notice(&gif, None).is_some());
+    }
+
+    #[test]
+    fn a_failed_video_upload_offers_to_open_the_video() {
+        let mut state = done_state("clip.mp4", None);
+        state.status = UploadStatus::Failed;
+        let local = LocalCapture {
+            path: std::path::PathBuf::from(r"C:\Pics\clip.mp4"),
+            thumbnail: None,
+        };
+        let notice = upload_failed_notice(&state, Some(&local)).expect("notice");
+        assert_eq!(notice.title, "Upload failed");
+        assert_eq!(notice.buttons[0].label, "Open video");
+    }
+
+    #[test]
+    fn documents_and_text_uploads_get_no_upload_notice() {
+        let state = done_state("notes.txt", Some("https://example.test/notes.txt"));
+        assert!(upload_notice(&state, None).is_none());
     }
 
     #[test]

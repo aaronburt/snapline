@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use snapline_core::actions::{find, ActionId};
-use snapline_services::actions::dispatch;
+use snapline_services::actions::dispatch_notifying;
 use snapline_services::{ServiceError, Services};
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, IconMenuItem, Menu, PredefinedMenuItem, Submenu};
@@ -129,8 +129,9 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
                     state.recording_seconds.is_some()
                 };
                 if recording {
-                    run_action(app, "record_stop");
-                } else if app
+                    return;
+                }
+                if app
                     .state::<Services>()
                     .settings_snapshot()
                     .is_ok_and(|settings| settings.general.tray_click_capture)
@@ -218,6 +219,12 @@ pub fn set_recording(app: &AppHandle, elapsed_seconds: Option<u64>) {
         changed
     };
     if menu_changed {
+        if let Err(error) = handle
+            .tray
+            .set_show_menu_on_left_click(elapsed_seconds.is_some())
+        {
+            tracing::error!(%error, "could not update the tray click behaviour");
+        }
         if let Err(error) = handle.refresh() {
             tracing::error!(%error, "could not refresh the tray");
         }
@@ -338,7 +345,7 @@ fn run_action(app: &AppHandle, action: &str) {
         return;
     }
     let services = app.state::<Services>();
-    match dispatch(&ActionId::new(action), services.inner()) {
+    match dispatch_notifying(&ActionId::new(action), services.inner()) {
         Ok(()) => {}
         Err(ServiceError::NotYet) => {
             tracing::info!(%action, "action is not available yet");
@@ -374,8 +381,6 @@ fn menu_icon(name: &str) -> Option<Image<'static>> {
         ("window", true) => include_bytes!("../icons/menu/window-16-light.png"),
         ("screen", false) => include_bytes!("../icons/menu/screen-16-dark.png"),
         ("screen", true) => include_bytes!("../icons/menu/screen-16-light.png"),
-        ("scroll", false) => include_bytes!("../icons/menu/scroll-16-dark.png"),
-        ("scroll", true) => include_bytes!("../icons/menu/scroll-16-light.png"),
         ("record", false) => include_bytes!("../icons/menu/record-16-dark.png"),
         ("record", true) => include_bytes!("../icons/menu/record-16-light.png"),
         ("gif", false) => include_bytes!("../icons/menu/gif-16-dark.png"),
@@ -411,12 +416,6 @@ fn build_menu(app: &AppHandle, state: TrayState) -> tauri::Result<Menu<Wry>> {
         "capture_screen",
         chord_label("capture_screen", "Capture full screen"),
         "screen",
-    )?;
-    let capture_scrolling = icon_item(
-        app,
-        "capture_scrolling",
-        chord_label("capture_scrolling", "Scrolling capture"),
-        "scroll",
     )?;
     let record_video = icon_item(
         app,
@@ -470,11 +469,17 @@ fn build_menu(app: &AppHandle, state: TrayState) -> tauri::Result<Menu<Wry>> {
     let separator_two = PredefinedMenuItem::separator(app)?;
     let exit = icon_item(app, "app_exit", "Exit".to_string(), "power")?;
 
-    if state.recording_seconds.is_some() {
+    if !recording_entries(&state).is_empty() {
         let stop = icon_item(
             app,
             "record_stop",
             chord_label("record_video", "Stop recording"),
+            "record",
+        )?;
+        let cancel = icon_item(
+            app,
+            "record_cancel",
+            "Cancel recording".to_string(),
             "record",
         )?;
         Menu::with_items(
@@ -483,8 +488,8 @@ fn build_menu(app: &AppHandle, state: TrayState) -> tauri::Result<Menu<Wry>> {
                 &capture_region,
                 &capture_window,
                 &capture_screen,
-                &capture_scrolling,
                 &stop,
+                &cancel,
                 &upload_file,
                 &separator_one,
                 &open,
@@ -514,7 +519,6 @@ fn build_menu(app: &AppHandle, state: TrayState) -> tauri::Result<Menu<Wry>> {
                 &capture_region,
                 &capture_window,
                 &capture_screen,
-                &capture_scrolling,
                 &record,
                 &upload_file,
                 &separator_one,
@@ -525,6 +529,14 @@ fn build_menu(app: &AppHandle, state: TrayState) -> tauri::Result<Menu<Wry>> {
                 &exit,
             ],
         )
+    }
+}
+
+fn recording_entries(state: &TrayState) -> &'static [&'static str] {
+    if state.recording_seconds.is_some() {
+        &["record_stop", "record_cancel"]
+    } else {
+        &[]
     }
 }
 
@@ -574,6 +586,39 @@ mod tests {
             ..normal
         };
         assert_eq!(tooltip(recording), "Snapline · recording 0:42");
+    }
+
+    #[test]
+    fn the_cancel_entry_shows_only_while_recording() {
+        let idle = TrayState::default();
+        assert!(recording_entries(&idle).is_empty());
+        let recording = TrayState {
+            recording_seconds: Some(3),
+            ..idle
+        };
+        assert_eq!(
+            recording_entries(&recording),
+            ["record_stop", "record_cancel"]
+        );
+        let after = TrayState {
+            recording_seconds: None,
+            ..recording
+        };
+        assert!(recording_entries(&after).is_empty());
+    }
+
+    #[test]
+    fn the_icon_returns_to_normal_when_recording_ends() {
+        let recording = TrayState {
+            recording_seconds: Some(5),
+            ..TrayState::default()
+        };
+        assert_eq!(recording.icon_state(), IconState::Recording);
+        let ended = TrayState {
+            recording_seconds: None,
+            ..recording
+        };
+        assert_eq!(ended.icon_state(), IconState::Normal);
     }
 
     #[test]

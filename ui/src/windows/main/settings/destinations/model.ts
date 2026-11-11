@@ -29,7 +29,8 @@ export function pathDisplay(value: string | null | undefined): string {
     return '';
   }
   if (value.startsWith('{json:') && value.endsWith('}')) {
-    return value.slice(6, -1);
+    const path = value.slice(6, -1);
+    return path.startsWith('$') ? path : path.startsWith('[') ? `$${path}` : `$.${path}`;
   }
   return value;
 }

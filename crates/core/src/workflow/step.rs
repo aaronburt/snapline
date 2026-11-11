@@ -6,10 +6,10 @@ use crate::link_format::LinkFormat;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureKind {
+    #[serde(alias = "scrolling")]
     Region,
     Window,
     Screen,
-    Scrolling,
     LastRegion,
 }
 
@@ -19,7 +19,6 @@ impl CaptureKind {
             Self::Region => "Region",
             Self::Window => "Window",
             Self::Screen => "Screen",
-            Self::Scrolling => "Scrolling",
             Self::LastRegion => "Last region",
         }
     }
@@ -89,12 +88,7 @@ impl Step {
     }
 
     pub const fn unavailable_label(&self) -> &'static str {
-        match self {
-            Self::Capture {
-                kind: CaptureKind::Scrolling,
-            } => "Scrolling capture",
-            other => other.label(),
-        }
+        self.label()
     }
 
     pub const fn is_capture_or_record(&self) -> bool {
@@ -111,7 +105,6 @@ mod tests {
         assert_eq!(CaptureKind::Region.label(), "Region");
         assert_eq!(CaptureKind::Window.label(), "Window");
         assert_eq!(CaptureKind::Screen.label(), "Screen");
-        assert_eq!(CaptureKind::Scrolling.label(), "Scrolling");
         assert_eq!(CaptureKind::LastRegion.label(), "Last region");
     }
 
@@ -159,14 +152,7 @@ mod tests {
     }
 
     #[test]
-    fn only_scrolling_capture_has_a_different_unavailable_name() {
-        assert_eq!(
-            Step::Capture {
-                kind: CaptureKind::Scrolling
-            }
-            .unavailable_label(),
-            "Scrolling capture"
-        );
+    fn unavailable_steps_use_their_normal_names() {
         assert_eq!(
             Step::Record {
                 kind: RecordKind::Video

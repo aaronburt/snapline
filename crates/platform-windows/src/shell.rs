@@ -93,9 +93,7 @@ pub fn show_in_folder(path: &Path) -> Result<(), ShellError> {
     if item.is_null() {
         return Err(ShellError::Folder(Error::from_thread()));
     }
-    let items = [item as *const ITEMIDLIST];
-    // SAFETY: the item is a live pidl returned by the shell and the slice describes exactly one item.
-    let result = unsafe { SHOpenFolderAndSelectItems(ptr::null(), Some(&items), 0) };
+    let result = unsafe { SHOpenFolderAndSelectItems(item, None, 0) };
     // SAFETY: SHParseDisplayName allocated this pidl with CoTaskMemAlloc and it is freed exactly once.
     unsafe { CoTaskMemFree(Some(item.cast())) };
     result.map_err(ShellError::Folder)
@@ -131,6 +129,7 @@ pub fn recycle(path: &Path) -> Result<(), ShellError> {
 pub fn confirm_delete(message: &str) -> Result<bool, ShellError> {
     let message = HSTRING::from(message);
     let title = HSTRING::from("Snapline");
+    let instruction = HSTRING::from("Delete this capture?");
     let delete = HSTRING::from("Delete");
     let cancel = HSTRING::from("Cancel");
     let buttons = [
@@ -149,7 +148,8 @@ pub fn confirm_delete(message: &str) -> Result<bool, ShellError> {
         Anonymous1: TASKDIALOGCONFIG_0 {
             pszMainIcon: TD_WARNING_ICON,
         },
-        pszMainInstruction: PCWSTR(message.as_ptr()),
+        pszMainInstruction: PCWSTR(instruction.as_ptr()),
+        pszContent: PCWSTR(message.as_ptr()),
         cButtons: buttons.len() as u32,
         pButtons: buttons.as_ptr(),
         nDefaultButton: 2,

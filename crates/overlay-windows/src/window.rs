@@ -71,7 +71,7 @@ pub(crate) struct ScreenSource {
     pub scale: f32,
     pub origin: Point,
     pub size: Size,
-    pub image: Image,
+    pub image: std::sync::Arc<Image>,
 }
 
 pub(crate) struct WindowState {
@@ -292,7 +292,7 @@ impl Context {
                 scale: 1.0,
                 origin,
                 size,
-                image: req.image,
+                image: std::sync::Arc::new(req.image),
             },
             true,
         )];
@@ -590,17 +590,19 @@ impl Context {
         if rect.intersection(bounds).is_none() {
             return;
         }
-        let Some(image) = compose_region(self.windows.iter().map(|window| &window.source), bounds)
-        else {
+        let sources: Vec<&ScreenSource> =
+            self.windows.iter().map(|window| &window.source).collect();
+        let Some(image) = document_image(&sources, bounds) else {
             return;
         };
         self.scene.document_rect = bounds;
-        self.scene.document_scale = self
-            .windows
-            .iter()
-            .find(|window| window.source.monitor.bounds.contains(rect.center()))
-            .map_or(1.0, |window| window.source.scale);
-        self.scene.document = Some(Document::new(image));
+        self.scene.document_scale = document_scale_at(
+            self.windows
+                .iter()
+                .map(|window| (window.source.monitor.bounds, window.source.scale)),
+            rect.center(),
+        );
+        self.scene.document = Some(Document::shared(image));
     }
 
     fn clear_document(&mut self) {
@@ -1222,6 +1224,14 @@ impl Context {
                 self.scene.pending_action = Some(OverlayAction::Upload);
                 self.apply(Input::Upload);
             }
+            ToolbarAction::Record => {
+                self.scene.pending_action = Some(OverlayAction::Record);
+                self.apply(Input::Upload);
+            }
+            ToolbarAction::Gif => {
+                self.scene.pending_action = Some(OverlayAction::Gif);
+                self.apply(Input::Upload);
+            }
             ToolbarAction::Cancel => {
                 self.apply(Input::Cancel);
             }
@@ -1796,8 +1806,28 @@ fn make_layout(
     }
 }
 
+fn document_scale_at(monitors: impl Iterator<Item = (Rect, f32)>, point: Point) -> f32 {
+    let mut monitors = monitors;
+    monitors
+        .find(|(bounds, _)| bounds.contains(point))
+        .map_or(1.0, |(_, scale)| scale)
+}
+
 fn selection_in_document(crop: Rect, document_origin: Point, selection: Rect) -> Option<Rect> {
     local_rect(selection, document_origin).intersection(crop)
+}
+
+fn document_image(sources: &[&ScreenSource], bounds: Rect) -> Option<std::sync::Arc<Image>> {
+    if let [only] = sources {
+        let exact = only.monitor.bounds == bounds
+            && only.origin == bounds.origin()
+            && i64::from(only.image.width()) == i64::from(bounds.width.0)
+            && i64::from(only.image.height()) == i64::from(bounds.height.0);
+        if exact {
+            return Some(std::sync::Arc::clone(&only.image));
+        }
+    }
+    compose_region(sources.iter().copied(), bounds).map(std::sync::Arc::new)
 }
 
 fn compose_region<'a>(
@@ -2204,6 +2234,26 @@ mod tests {
         Rect::new(Px(x), Px(y), Px(width), Px(height))
     }
 
+    #[test]
+    fn document_scale_follows_the_monitor_under_the_selection() {
+        let left = rect(0, 0, 1920, 1080);
+        let right = rect(1920, 0, 2880, 1620);
+        let monitors = || [(left, 1.0_f32), (right, 1.5_f32)].into_iter();
+        assert_eq!(
+            document_scale_at(monitors(), Point::new(Px(100), Px(100))),
+            1.0
+        );
+        assert_eq!(
+            document_scale_at(monitors(), Point::new(Px(2500), Px(300))),
+            1.5
+        );
+        assert_eq!(
+            document_scale_at(monitors(), Point::new(Px(9000), Px(9000))),
+            1.0
+        );
+        assert_eq!(left.union(right), rect(0, 0, 4800, 1620));
+    }
+
     fn point(x: i32, y: i32) -> Point {
         Point::new(Px(x), Px(y))
     }
@@ -2225,7 +2275,7 @@ mod tests {
             scale: 1.0,
             origin: bounds.origin(),
             size: bounds.size(),
-            image,
+            image: std::sync::Arc::new(image),
         }
     }
 
@@ -2235,6 +2285,25 @@ mod tests {
         let image = compose_region(sources.iter(), rect(-1, 0, 2, 2)).expect("image");
         assert_eq!(image.pixel(0, 0).expect("pixel"), [10, 0, 0, 255]);
         assert_eq!(image.pixel(1, 0).expect("pixel"), [20, 0, 0, 255]);
+    }
+
+    #[test]
+    fn a_single_monitor_selection_shares_the_frozen_image() {
+        let only = source(rect(0, 0, 4, 2), 10);
+        let image = document_image(&[&only], rect(0, 0, 4, 2)).expect("image");
+        assert!(std::sync::Arc::ptr_eq(&image, &only.image));
+    }
+
+    #[test]
+    fn a_multi_monitor_selection_is_composed_into_a_new_image() {
+        let left = source(rect(-2, 0, 2, 2), 10);
+        let right = source(rect(0, 0, 2, 2), 20);
+        let image = document_image(&[&left, &right], rect(-2, 0, 4, 2)).expect("image");
+        assert!(!std::sync::Arc::ptr_eq(&image, &left.image));
+        assert!(!std::sync::Arc::ptr_eq(&image, &right.image));
+        assert_eq!((image.width(), image.height()), (4, 2));
+        assert_eq!(image.pixel(0, 0).expect("pixel"), [10, 0, 0, 255]);
+        assert_eq!(image.pixel(3, 0).expect("pixel"), [20, 0, 0, 255]);
     }
 
     #[test]

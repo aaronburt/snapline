@@ -153,7 +153,6 @@ mod tests {
             settings.general.image_format,
             crate::dto::settings::ImageFormatDto::Png
         );
-        assert_eq!(settings.capture.scroll_delay_ms, 300);
         assert_eq!(settings.uploads.images, "save_locally_only");
         assert!(settings.hotkeys.bindings.contains_key("capture_region"));
     }

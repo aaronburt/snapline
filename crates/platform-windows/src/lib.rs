@@ -1,4 +1,4 @@
-#![doc = "Win32 and WinRT adapters for Snapline's core ports. This crate owns monitor and capture backends, the clipboard, Credential Manager, hotkey input, PrtSc takeover, autostart, toasts, sounds, WIC, shell operations, dialogs, proxy lookup, OCR, scrolling, FFmpeg process control, audio capture and known_hosts. It may use unsafe code, each FFI call wrapped with a SAFETY line."]
+#![doc = "Win32 and WinRT adapters for Snapline's core ports. This crate owns monitor and capture backends, the clipboard, Credential Manager, hotkey input, PrtSc takeover, autostart, toasts, sounds, WIC, shell operations, dialogs, proxy lookup, OCR, FFmpeg process control, audio capture and known_hosts. It may use unsafe code, each FFI call wrapped with a SAFETY line."]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod apartment;
@@ -20,7 +20,6 @@ pub mod ocr;
 pub mod ports_impls;
 pub mod proxy;
 pub mod prtsc;
-pub mod scroll;
 pub mod shell;
 pub mod sound;
 pub mod source_app;

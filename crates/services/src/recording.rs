@@ -157,6 +157,15 @@ pub struct BorderRequest {
     pub theme: OverlayTheme,
 }
 
+#[derive(Clone)]
+pub struct ControlsRequest {
+    pub rect: Rect,
+    pub monitor: u32,
+    pub theme: OverlayTheme,
+    pub stop: Arc<dyn Fn() + Send + Sync>,
+    pub cancel: Arc<dyn Fn() + Send + Sync>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioOptions {
     pub system: bool,
@@ -305,6 +314,14 @@ pub trait BorderHost: Send + Sync {
     fn show(&self, request: &BorderRequest) -> Result<Box<dyn BorderHandle>, RecordError>;
 }
 
+pub trait ControlsHandle: Send {
+    fn close(&mut self);
+}
+
+pub trait ControlsHost: Send + Sync {
+    fn show(&self, request: &ControlsRequest) -> Result<Box<dyn ControlsHandle>, RecordError>;
+}
+
 pub trait FfmpegProcess: Send {
     fn progress(&mut self) -> Option<FfmpegProgress>;
     fn is_running(&mut self) -> bool;
@@ -339,15 +356,107 @@ pub trait EventSink: Send + Sync {
     fn emit(&self, event: AppEvent);
 }
 
+pub trait RecordingPublisher: Send + Sync {
+    fn published(&self, saved: &SavedRecording);
+    fn cancelled(&self);
+}
+
+pub struct RunnerPublisher;
+
+impl RecordingPublisher for RunnerPublisher {
+    fn published(&self, saved: &SavedRecording) {
+        match crate::workflows::installed_runner() {
+            Ok(runner) => {
+                if let Err(error) = runner.publish_recording(saved) {
+                    tracing::warn!(%error, "the finished recording could not be published");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "the finished recording could not be published");
+            }
+        }
+    }
+
+    fn cancelled(&self) {
+        if let Ok(runner) = crate::workflows::installed_runner() {
+            runner.recording_cancelled();
+        }
+    }
+}
+
+pub const RECORDING_SAVED_TITLE: &str = "Recording saved";
+
+pub fn recording_saved_notice(
+    saved: &SavedRecording,
+    thumbnail: Option<PathBuf>,
+) -> snapline_core::ports::RichNotice {
+    use crate::saver::{capture_tag, file_url};
+    use snapline_core::ports::{NoticeButton, RichNotice};
+
+    let video = file_url(&saved.path);
+    let mut buttons = vec![NoticeButton {
+        label: "Open video".to_owned(),
+        target: video.clone(),
+    }];
+    if let Some(folder) = saved.path.parent() {
+        buttons.push(NoticeButton {
+            label: "Open folder".to_owned(),
+            target: file_url(folder),
+        });
+    }
+    RichNotice {
+        title: RECORDING_SAVED_TITLE.to_owned(),
+        lines: vec![
+            saved.file_name.clone(),
+            format!(
+                "{}, {}",
+                format_bytes(saved.bytes),
+                format_duration(saved.duration_ms)
+            ),
+        ],
+        image: thumbnail,
+        open: Some(video),
+        buttons,
+        tag: saved.capture_id.map(capture_tag),
+    }
+}
+
+pub fn recording_upload_failed_notice(
+    saved: &SavedRecording,
+    reason: &str,
+    thumbnail: Option<PathBuf>,
+) -> snapline_core::ports::RichNotice {
+    let mut notice = recording_saved_notice(saved, thumbnail);
+    notice.title = crate::uploads::UPLOAD_FAILED_TITLE.to_owned();
+    notice.lines = vec![saved.file_name.clone(), reason.to_owned()];
+    notice
+}
+
+fn format_bytes(bytes: i64) -> String {
+    let bytes = bytes.max(0) as f64;
+    if bytes >= 1_048_576.0 {
+        format!("{:.1} MB", bytes / 1_048_576.0)
+    } else {
+        format!("{:.0} KB", (bytes / 1024.0).max(1.0))
+    }
+}
+
+fn format_duration(duration_ms: u64) -> String {
+    let seconds = duration_ms / 1_000;
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+
 #[derive(Clone)]
 pub struct RecordingPorts {
     pub picker: Arc<dyn TargetPicker>,
     pub border: Arc<dyn BorderHost>,
+    pub controls: Arc<dyn ControlsHost>,
     pub ffmpeg: Arc<dyn FfmpegRunner>,
     pub audio: Arc<dyn AudioPort>,
     pub media: Arc<dyn MediaPort>,
     pub store: Arc<dyn RecordingStore>,
     pub events: Arc<dyn EventSink>,
+    pub publisher: Arc<dyn RecordingPublisher>,
 }
 
 #[derive(Clone)]
@@ -423,6 +532,12 @@ struct SessionPlan {
 
 enum Command {
     Stop,
+    Cancel,
+}
+
+enum Ended {
+    Stopped(u64),
+    Cancelled,
 }
 
 #[derive(Clone)]
@@ -434,6 +549,10 @@ struct SessionControl {
 impl SessionControl {
     fn stop(&self) {
         let _ = self.stop.try_send(Command::Stop);
+    }
+
+    fn cancel(&self) {
+        let _ = self.stop.try_send(Command::Cancel);
     }
 
     fn status(&self) -> RecordStatus {
@@ -479,17 +598,34 @@ impl Session {
         let (results, receiver) = bounded(1);
         let thread_status = Arc::clone(&status);
         let thread_ports = ports.clone();
+        let stop_commands = commands.clone();
+        let stop: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            let _ = stop_commands.try_send(Command::Stop);
+        });
+        let cancel_commands = commands.clone();
+        let cancel: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            let _ = cancel_commands.try_send(Command::Cancel);
+        });
         let thread = thread::Builder::new()
             .name("snapline-recorder".to_owned())
             .spawn(move || {
-                let outcome =
-                    run_session(&plan, &thread_ports, &mut machine, &thread_status, &inbox);
-                if outcome.is_err() {
+                let outcome = run_session(
+                    &plan,
+                    &thread_ports,
+                    &mut machine,
+                    &thread_status,
+                    &inbox,
+                    stop,
+                    cancel,
+                );
+                if let Err(error) = &outcome {
                     remove_file(&plan.output);
                     if let Some(converted) = &plan.converted {
                         remove_file(converted);
                     }
-                    if !machine.state().is_terminal() {
+                    if matches!(error, RecordError::Cancelled) {
+                        thread_ports.publisher.cancelled();
+                    } else if !machine.state().is_terminal() {
                         let _ = machine.apply(RecordingEvent::Failed(
                             outcome
                                 .as_ref()
@@ -533,6 +669,7 @@ impl Session {
 #[derive(Default)]
 struct SessionResources {
     border: Option<Box<dyn BorderHandle>>,
+    controls: Option<Box<dyn ControlsHandle>>,
     audio: Option<Box<dyn AudioSession>>,
     ffmpeg: Option<Box<dyn FfmpegProcess>>,
 }
@@ -541,6 +678,12 @@ impl SessionResources {
     fn close_border(&mut self) {
         if let Some(mut border) = self.border.take() {
             border.close();
+        }
+    }
+
+    fn close_controls(&mut self) {
+        if let Some(mut controls) = self.controls.take() {
+            controls.close();
         }
     }
 
@@ -562,6 +705,7 @@ impl SessionResources {
 
 impl Drop for SessionResources {
     fn drop(&mut self) {
+        self.close_controls();
         self.close_border();
         self.stop_audio();
         if let Some(mut ffmpeg) = self.ffmpeg.take() {
@@ -576,6 +720,8 @@ fn run_session(
     machine: &mut RecordingMachine,
     status: &Arc<Mutex<RecordStatus>>,
     inbox: &Receiver<Command>,
+    stop: Arc<dyn Fn() + Send + Sync>,
+    cancel: Arc<dyn Fn() + Send + Sync>,
 ) -> Result<SessionOutcome, RecordError> {
     let mut resources = SessionResources::default();
     if plan.settings.border {
@@ -588,6 +734,16 @@ fn run_session(
             })
             .map_err(|error| RecordError::Border(error.to_string()))?;
         resources.border = Some(border);
+    }
+    match ports.controls.show(&ControlsRequest {
+        rect: plan.target.rect,
+        monitor: plan.target.monitor,
+        theme: plan.settings.theme,
+        stop,
+        cancel,
+    }) {
+        Ok(controls) => resources.controls = Some(controls),
+        Err(error) => tracing::warn!(%error, "could not show the recording controls"),
     }
     let pipes = if plan.settings.audio.enabled() {
         let session = ports
@@ -636,15 +792,19 @@ fn run_session(
         RecordingEvent::Started,
     )?;
 
-    let duration_ms = record_until_stop(
+    let duration_ms = match record_until_stop(
         machine,
         status,
         ports.events.as_ref(),
         &mut resources,
         inbox,
-    )?;
+    )? {
+        Ended::Stopped(duration_ms) => duration_ms,
+        Ended::Cancelled => return discard(plan, ports, machine, status, &mut resources),
+    };
 
     transition(machine, status, ports.events.as_ref(), RecordingEvent::Stop)?;
+    resources.close_controls();
     resources.close_border();
     resources.stop_audio();
     let exit = resources.stop_ffmpeg()?;
@@ -657,6 +817,9 @@ fn run_session(
     if !exit.success {
         return Err(RecordError::Ffmpeg(exit.message));
     }
+    if cancel_requested(inbox) {
+        return discard(plan, ports, machine, status, &mut resources);
+    }
     update_status(status, |current| {
         current.duration_ms = duration_ms;
     });
@@ -666,6 +829,9 @@ fn run_session(
     } else {
         plan.output.clone()
     };
+    if cancel_requested(inbox) {
+        return discard(plan, ports, machine, status, &mut resources);
+    }
 
     let details = snapline_core::workflow::RecordingDetails {
         width: plan.target.width(),
@@ -727,6 +893,7 @@ fn run_session(
                     .events
                     .emit(AppEvent::History(crate::history::Event::Added { id }));
             }
+            ports.publisher.published(&saved);
             Ok(SessionOutcome {
                 path: saved.path,
                 details,
@@ -735,23 +902,57 @@ fn run_session(
     }
 }
 
+fn cancel_requested(inbox: &Receiver<Command>) -> bool {
+    inbox
+        .try_iter()
+        .any(|command| matches!(command, Command::Cancel))
+}
+
+fn discard(
+    plan: &SessionPlan,
+    ports: &RecordingPorts,
+    machine: &mut RecordingMachine,
+    status: &Arc<Mutex<RecordStatus>>,
+    resources: &mut SessionResources,
+) -> Result<SessionOutcome, RecordError> {
+    resources.close_controls();
+    resources.close_border();
+    resources.stop_audio();
+    if let Some(mut ffmpeg) = resources.ffmpeg.take() {
+        let _ = ffmpeg.kill();
+    }
+    remove_file(&plan.output);
+    if let Some(converted) = &plan.converted {
+        remove_file(converted);
+    }
+    machine.reset();
+    update_status(status, |current| {
+        current.capture_id = None;
+        current.path = None;
+        current.duration_ms = 0;
+    });
+    publish(status, machine, ports.events.as_ref());
+    Err(RecordError::Cancelled)
+}
+
 fn record_until_stop(
     machine: &mut RecordingMachine,
     status: &Arc<Mutex<RecordStatus>>,
     events: &dyn EventSink,
     resources: &mut SessionResources,
     inbox: &Receiver<Command>,
-) -> Result<u64, RecordError> {
+) -> Result<Ended, RecordError> {
     let started = Instant::now();
     loop {
         let elapsed = elapsed_millis(started);
         match inbox.recv_timeout(TICK) {
+            Ok(Command::Cancel) => return Ok(Ended::Cancelled),
             Ok(Command::Stop) | Err(RecvTimeoutError::Disconnected) => {
                 if machine.state() == RecordingState::Recording {
                     let _ = machine.apply(RecordingEvent::Tick(elapsed));
                 }
                 publish(status, machine, events);
-                return Ok(elapsed);
+                return Ok(Ended::Stopped(elapsed));
             }
             Err(RecvTimeoutError::Timeout) => {
                 if let Some(process) = resources.ffmpeg.as_mut() {
@@ -889,6 +1090,18 @@ fn install_control(control: SessionControl) {
     *current_slot() = Some(control);
 }
 
+pub fn cancel_recording() -> RecordStatus {
+    match current_control() {
+        Some(control) => {
+            if control.is_active() {
+                control.cancel();
+            }
+            control.status()
+        }
+        None => RecordStatus::default(),
+    }
+}
+
 pub fn stop_recording() -> RecordStatus {
     match current_control() {
         Some(control) => {
@@ -912,6 +1125,40 @@ pub fn start_recording(
         }
     }
     let Some(session) = begin(services, kind, SessionMode::Save)? else {
+        return Ok(current_status());
+    };
+    let control = session.control();
+    install_control(control.clone());
+    let status = control.status();
+    drop(session);
+    Ok(status)
+}
+
+pub fn start_recording_region(
+    services: &Services,
+    kind: RecordKindDto,
+    rect: Rect,
+    monitor: u32,
+) -> Result<RecordStatus, RecordError> {
+    if let Some(control) = current_control() {
+        if control.is_active() {
+            control.stop();
+            return Ok(control.status());
+        }
+    }
+    let target = PickedTarget {
+        rect,
+        monitor,
+        window: None,
+    };
+    let Some(session) = begin_with_target(
+        services,
+        installed_ports()?,
+        kind,
+        SessionMode::Save,
+        Some(target),
+    )?
+    else {
         return Ok(current_status());
     };
     let control = session.control();
@@ -958,6 +1205,16 @@ fn begin_with(
     kind: RecordKindDto,
     mode: SessionMode,
 ) -> Result<Option<Session>, RecordError> {
+    begin_with_target(services, ports, kind, mode, None)
+}
+
+fn begin_with_target(
+    services: &Services,
+    ports: RecordingPorts,
+    kind: RecordKindDto,
+    mode: SessionMode,
+    preset: Option<PickedTarget>,
+) -> Result<Option<Session>, RecordError> {
     let settings = services
         .settings_snapshot()
         .map_err(|error| RecordError::Invalid(error.to_string()))?;
@@ -978,9 +1235,10 @@ fn begin_with(
         session_settings.format = VideoFormat::Mp4H264;
     }
     let options = pick_options(&settings.capture);
-    let target = match pick_mode {
-        PickMode::Region => ports.picker.pick(options),
-        PickMode::ActiveWindow => ports.picker.active_window(),
+    let target = match (preset, pick_mode) {
+        (Some(target), _) => Ok(target),
+        (None, PickMode::Region) => ports.picker.pick(options),
+        (None, PickMode::ActiveWindow) => ports.picker.active_window(),
     };
     let target = match target {
         Ok(target) => target,
@@ -1348,6 +1606,10 @@ pub fn run(action: &ActionId, services: &Services) -> Result<(), ServiceError> {
         "record_gif" => Some(RecordKindDto::Gif),
         "record_window" => Some(RecordKindDto::Window),
         "record_stop" => None,
+        "record_cancel" => {
+            cancel_recording();
+            return Ok(());
+        }
         _ => return Err(ServiceError::NotYet),
     };
     match kind {
@@ -1431,6 +1693,40 @@ mod tests {
                 return Err(RecordError::Border("window".to_owned()));
             }
             Ok(Box::new(FakeBorderHandle {
+                closes: Arc::clone(&self.closes),
+            }))
+        }
+    }
+
+    struct FakeControlsHost {
+        shows: AtomicUsize,
+        closes: Arc<AtomicUsize>,
+        stops: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
+        cancels: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
+    }
+
+    struct FakeControlsHandle {
+        closes: Arc<AtomicUsize>,
+    }
+
+    impl ControlsHandle for FakeControlsHandle {
+        fn close(&mut self) {
+            self.closes.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl ControlsHost for FakeControlsHost {
+        fn show(&self, request: &ControlsRequest) -> Result<Box<dyn ControlsHandle>, RecordError> {
+            self.shows.fetch_add(1, Ordering::SeqCst);
+            self.stops
+                .lock()
+                .expect("stops")
+                .push(Arc::clone(&request.stop));
+            self.cancels
+                .lock()
+                .expect("cancels")
+                .push(Arc::clone(&request.cancel));
+            Ok(Box::new(FakeControlsHandle {
                 closes: Arc::clone(&self.closes),
             }))
         }
@@ -1583,6 +1879,24 @@ mod tests {
         }
     }
 
+    struct FakePublisher {
+        published: Mutex<Vec<SavedRecording>>,
+        cancelled: AtomicUsize,
+    }
+
+    impl RecordingPublisher for FakePublisher {
+        fn published(&self, saved: &SavedRecording) {
+            self.published
+                .lock()
+                .expect("published")
+                .push(saved.clone());
+        }
+
+        fn cancelled(&self) {
+            self.cancelled.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
     struct FakeSink {
         events: Sender<AppEvent>,
     }
@@ -1598,10 +1912,12 @@ mod tests {
         services: Services,
         picker: Arc<FakePicker>,
         border: Arc<FakeBorderHost>,
+        controls: Arc<FakeControlsHost>,
         audio: Arc<FakeAudio>,
         runner: Arc<FakeRunner>,
         media: Arc<FakeMedia>,
         store: Arc<FakeStore>,
+        publisher: Arc<FakePublisher>,
         sender: Sender<AppEvent>,
         events: Receiver<AppEvent>,
     }
@@ -1625,6 +1941,12 @@ mod tests {
                     closes: Arc::new(AtomicUsize::new(0)),
                     fail: fail_border,
                 }),
+                controls: Arc::new(FakeControlsHost {
+                    shows: AtomicUsize::new(0),
+                    closes: Arc::new(AtomicUsize::new(0)),
+                    stops: Mutex::new(Vec::new()),
+                    cancels: Mutex::new(Vec::new()),
+                }),
                 audio: Arc::new(FakeAudio {
                     starts: Mutex::new(Vec::new()),
                     stops: Arc::new(AtomicUsize::new(0)),
@@ -1641,6 +1963,10 @@ mod tests {
                 }),
                 store: Arc::new(FakeStore {
                     files: Mutex::new(Vec::new()),
+                }),
+                publisher: Arc::new(FakePublisher {
+                    published: Mutex::new(Vec::new()),
+                    cancelled: AtomicUsize::new(0),
                 }),
                 directory,
                 services,
@@ -1659,11 +1985,13 @@ mod tests {
             RecordingPorts {
                 picker: Arc::clone(&self.picker) as Arc<dyn TargetPicker>,
                 border: Arc::clone(&self.border) as Arc<dyn BorderHost>,
+                controls: Arc::clone(&self.controls) as Arc<dyn ControlsHost>,
                 ffmpeg: Arc::clone(&self.runner) as Arc<dyn FfmpegRunner>,
                 audio: Arc::clone(&self.audio) as Arc<dyn AudioPort>,
                 media: Arc::clone(&self.media) as Arc<dyn MediaPort>,
                 store: Arc::clone(&self.store) as Arc<dyn RecordingStore>,
                 events: self.sink() as Arc<dyn EventSink>,
+                publisher: Arc::clone(&self.publisher) as Arc<dyn RecordingPublisher>,
             }
         }
 
@@ -1755,6 +2083,160 @@ mod tests {
     }
 
     #[test]
+    fn the_control_bar_stop_button_ends_the_recording_and_the_bar_closes() {
+        let fixture = Fixture::new(Ok(target()), false, false);
+        let plan = fixture.plan(RecordedKind::Video, SessionMode::Save, false, false);
+        let session = Session::start(plan, fixture.ports()).expect("start");
+        let control = session.control();
+        wait_for_state(&fixture.events, RecordStateDto::Recording);
+        assert_eq!(fixture.controls.shows.load(Ordering::SeqCst), 1);
+        let press = Arc::clone(&fixture.controls.stops.lock().expect("stops")[0]);
+        press();
+        session.wait().expect("finish");
+        assert_eq!(control.status().state, RecordingState::Done);
+        assert_eq!(fixture.controls.closes.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.border.shows.load(Ordering::SeqCst), 0);
+    }
+
+    fn start_recording_fixture(fixture: &Fixture) -> (Session, SessionControl, PathBuf) {
+        let plan = fixture.plan(RecordedKind::Video, SessionMode::Save, true, false);
+        let output = plan.output.clone();
+        std::fs::write(&output, b"bad take").expect("temp recording");
+        let session = Session::start(plan, fixture.ports()).expect("start");
+        let control = session.control();
+        wait_for_state(&fixture.events, RecordStateDto::Recording);
+        (session, control, output)
+    }
+
+    #[test]
+    fn cancelling_discards_the_recording_and_publishes_nothing() {
+        let fixture = Fixture::new(Ok(target()), false, false);
+        let (session, control, output) = start_recording_fixture(&fixture);
+        control.cancel();
+        let error = session.wait().expect_err("cancelled");
+        assert!(matches!(error, RecordError::Cancelled));
+        assert!(!output.exists());
+        assert!(fixture.store.files.lock().expect("files").is_empty());
+        assert!(fixture
+            .publisher
+            .published
+            .lock()
+            .expect("published")
+            .is_empty());
+        assert_eq!(fixture.publisher.cancelled.load(Ordering::SeqCst), 1);
+        assert_eq!(control.status().state, RecordingState::Idle);
+        assert_eq!(fixture.border.closes.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.controls.closes.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.runner.kills.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.runner.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(fixture.media.calls.load(Ordering::SeqCst), 0);
+        let (_, history) = drain_until_history(&fixture.events);
+        assert!(!history);
+    }
+
+    #[test]
+    fn the_bar_cancel_button_routes_to_the_cancel_command() {
+        let fixture = Fixture::new(Ok(target()), false, false);
+        let (session, control, output) = start_recording_fixture(&fixture);
+        let press = Arc::clone(&fixture.controls.cancels.lock().expect("cancels")[0]);
+        press();
+        let error = session.wait().expect_err("cancelled");
+        assert!(matches!(error, RecordError::Cancelled));
+        assert!(!output.exists());
+        assert_eq!(control.status().state, RecordingState::Idle);
+        assert!(fixture.store.files.lock().expect("files").is_empty());
+    }
+
+    #[test]
+    fn cancelling_after_the_recording_is_stored_changes_nothing() {
+        let fixture = Fixture::new(Ok(target()), false, false);
+        let plan = fixture.plan(RecordedKind::Video, SessionMode::Save, false, false);
+        let session = Session::start(plan, fixture.ports()).expect("start");
+        let control = session.control();
+        wait_for_state(&fixture.events, RecordStateDto::Recording);
+        control.stop();
+        session.wait().expect("finish");
+        control.cancel();
+        assert_eq!(control.status().state, RecordingState::Done);
+        assert_eq!(fixture.store.files.lock().expect("files").len(), 1);
+        assert_eq!(fixture.publisher.cancelled.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_cancel_queued_behind_a_stop_is_still_seen() {
+        let (sender, inbox) = unbounded();
+        sender.send(Command::Stop).expect("stop");
+        assert!(!cancel_requested(&inbox));
+        sender.send(Command::Stop).expect("stop");
+        sender.send(Command::Cancel).expect("cancel");
+        assert!(cancel_requested(&inbox));
+    }
+
+    #[test]
+    fn the_cancel_action_is_registered_and_runs_without_a_recording() {
+        let services = Services::new();
+        assert_eq!(run(&ActionId::new("record_cancel"), &services), Ok(()));
+    }
+
+    #[test]
+    fn a_saved_recording_is_handed_to_the_publisher() {
+        let fixture = Fixture::new(Ok(target()), false, false);
+        let plan = fixture.plan(RecordedKind::Video, SessionMode::Save, false, false);
+        let session = Session::start(plan, fixture.ports()).expect("start");
+        let control = session.control();
+        wait_for_state(&fixture.events, RecordStateDto::Recording);
+        control.stop();
+        session.wait().expect("finish");
+        let published = fixture.publisher.published.lock().expect("published");
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].capture_id, Some(1));
+        assert_eq!(published[0].file_name, "capture.mp4");
+    }
+
+    #[test]
+    fn a_temporary_recording_is_not_published() {
+        let fixture = Fixture::new(Ok(target()), false, false);
+        let plan = fixture.plan(RecordedKind::Video, SessionMode::Temporary, false, false);
+        let session = Session::start(plan, fixture.ports()).expect("start");
+        let control = session.control();
+        wait_for_state(&fixture.events, RecordStateDto::Recording);
+        control.stop();
+        session.wait().expect("finish");
+        assert!(fixture
+            .publisher
+            .published
+            .lock()
+            .expect("published")
+            .is_empty());
+    }
+
+    #[test]
+    fn the_saved_notice_names_the_file_size_and_duration() {
+        let saved = SavedRecording {
+            capture_id: Some(9),
+            path: PathBuf::from(r"C:\Pics\Snap line\clip.mp4"),
+            file_name: "clip.mp4".to_owned(),
+            bytes: 1_572_864,
+            width: 640,
+            height: 360,
+            duration_ms: 75_400,
+            kind: RecordedKind::Video,
+        };
+        let thumbnail = PathBuf::from(r"C:\Thumbs\9.webp");
+        let notice = recording_saved_notice(&saved, Some(thumbnail.clone()));
+        assert_eq!(notice.title, "Recording saved");
+        assert_eq!(notice.lines, ["clip.mp4", "1.5 MB, 1:15"]);
+        assert_eq!(notice.tag.as_deref(), Some("capture-9"));
+        assert_eq!(notice.image, Some(thumbnail));
+        assert_eq!(
+            notice.open.as_deref(),
+            Some("file:///C:/Pics/Snap%20line/clip.mp4")
+        );
+        let labels: Vec<&str> = notice.buttons.iter().map(|b| b.label.as_str()).collect();
+        assert_eq!(labels, ["Open video", "Open folder"]);
+    }
+
+    #[test]
     fn start_stop_records_audio_saves_and_closes_everything() {
         let fixture = Fixture::new(Ok(target()), false, false);
         let plan = fixture.plan(RecordedKind::Video, SessionMode::Save, true, true);
@@ -1768,6 +2250,7 @@ mod tests {
         assert_eq!(control.status().state, RecordingState::Done);
         assert!(control.status().duration_ms <= 5);
         assert_eq!(fixture.border.closes.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.controls.closes.load(Ordering::SeqCst), 1);
         assert_eq!(fixture.audio.stops.load(Ordering::SeqCst), 1);
         assert_eq!(fixture.runner.stops.load(Ordering::SeqCst), 1);
         assert_eq!(fixture.runner.kills.load(Ordering::SeqCst), 0);

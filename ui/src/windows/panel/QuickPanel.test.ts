@@ -95,13 +95,11 @@ describe('QuickPanel', () => {
       'Region (PrtSc)',
       'Window (Alt+PrtSc)',
       'Screen (Ctrl+PrtSc)',
-      'Scrolling (Ctrl+Alt+S)',
     ]);
     expect(tiles.map((tile) => tile.textContent?.trim())).toEqual([
       'Region',
       'Window',
       'Screen',
-      'Scrolling',
     ]);
   });
 

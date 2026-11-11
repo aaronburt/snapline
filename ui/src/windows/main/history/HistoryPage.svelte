@@ -24,6 +24,7 @@
   import CaptureGrid from './CaptureGrid.svelte';
   import CaptureList from './CaptureList.svelte';
   import DetailPane from './DetailPane.svelte';
+  import ResizeDivider from '../ResizeDivider.svelte';
   import {
     captureCardGap,
     captureCardWidth,
@@ -35,6 +36,7 @@
   import { searchQuery } from './search';
 
   let filterLabel = $state('All');
+  let detailWidth = $state(320);
   let view = $state<'grid' | 'list'>('grid');
   let items = $state<HistoryCaptureDto[]>([]);
   let next = $state<Cursor | null>(null);
@@ -520,7 +522,11 @@
   </main>
 
   {#if selected}
+    <div class="detail-divider">
+      <ResizeDivider label="Resize capture details" value={detailWidth} min={280} max={480} direction={-1} onresize={(width) => (detailWidth = width)} />
+    </div>
     <DetailPane
+      width={detailWidth}
       capture={selected}
       activeUpload={selected ? (activeUploads[selected.id] ?? null) : null}
       {defaultDestination}
@@ -545,7 +551,10 @@
     min-height: 0;
   }
 
+  .detail-divider { display: flex; }
+
   @media (max-width: 1050px) {
+    .detail-divider { display: none; }
     .history-layout {
       flex-direction: column;
     }

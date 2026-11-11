@@ -5,8 +5,7 @@ import type { FullscreenCaptureDto } from "./FullscreenCaptureDto";
 import type { GifFrameRateDto } from "./GifFrameRateDto";
 import type { GifMaxWidthDto } from "./GifMaxWidthDto";
 import type { MagnifierZoomDto } from "./MagnifierZoomDto";
-import type { ScrollLimitDto } from "./ScrollLimitDto";
 import type { VideoFormatDto } from "./VideoFormatDto";
 import type { VideoQualityDto } from "./VideoQualityDto";
 
-export type CaptureDto = { includeCursor: boolean, captureDelay: CaptureDelayDto, shutterSound: boolean, keepWindowShadow: boolean, freezeScreen: boolean, magnifier: boolean, magnifierZoom: MagnifierZoomDto, snapToWindows: boolean, showSizeAndPosition: boolean, fullscreenCrosshair: boolean, fullscreenCaptureUses: FullscreenCaptureDto, videoFormat: VideoFormatDto, frameRate: FrameRateDto, videoQuality: VideoQualityDto, recordSystemAudio: boolean, recordMicrophone: boolean, microphoneDevice: string, recordingBorder: boolean, ffmpegPath: string | null, gifFrameRate: GifFrameRateDto, gifMaxWidth: GifMaxWidthDto, gifOptimisePalette: boolean, scrollDelayMs: number, scrollLimit: ScrollLimitDto, removeStickyHeaders: boolean, };
+export type CaptureDto = { includeCursor: boolean, captureDelay: CaptureDelayDto, shutterSound: boolean, keepWindowShadow: boolean, freezeScreen: boolean, magnifier: boolean, magnifierZoom: MagnifierZoomDto, snapToWindows: boolean, showSizeAndPosition: boolean, fullscreenCrosshair: boolean, fullscreenCaptureUses: FullscreenCaptureDto, videoFormat: VideoFormatDto, frameRate: FrameRateDto, videoQuality: VideoQualityDto, recordSystemAudio: boolean, recordMicrophone: boolean, microphoneDevice: string, recordingBorder: boolean, ffmpegPath: string | null, gifFrameRate: GifFrameRateDto, gifMaxWidth: GifMaxWidthDto, gifOptimisePalette: boolean, };

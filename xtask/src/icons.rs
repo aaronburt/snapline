@@ -8,10 +8,10 @@ const VIEWBOX: f32 = 24.0;
 const STROKE: f32 = 1.6;
 const SUPERSAMPLE: usize = 4;
 
-const MENU_ICONS: [&str; 23] = [
-    "region", "window", "screen", "scroll", "record", "gif", "cursor", "timer", "redo", "colour",
-    "ocr", "ruler", "qr", "edit", "pin", "open", "gear", "pause", "play", "power", "check",
-    "server", "cloud",
+const MENU_ICONS: [&str; 22] = [
+    "region", "window", "screen", "record", "gif", "cursor", "timer", "redo", "colour", "ocr",
+    "ruler", "qr", "edit", "pin", "open", "gear", "pause", "play", "power", "check", "server",
+    "cloud",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq)]

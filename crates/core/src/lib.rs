@@ -22,5 +22,4 @@ pub mod qr;
 pub mod recording;
 pub mod ruler;
 pub mod secret;
-pub mod stitch;
 pub mod workflow;

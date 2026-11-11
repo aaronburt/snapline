@@ -5,7 +5,6 @@ import { flush } from '../../test/flush';
 import { expectAccessible } from '../../test/axe';
 import Nav from './Nav.svelte';
 import { searchQuery } from './history/search';
-import { currentRoute, resolve } from '../../router';
 
 const mocks = vi.hoisted(() => ({
   call: vi.fn(),
@@ -21,7 +20,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Nav', () => {
-  it('shows a failed capture as a dismissible toast', async () => {
+  it('leaves a failed capture to the native notification instead of an in-app toast', async () => {
     mocks.call.mockImplementation(async (_area: string, req: { kind: string }) => {
       if (req.kind === 'panelAction') throw { message: 'Capture is unavailable.' };
       return { kind: 'stats', data: { count: 1 } };
@@ -30,26 +29,23 @@ describe('Nav', () => {
     await flush();
     await fireEvent.click(screen.getByRole('button', { name: /New capture/ }));
     await flush();
-    const toast = screen.getByRole('alert');
-    expect(toast.textContent).toContain('Capture is unavailable.');
-    expect(toast.closest('nav')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(mocks.call).toHaveBeenCalledWith('ipc_app', {
+      kind: 'panelAction',
+      data: { action: 'capture_region' },
+    });
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('searches the history from the sidebar', async () => {
     vi.useFakeTimers();
-    window.location.hash = '#/workflows';
-    currentRoute.set(resolve('#/workflows'));
     searchQuery.set('');
-    render(Nav, { props: { page: 'workflows' } });
+    render(Nav, { props: { page: 'history' } });
     try {
       const input = screen.getByRole('searchbox', { name: 'Search captures' });
       await fireEvent.input(input, { target: { value: 'invoice' } });
       expect(get(searchQuery)).toBe('');
       vi.advanceTimersByTime(250);
       expect(get(searchQuery)).toBe('invoice');
-      expect(window.location.hash).toBe('#/history');
     } finally {
       vi.useRealTimers();
     }

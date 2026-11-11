@@ -35,7 +35,6 @@ describe('CapturePage', () => {
       'Monitors',
       'Screen recording',
       'GIF',
-      'Scrolling capture',
     ]) {
       expect(screen.getByText(title)).not.toBeNull();
     }
@@ -72,7 +71,6 @@ describe('CapturePage', () => {
     expect((screen.getByLabelText('FFmpeg location') as HTMLInputElement).value).toBe(
       BUNDLED_FFMPEG_PATH,
     );
-    expect(screen.getByText('300 ms')).not.toBeNull();
     expect(screen.getByText('The monitor with the cursor is captured')).not.toBeNull();
   });
 

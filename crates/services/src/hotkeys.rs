@@ -525,6 +525,16 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_binding_for_the_removed_scrolling_action_is_ignored() {
+        let bindings = BTreeMap::from([
+            ("capture_region".to_owned(), "PrtSc".to_owned()),
+            ("capture_scrolling".to_owned(), "Ctrl+Alt+S".to_owned()),
+        ]);
+        let entries = plan_entries(&bindings, &[]);
+        assert_eq!(entries, vec![(Owner::new("capture_region"), chord("PrtSc"))]);
+    }
+
+    #[test]
     fn chord_collection_excludes_disabled_workflows() {
         let bindings = BTreeMap::from([("capture_region".to_owned(), "PrtSc".to_owned())]);
         let workflows = vec![

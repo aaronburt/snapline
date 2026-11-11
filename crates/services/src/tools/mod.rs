@@ -19,7 +19,6 @@ pub mod ocr;
 pub mod pin;
 pub mod qr;
 pub mod ruler;
-pub mod scrolling;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(rename = "ToolAreaEvent")]

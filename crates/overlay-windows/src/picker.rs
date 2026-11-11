@@ -113,7 +113,7 @@ struct PickerSource {
     scale: f32,
     origin: Point,
     size: Size,
-    image: Image,
+    image: std::sync::Arc<Image>,
 }
 
 struct PickerWindow {

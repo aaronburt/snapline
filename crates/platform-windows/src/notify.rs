@@ -26,6 +26,7 @@ pub const ACTIVATION_SCHEME: &str = "snapline";
 pub const ACTIVATION_CAPTURE_PREFIX: &str = "snapline://capture/";
 
 const MAX_LIVE_TOASTS: usize = 16;
+const TOAST_GROUP: &str = "snapline-capture";
 
 thread_local! {
     static LIVE_TOASTS: RefCell<Vec<ToastNotification>> = RefCell::new(Vec::new());
@@ -137,13 +138,148 @@ pub fn show(notice: &Notice) -> Result<(), NotifyError> {
     if notice.title.is_empty() && notice.body.is_empty() {
         return Err(NotifyError::EmptyNotice);
     }
+    show_xml(toast_xml(notice))
+}
+
+pub fn show_with_target(notice: &Notice, target: &str) -> Result<(), NotifyError> {
+    if notice.title.is_empty() && notice.body.is_empty() {
+        return Err(NotifyError::EmptyNotice);
+    }
+    show_xml(toast_xml_with_target(notice, target))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RichButton {
+    pub label: String,
+    pub target: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RichNotice {
+    pub title: String,
+    pub lines: Vec<String>,
+    pub image: Option<PathBuf>,
+    pub open: Option<String>,
+    pub buttons: Vec<RichButton>,
+    pub tag: Option<String>,
+}
+
+const MAX_BUTTONS: usize = 5;
+
+pub fn show_rich(notice: &RichNotice) -> Result<(), NotifyError> {
+    if notice.title.is_empty() && notice.lines.iter().all(String::is_empty) {
+        return Err(NotifyError::EmptyNotice);
+    }
+    show_xml_tagged(rich_xml(notice), notice.tag.as_deref())
+}
+
+fn rich_xml(notice: &RichNotice) -> String {
+    let mut texts = String::new();
+    if !notice.title.is_empty() {
+        texts.push_str(&format!("<text>{}</text>", escape_xml(&notice.title)));
+    }
+    for line in notice.lines.iter().filter(|line| !line.is_empty()) {
+        texts.push_str(&format!("<text>{}</text>", escape_xml(line)));
+    }
+    if let Some(image) = &notice.image {
+        texts.push_str(&format!(
+            "<image placement=\"inline\" src=\"{}\"/>",
+            escape_xml(&folder_target(image))
+        ));
+    }
+    let launch = notice
+        .open
+        .as_deref()
+        .filter(|target| is_launchable_target(target))
+        .map(|target| {
+            format!(
+                " activationType=\"protocol\" launch=\"{}\"",
+                escape_xml(target)
+            )
+        })
+        .unwrap_or_default();
+    let mut actions = String::new();
+    for button in notice
+        .buttons
+        .iter()
+        .filter(|button| !button.label.is_empty() && is_launchable_target(&button.target))
+        .take(MAX_BUTTONS)
+    {
+        actions.push_str(&format!(
+            "<action content=\"{}\" activationType=\"protocol\" arguments=\"{}\"/>",
+            escape_xml(&button.label),
+            escape_xml(&button.target)
+        ));
+    }
+    let actions = if actions.is_empty() {
+        String::new()
+    } else {
+        format!("<actions>{actions}</actions>")
+    };
+    format!(
+        "<toast{launch}><visual><binding template=\"ToastGeneric\">{texts}</binding></visual>{actions}</toast>"
+    )
+}
+
+pub fn folder_target(folder: &Path) -> String {
+    let mut url = String::from("file:///");
+    for character in folder.to_string_lossy().chars() {
+        match character {
+            '\\' => url.push('/'),
+            ' ' => url.push_str("%20"),
+            '#' => url.push_str("%23"),
+            '%' => url.push_str("%25"),
+            '?' => url.push_str("%3F"),
+            other => url.push(other),
+        }
+    }
+    url
+}
+
+fn is_launchable_target(target: &str) -> bool {
+    ["https://", "http://", "file:///"]
+        .iter()
+        .any(|scheme| target.starts_with(scheme))
+}
+
+fn toast_xml_with_target(notice: &Notice, target: &str) -> String {
+    if !is_launchable_target(target) {
+        return toast_xml(notice);
+    }
+    let mut texts = String::new();
+    if !notice.title.is_empty() {
+        texts.push_str(&format!("<text>{}</text>", escape_xml(&notice.title)));
+    }
+    if !notice.body.is_empty() {
+        texts.push_str(&format!("<text>{}</text>", escape_xml(&notice.body)));
+    }
+    format!(
+        "<toast activationType=\"protocol\" launch=\"{}\"><visual><binding template=\"ToastGeneric\">{texts}</binding></visual></toast>",
+        escape_xml(target)
+    )
+}
+
+fn usable_tag(tag: Option<&str>) -> Option<&str> {
+    tag.filter(|tag| !tag.is_empty() && tag.len() <= 64)
+}
+
+fn show_xml(xml: String) -> Result<(), NotifyError> {
+    show_xml_tagged(xml, None)
+}
+
+fn show_xml_tagged(xml: String, tag: Option<&str>) -> Result<(), NotifyError> {
     ensure_winrt()?;
-    let xml = toast_xml(notice);
     let content = XmlDocument::new().map_err(platform_error)?;
     content
         .LoadXml(&HSTRING::from(xml))
         .map_err(platform_error)?;
     let toast = ToastNotification::CreateToastNotification(&content).map_err(platform_error)?;
+    if let Some(tag) = usable_tag(tag) {
+        toast.SetTag(&HSTRING::from(tag)).map_err(platform_error)?;
+        toast
+            .SetGroup(&HSTRING::from(TOAST_GROUP))
+            .map_err(platform_error)?;
+    }
     let handler = TypedEventHandler::<ToastNotification, windows::core::IInspectable>::new(
         |_sender, args| {
             if let Some(args) = args.as_ref() {
@@ -236,12 +372,20 @@ fn escape_xml(value: &str) -> String {
     escaped
 }
 
+pub fn register_app_name() -> Result<(), NotifyError> {
+    register_with_icon(APP_USER_MODEL_KEY, None)
+}
+
 fn register_app_id_at(subkey: &str, icon: &Path) -> Result<(), NotifyError> {
-    let icon = validated_icon(icon)?;
-    let icon_uri = icon.to_string_lossy();
+    register_with_icon(subkey, validated_icon(icon).ok().as_deref())
+}
+
+fn register_with_icon(subkey: &str, icon: Option<&Path>) -> Result<(), NotifyError> {
     let key = open_key(subkey)?;
     set_value(key.0, DISPLAY_NAME_VALUE, DISPLAY_NAME)?;
-    set_value(key.0, ICON_URI_VALUE, &icon_uri)?;
+    if let Some(icon) = icon {
+        set_value(key.0, ICON_URI_VALUE, &icon.to_string_lossy())?;
+    }
     Ok(())
 }
 
@@ -344,6 +488,134 @@ mod tests {
     }
 
     #[test]
+    fn a_url_target_becomes_a_protocol_launch_attribute() {
+        let notice = Notice::new("Upload complete", "https://example.test/a.png?x=1&y=2");
+        let xml = toast_xml_with_target(&notice, "https://example.test/a.png?x=1&y=2");
+        assert!(xml.starts_with(
+            "<toast activationType=\"protocol\" launch=\"https://example.test/a.png?x=1&amp;y=2\">"
+        ));
+        assert!(xml.contains("<text>Upload complete</text>"));
+    }
+
+    #[test]
+    fn a_folder_target_becomes_a_file_url_launch_attribute() {
+        let target = folder_target(Path::new("C:\\Users\\Aaron\\My Pictures\\Snapline"));
+        assert_eq!(target, "file:///C:/Users/Aaron/My%20Pictures/Snapline");
+        let xml = toast_xml_with_target(&Notice::new("Upload complete", "C:\\x"), &target);
+        assert!(xml.contains(
+            "activationType=\"protocol\" launch=\"file:///C:/Users/Aaron/My%20Pictures/Snapline\""
+        ));
+    }
+
+    fn sample_rich() -> RichNotice {
+        RichNotice {
+            title: "Screenshot saved".to_string(),
+            lines: vec!["a & b.png".to_string(), "1920x1080 from <App>".to_string()],
+            image: Some(PathBuf::from("C:\\Thumbs\\my thumb.webp")),
+            open: Some("file:///C:/Shots/a.png".to_string()),
+            tag: Some("capture-7".to_string()),
+            buttons: vec![
+                RichButton {
+                    label: "Open image".to_string(),
+                    target: "file:///C:/Shots/a.png".to_string(),
+                },
+                RichButton {
+                    label: "Open folder".to_string(),
+                    target: "file:///C:/Shots".to_string(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn a_rich_toast_carries_text_image_click_target_and_buttons() {
+        let xml = rich_xml(&sample_rich());
+        assert!(xml
+            .starts_with("<toast activationType=\"protocol\" launch=\"file:///C:/Shots/a.png\">"));
+        assert!(xml.contains("<text>Screenshot saved</text>"));
+        assert!(xml.contains("<text>a &amp; b.png</text>"));
+        assert!(xml.contains("<text>1920x1080 from &lt;App&gt;</text>"));
+        assert!(
+            xml.contains("<image placement=\"inline\" src=\"file:///C:/Thumbs/my%20thumb.webp\"/>")
+        );
+        assert!(xml.contains(
+            "<action content=\"Open image\" activationType=\"protocol\" arguments=\"file:///C:/Shots/a.png\"/>"
+        ));
+        assert!(xml.contains(
+            "<action content=\"Open folder\" activationType=\"protocol\" arguments=\"file:///C:/Shots\"/>"
+        ));
+    }
+
+    #[test]
+    fn a_rich_toast_drops_unsafe_targets_and_buttons() {
+        let mut notice = sample_rich();
+        notice.open = Some("javascript:alert(1)".to_string());
+        notice.buttons = vec![
+            RichButton {
+                label: "Run".to_string(),
+                target: "ms-settings:privacy".to_string(),
+            },
+            RichButton {
+                label: "Open link".to_string(),
+                target: "https://example.test/a.png?x=1&y=2".to_string(),
+            },
+        ];
+        let xml = rich_xml(&notice);
+        assert!(!xml.contains("javascript"));
+        assert!(!xml.contains("ms-settings"));
+        assert!(!xml.contains("launch="));
+        assert!(xml.contains("arguments=\"https://example.test/a.png?x=1&amp;y=2\""));
+    }
+
+    #[test]
+    fn a_rich_toast_without_image_or_buttons_is_plain() {
+        let xml = rich_xml(&RichNotice {
+            title: "Hi".to_string(),
+            ..RichNotice::default()
+        });
+        assert!(!xml.contains("<image"));
+        assert!(!xml.contains("<actions>"));
+        assert!(xml.contains("<text>Hi</text>"));
+    }
+
+    #[test]
+    fn a_toast_tag_is_used_only_when_set_and_valid() {
+        assert_eq!(usable_tag(Some("capture-7")), Some("capture-7"));
+        assert_eq!(usable_tag(Some("")), None);
+        assert_eq!(usable_tag(None), None);
+        assert_eq!(usable_tag(Some(&"x".repeat(65))), None);
+        assert_eq!(TOAST_GROUP, "snapline-capture");
+    }
+
+    #[test]
+    fn a_rich_toast_caps_the_button_count() {
+        let mut notice = sample_rich();
+        notice.buttons = (0..9)
+            .map(|index| RichButton {
+                label: format!("b{index}"),
+                target: "https://example.test/".to_string(),
+            })
+            .collect();
+        assert_eq!(rich_xml(&notice).matches("<action ").count(), MAX_BUTTONS);
+    }
+
+    #[test]
+    fn an_empty_rich_notice_is_rejected() {
+        assert_eq!(
+            show_rich(&RichNotice::default()),
+            Err(NotifyError::EmptyNotice)
+        );
+    }
+
+    #[test]
+    fn an_unsafe_target_scheme_is_not_launched() {
+        let notice = Notice::new("Upload complete", "x");
+        let xml = toast_xml_with_target(&notice, "javascript:alert(1)");
+        assert!(!xml.contains("protocol"));
+        assert!(!xml.contains("javascript"));
+    }
+
+    #[test]
     fn constants_identify_the_snapline_app_id() {
         assert_eq!(APP_USER_MODEL_ID, "io.github.aaronburt.snapline");
         assert_eq!(
@@ -398,29 +670,45 @@ mod tests {
     }
 
     #[test]
-    fn missing_icon_is_a_typed_error() {
-        let Ok(directory) = tempfile::tempdir() else {
-            return;
-        };
+    #[ignore = "desktop"]
+    fn missing_icon_registers_the_name_only() -> Result<(), Box<dyn std::error::Error>> {
+        let _guard = TestKey(TEST_KEY);
+        let directory = tempfile::tempdir()?;
         let icon = directory.path().join("missing.png");
+        register_app_id_at(TEST_KEY, &icon)?;
         assert_eq!(
-            register_app_id(&icon),
-            Err(NotifyError::IconNotFound(icon.clone()))
+            read_string(TEST_KEY, DISPLAY_NAME_VALUE).as_deref(),
+            Some(DISPLAY_NAME)
         );
+        assert_eq!(read_string(TEST_KEY, ICON_URI_VALUE), None);
+        Ok(())
     }
 
     #[test]
-    fn non_png_icon_is_a_typed_error() {
+    #[ignore = "desktop"]
+    fn non_png_icon_registers_the_name_only() -> Result<(), Box<dyn std::error::Error>> {
+        let _guard = TestKey(TEST_KEY);
+        let directory = tempfile::tempdir()?;
+        let icon = directory.path().join("icon.jpg");
+        std::fs::write(&icon, [0_u8; 8])?;
+        register_app_id_at(TEST_KEY, &icon)?;
+        assert_eq!(
+            read_string(TEST_KEY, DISPLAY_NAME_VALUE).as_deref(),
+            Some(DISPLAY_NAME)
+        );
+        assert_eq!(read_string(TEST_KEY, ICON_URI_VALUE), None);
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_icons_are_still_rejected_by_validation() {
         let Ok(directory) = tempfile::tempdir() else {
             return;
         };
-        let icon = directory.path().join("icon.jpg");
-        if std::fs::write(&icon, [0_u8; 8]).is_err() {
-            return;
-        }
+        let missing = directory.path().join("missing.png");
         assert_eq!(
-            register_app_id(&icon),
-            Err(NotifyError::IconNotPng(icon.clone()))
+            validated_icon(&missing),
+            Err(NotifyError::IconNotFound(missing.clone()))
         );
     }
 

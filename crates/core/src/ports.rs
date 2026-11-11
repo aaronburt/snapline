@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use thiserror::Error;
 use time::OffsetDateTime;
 
@@ -19,7 +21,7 @@ pub struct Monitor {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FrozenMonitor {
     pub monitor: Monitor,
-    pub image: Image,
+    pub image: Arc<Image>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -153,8 +155,37 @@ impl Notice {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoticeButton {
+    pub label: String,
+    pub target: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RichNotice {
+    pub title: String,
+    pub lines: Vec<String>,
+    pub image: Option<std::path::PathBuf>,
+    pub open: Option<String>,
+    pub buttons: Vec<NoticeButton>,
+    pub tag: Option<String>,
+}
+
 pub trait Notifier {
     fn toast(&self, notice: Notice);
+
+    fn toast_rich(&self, notice: RichNotice) {
+        let body = notice.lines.join("\n");
+        match notice.open {
+            Some(target) => self.toast_open(Notice::new(notice.title, body), target),
+            None => self.toast(Notice::new(notice.title, body)),
+        }
+    }
+
+    fn toast_open(&self, notice: Notice, target: String) {
+        let _ = target;
+        self.toast(notice);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,6 +222,34 @@ mod tests {
         }
         .is_empty());
     }
+
+    #[test]
+    fn cloned_frozen_desktop_shares_pixels() {
+        let bounds = Rect::new(
+            crate::geometry::Px(0),
+            crate::geometry::Px(0),
+            crate::geometry::Px(2),
+            crate::geometry::Px(2),
+        );
+        let desktop = FrozenDesktop {
+            monitors: vec![FrozenMonitor {
+                monitor: Monitor {
+                    id: 0,
+                    name: String::new(),
+                    bounds,
+                    work_area: bounds,
+                    dpi: DpiScale::ONE,
+                    primary: true,
+                },
+                image: Arc::new(Image::bgra(2, 2).expect("image")),
+            }],
+        };
+        let copy = desktop.clone();
+        assert!(Arc::ptr_eq(
+            &desktop.monitors[0].image,
+            &copy.monitors[0].image
+        ));
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,6 +264,8 @@ pub enum OverlayAction {
     Save,
     Pin,
     Upload,
+    Record,
+    Gif,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

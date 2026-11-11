@@ -260,7 +260,7 @@ pub(crate) fn draw_magnifier_readout(
 pub(crate) fn measure_upload_label(gpu: &mut Gpu, scale: f32) -> f32 {
     text_width(
         gpu,
-        13.0 * scale,
+        12.0 * scale,
         DWRITE_FONT_WEIGHT_SEMI_BOLD,
         false,
         "Upload",
@@ -278,7 +278,7 @@ pub(crate) fn draw_upload_label(
 ) {
     let Some(format) = gpu.text.format(
         &gpu.write,
-        13.0 * scale,
+        12.0 * scale,
         DWRITE_FONT_WEIGHT_SEMI_BOLD,
         false,
     ) else {
