@@ -18,6 +18,7 @@ use snapline_core::ids::WindowId;
 use snapline_core::image::{Image, ImageFormat};
 use snapline_core::naming::{self, NameContext};
 use snapline_core::ports::{MagnifierZoom, OverlayTheme};
+use snapline_core::record_place::{self, OutputBounds};
 use snapline_core::recording::{RecordingEvent, RecordingMachine, RecordingState, RecordingTarget};
 use snapline_core::workflow::RecordKind;
 use snapline_store::history::{CaptureKind, HistoryRepo, NewCapture};
@@ -117,12 +118,16 @@ pub struct PickedTarget {
 
 impl PickedTarget {
     pub fn recording_target(&self) -> RecordingTarget {
+        self.recording_target_at(self.rect)
+    }
+
+    pub fn recording_target_at(&self, rect: Rect) -> RecordingTarget {
         match &self.window {
             Some(window) => RecordingTarget::window(
                 WindowId::new(u64::try_from(window.handle).unwrap_or(0)),
-                self.rect,
+                rect,
             ),
-            None => RecordingTarget::region(self.rect),
+            None => RecordingTarget::region(rect),
         }
     }
 
@@ -333,6 +338,10 @@ pub trait FfmpegProcess: Send {
 pub trait FfmpegRunner: Send + Sync {
     fn start(&self, command: FfmpegCommand) -> Result<Box<dyn FfmpegProcess>, RecordError>;
     fn best_encoder(&self, ffmpeg: &Path, format: VideoFormat) -> VideoEncoder;
+
+    fn outputs(&self) -> Vec<OutputBounds> {
+        Vec::new()
+    }
 }
 
 pub trait AudioSession: Send {
@@ -359,6 +368,7 @@ pub trait EventSink: Send + Sync {
 pub trait RecordingPublisher: Send + Sync {
     fn published(&self, saved: &SavedRecording);
     fn cancelled(&self);
+    fn failed(&self, _message: &str) {}
 }
 
 pub struct RunnerPublisher;
@@ -380,6 +390,12 @@ impl RecordingPublisher for RunnerPublisher {
     fn cancelled(&self) {
         if let Ok(runner) = crate::workflows::installed_runner() {
             runner.recording_cancelled();
+        }
+    }
+
+    fn failed(&self, message: &str) {
+        if let Ok(runner) = crate::workflows::installed_runner() {
+            runner.recording_failed(message);
         }
     }
 }
@@ -625,7 +641,10 @@ impl Session {
                     }
                     if matches!(error, RecordError::Cancelled) {
                         thread_ports.publisher.cancelled();
-                    } else if !machine.state().is_terminal() {
+                    } else {
+                        thread_ports.publisher.failed(&error.to_string());
+                    }
+                    if !matches!(error, RecordError::Cancelled) && !machine.state().is_terminal() {
                         let _ = machine.apply(RecordingEvent::Failed(
                             outcome
                                 .as_ref()
@@ -724,6 +743,17 @@ fn run_session(
     cancel: Arc<dyn Fn() + Send + Sync>,
 ) -> Result<SessionOutcome, RecordError> {
     let mut resources = SessionResources::default();
+    let outputs = ports.ffmpeg.outputs();
+    let (output_index, target) = if outputs.is_empty() {
+        (0, plan.target.recording_target())
+    } else {
+        let placed = record_place::place(plan.target.rect, &outputs)
+            .map_err(|error| RecordError::Invalid(error.to_string()))?;
+        (
+            placed.output_index,
+            plan.target.recording_target_at(placed.rect),
+        )
+    };
     if plan.settings.border {
         let border = ports
             .border
@@ -759,9 +789,9 @@ fn run_session(
     let command = match plan.kind {
         RecordedKind::Video => ffmpeg_args::video_command(&VideoRequest {
             ffmpeg: plan.settings.ffmpeg.clone(),
-            target: plan.target.recording_target(),
+            target,
             output: plan.output.clone(),
-            output_index: 0,
+            output_index,
             format: plan.settings.format,
             encoder: ports
                 .ffmpeg
@@ -773,9 +803,9 @@ fn run_session(
         .map_err(|error| RecordError::Invalid(error.to_string()))?,
         RecordedKind::Gif => ffmpeg_args::gif_capture_command(&GifCaptureRequest {
             ffmpeg: plan.settings.ffmpeg.clone(),
-            target: plan.target.recording_target(),
+            target,
             output: plan.output.clone(),
-            output_index: 0,
+            output_index,
             frame_rate: plan.settings.gif.frame_rate,
         })
         .map_err(|error| RecordError::Invalid(error.to_string()))?,
@@ -958,9 +988,14 @@ fn record_until_stop(
                 if let Some(process) = resources.ffmpeg.as_mut() {
                     let _ = process.progress();
                     if !process.is_running() {
-                        return Err(RecordError::Ffmpeg(
-                            "FFmpeg stopped before the recording was stopped.".to_owned(),
-                        ));
+                        let detail = process
+                            .wait()
+                            .ok()
+                            .map(|exit| ffmpeg_reason(&exit.message))
+                            .unwrap_or_default();
+                        return Err(RecordError::Ffmpeg(format!(
+                            "FFmpeg stopped before the recording was stopped. {detail}"
+                        )));
                     }
                 }
                 if machine.state() == RecordingState::Recording {
@@ -970,6 +1005,16 @@ fn record_until_stop(
             }
         }
     }
+}
+
+fn ffmpeg_reason(stderr: &str) -> String {
+    let lines: Vec<&str> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let start = lines.len().saturating_sub(3);
+    lines[start..].join(" ").trim().to_owned()
 }
 
 fn transition(
@@ -1784,6 +1829,7 @@ mod tests {
         stops: Arc<AtomicUsize>,
         kills: Arc<AtomicUsize>,
         encoder: VideoEncoder,
+        outputs: Mutex<Vec<OutputBounds>>,
     }
 
     struct FakeProcess {
@@ -1840,6 +1886,10 @@ mod tests {
         fn best_encoder(&self, _ffmpeg: &Path, _format: VideoFormat) -> VideoEncoder {
             self.encoder
         }
+
+        fn outputs(&self) -> Vec<OutputBounds> {
+            self.outputs.lock().expect("outputs").clone()
+        }
     }
 
     struct FakeMedia {
@@ -1882,9 +1932,17 @@ mod tests {
     struct FakePublisher {
         published: Mutex<Vec<SavedRecording>>,
         cancelled: AtomicUsize,
+        failures: Mutex<Vec<String>>,
     }
 
     impl RecordingPublisher for FakePublisher {
+        fn failed(&self, message: &str) {
+            self.failures
+                .lock()
+                .expect("failures")
+                .push(message.to_owned());
+        }
+
         fn published(&self, saved: &SavedRecording) {
             self.published
                 .lock()
@@ -1957,6 +2015,7 @@ mod tests {
                     stops: Arc::new(AtomicUsize::new(0)),
                     kills: Arc::new(AtomicUsize::new(0)),
                     encoder: VideoEncoder::H264Nvenc,
+                    outputs: Mutex::new(Vec::new()),
                 }),
                 media: Arc::new(FakeMedia {
                     calls: AtomicUsize::new(0),
@@ -1967,6 +2026,7 @@ mod tests {
                 publisher: Arc::new(FakePublisher {
                     published: Mutex::new(Vec::new()),
                     cancelled: AtomicUsize::new(0),
+                    failures: Mutex::new(Vec::new()),
                 }),
                 directory,
                 services,
@@ -2342,6 +2402,89 @@ mod tests {
         assert_eq!(control.status().state, RecordingState::Done);
         assert_eq!(fixture.border.shows.load(Ordering::SeqCst), 0);
         assert_eq!(fixture.audio.starts.lock().expect("audio").len(), 0);
+    }
+
+    fn run_on_outputs(
+        outputs: Vec<OutputBounds>,
+    ) -> (Fixture, Result<SessionOutcome, RecordError>) {
+        let fixture = Fixture::new(Ok(target()), false, false);
+        *fixture.runner.outputs.lock().expect("outputs") = outputs;
+        let session = Session::start(
+            fixture.plan(RecordedKind::Video, SessionMode::Save, false, false),
+            fixture.ports(),
+        )
+        .expect("start");
+        let control = session.control();
+        std::thread::sleep(Duration::from_millis(60));
+        control.stop();
+        let result = session.wait();
+        (fixture, result)
+    }
+
+    #[test]
+    fn a_secondary_screen_uses_its_own_output_and_relative_offsets() {
+        let outputs = vec![
+            OutputBounds {
+                index: 0,
+                bounds: snapline_core::geometry::Rect::new(
+                    snapline_core::geometry::Px(1920),
+                    snapline_core::geometry::Px(0),
+                    snapline_core::geometry::Px(1920),
+                    snapline_core::geometry::Px(1080),
+                ),
+            },
+            OutputBounds {
+                index: 2,
+                bounds: snapline_core::geometry::Rect::new(
+                    snapline_core::geometry::Px(-30),
+                    snapline_core::geometry::Px(0),
+                    snapline_core::geometry::Px(1920),
+                    snapline_core::geometry::Px(1080),
+                ),
+            },
+        ];
+        let (fixture, result) = run_on_outputs(outputs);
+        assert!(result.is_ok());
+        let sent = commands(&fixture.runner);
+        assert!(sent[0].iter().any(|argument| argument
+            == "ddagrab=framerate=30:output_idx=2:video_size=640x360:offset_x=40:offset_y=20"));
+    }
+
+    #[test]
+    fn an_area_spanning_two_screens_fails_with_a_clear_message_and_no_ffmpeg() {
+        let outputs = vec![
+            OutputBounds {
+                index: 0,
+                bounds: snapline_core::geometry::Rect::new(
+                    snapline_core::geometry::Px(-1620),
+                    snapline_core::geometry::Px(0),
+                    snapline_core::geometry::Px(1920),
+                    snapline_core::geometry::Px(1080),
+                ),
+            },
+            OutputBounds {
+                index: 1,
+                bounds: snapline_core::geometry::Rect::new(
+                    snapline_core::geometry::Px(300),
+                    snapline_core::geometry::Px(0),
+                    snapline_core::geometry::Px(1920),
+                    snapline_core::geometry::Px(1080),
+                ),
+            },
+        ];
+        let (fixture, result) = run_on_outputs(outputs);
+        let error = result.expect_err("spans screens");
+        assert!(error.to_string().contains("single screen"));
+        assert!(commands(&fixture.runner).is_empty());
+        let failures = fixture.publisher.failures.lock().expect("failures");
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("single screen"));
+    }
+
+    #[test]
+    fn ffmpeg_reasons_keep_only_the_last_lines_of_stderr() {
+        assert_eq!(ffmpeg_reason(""), "");
+        assert_eq!(ffmpeg_reason("a\n\nb\nc\nd\n"), "b c d".to_owned());
     }
 
     #[test]

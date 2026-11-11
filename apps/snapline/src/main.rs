@@ -7,6 +7,7 @@ mod events;
 mod history_host;
 mod ipc;
 mod logging;
+mod native_panel;
 mod panel;
 mod protocol;
 mod protocol_combine;
@@ -328,6 +329,20 @@ impl snapline_services::tools::pin::PinMenu for PinMenuImpl {
     }
 }
 
+struct ShellHostImpl;
+
+impl snapline_services::shell_actions::ShellHost for ShellHostImpl {
+    fn copy_text(&self, text: &str) -> Result<(), ServiceError> {
+        snapline_win::clipboard::Clipboard::new()
+            .set_text(text)
+            .map_err(|error| ServiceError::Io(error.to_string()))
+    }
+
+    fn open_folder(&self, path: &std::path::Path) -> Result<(), ServiceError> {
+        snapline_win::shell::open_file(path).map_err(|error| ServiceError::Io(error.to_string()))
+    }
+}
+
 struct AppCaptureContext {
     services: Services,
 }
@@ -370,6 +385,30 @@ impl CaptureContext for AppCaptureContext {
 
     fn window_under_cursor(&self) -> Option<snapline_core::ids::WindowId> {
         CaptureBackend::window_under_cursor()
+    }
+
+    fn list_windows(&self) -> Vec<snapline_services::capture::WindowChoice> {
+        snapline_win::source_app::capturable_windows()
+            .into_iter()
+            .map(|window| snapline_services::capture::WindowChoice {
+                app: CaptureBackend::process_name(window.id),
+                id: window.id,
+                title: window.title,
+            })
+            .collect()
+    }
+
+    fn choose_window(
+        &self,
+        choices: &[snapline_services::capture::WindowChoice],
+    ) -> Result<Option<snapline_services::capture::WindowPick>, ServiceError> {
+        if choices.is_empty() {
+            return snapline_services::capture::resolve_pick(choices, None);
+        }
+        let labels = snapline_services::capture::menu_labels(choices);
+        let selected = snapline_win::menu::choose_from(&labels)
+            .map_err(|error| ServiceError::Internal(error.to_string()))?;
+        snapline_services::capture::resolve_pick(choices, selected)
     }
 
     fn cursor_position(&self) -> Option<Point> {
@@ -653,6 +692,10 @@ impl FfmpegRunner for RecordingFfmpegImpl {
                 Box::new(RecordingFfmpegProcess(Some(running))) as Box<dyn FfmpegProcess>
             })
             .map_err(|error| recording::RecordError::FfmpegStart(error.to_string()))
+    }
+
+    fn outputs(&self) -> Vec<snapline_core::record_place::OutputBounds> {
+        snapline_win::capture::dxgi::output_bounds()
     }
 
     fn best_encoder(&self, ffmpeg: &std::path::Path, format: VideoFormat) -> VideoEncoder {
@@ -1061,6 +1104,7 @@ fn main() -> anyhow::Result<()> {
         pin: Arc::new(EditorPinImpl::default()),
     })?;
     snapline_services::tools::pin::install_menu(Arc::new(PinMenuImpl))?;
+    snapline_services::shell_actions::install_host(Arc::new(ShellHostImpl))?;
     snapline_services::tools::convert::install_backend(Arc::new(FfmpegBackendImpl));
     snapline_services::tools::convert::install_file_picker(Arc::new(VideoPickerImpl));
     snapline_services::clipboard_upload::install(

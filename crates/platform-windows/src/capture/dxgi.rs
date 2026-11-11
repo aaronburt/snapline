@@ -27,6 +27,36 @@ const ACQUIRE_TIMEOUT_MS: u32 = 500;
 const FEATURE_LEVELS: [windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL; 2] =
     [D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0];
 
+pub fn output_bounds() -> Vec<snapline_core::record_place::OutputBounds> {
+    // SAFETY: no arguments are shared and the factory owns a reference for its lifetime.
+    let Ok(factory) = (unsafe { CreateDXGIFactory1::<IDXGIFactory1>() }) else {
+        return Vec::new();
+    };
+    // SAFETY: the factory is live and index zero is the adapter ddagrab opens by default.
+    let Ok(adapter) = (unsafe { factory.EnumAdapters1(0) }) else {
+        return Vec::new();
+    };
+    let mut outputs = Vec::new();
+    let mut index = 0_u32;
+    loop {
+        // SAFETY: the adapter is live and the output index advances until enumeration ends.
+        let Ok(output) = (unsafe { adapter.EnumOutputs(index) }) else {
+            break;
+        };
+        // SAFETY: the output is live and the descriptor is a live out-parameter.
+        if let Ok(desc) = unsafe { output.GetDesc() } {
+            if desc.AttachedToDesktop.as_bool() {
+                outputs.push(snapline_core::record_place::OutputBounds {
+                    index,
+                    bounds: rect_from(desc.DesktopCoordinates),
+                });
+            }
+        }
+        index = index.saturating_add(1);
+    }
+    outputs
+}
+
 pub fn freeze_all(options: CaptureOptions) -> Result<FrozenDesktop, CaptureError> {
     let monitors = crate::monitors::enumerate();
     if monitors.is_empty() {
