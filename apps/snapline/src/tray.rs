@@ -1,11 +1,11 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use snapline_core::actions::{find, ActionId};
+use snapline_core::actions::ActionId;
 use snapline_services::actions::dispatch_notifying;
 use snapline_services::{ServiceError, Services};
 use tauri::image::Image;
-use tauri::menu::{CheckMenuItem, IconMenuItem, Menu, PredefinedMenuItem, Submenu};
+use tauri::menu::{IconMenuItem, Menu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Wry};
 
@@ -17,34 +17,17 @@ static EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 enum IconState {
     Normal,
     Recording,
-    Paused,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 struct TrayState {
-    paused: bool,
     recording_seconds: Option<u64>,
-    system_audio: bool,
-    microphone: bool,
-}
-
-impl Default for TrayState {
-    fn default() -> Self {
-        Self {
-            paused: false,
-            recording_seconds: None,
-            system_audio: true,
-            microphone: false,
-        }
-    }
 }
 
 impl TrayState {
     fn icon_state(self) -> IconState {
         if self.recording_seconds.is_some() {
             IconState::Recording
-        } else if self.paused {
-            IconState::Paused
         } else {
             IconState::Normal
         }
@@ -62,44 +45,39 @@ impl TrayHandle {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+}
 
-    fn sync_audio(&self) {
-        let Some((system_audio, microphone)) = audio_settings(self.tray.app_handle()) else {
-            return;
-        };
-        let mut state = self.state();
-        state.system_audio = system_audio;
-        state.microphone = microphone;
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeftClick {
+    Panel,
+    Capture,
+    Ignore,
+}
 
-    fn refresh(&self) -> tauri::Result<()> {
-        self.sync_audio();
-        let state = *self.state();
-        let menu = build_menu(&self.tray.app_handle().clone(), state)?;
-        self.tray.set_menu(Some(menu))?;
-        self.tray
-            .set_icon(Some(icon_for_state(state.icon_state())?))?;
-        self.tray.set_tooltip(Some(tooltip(state)))?;
-        Ok(())
+fn left_click(capture_on_click: bool, recording: bool, follows_double_click: bool) -> LeftClick {
+    if !capture_on_click || recording {
+        LeftClick::Panel
+    } else if follows_double_click {
+        LeftClick::Ignore
+    } else {
+        LeftClick::Capture
     }
 }
 
-fn audio_settings(app: &AppHandle) -> Option<(bool, bool)> {
-    let services = app.try_state::<Services>()?;
-    let settings = services.settings_snapshot().ok()?;
-    Some((
-        settings.capture.record_system_audio,
-        settings.capture.record_microphone,
-    ))
+fn capture_on_click(app: &AppHandle) -> bool {
+    app.try_state::<Services>()
+        .and_then(|services| services.settings_snapshot().ok())
+        .is_some_and(|settings| settings.general.tray_click_capture)
+}
+
+fn is_recording(app: &AppHandle) -> bool {
+    app.try_state::<TrayHandle>()
+        .is_some_and(|handle| handle.state().recording_seconds.is_some())
 }
 
 pub fn init(app: &AppHandle) -> tauri::Result<()> {
-    let mut state = TrayState::default();
-    if let Some((system_audio, microphone)) = audio_settings(app) {
-        state.system_audio = system_audio;
-        state.microphone = microphone;
-    }
-    let menu = build_menu(app, state)?;
+    let state = TrayState::default();
+    let menu = build_menu(app)?;
     let icon = icon_for_state(state.icon_state())?;
     let capture_click = Arc::new(AtomicU64::new(0));
     let double_click = AtomicBool::new(false);
@@ -108,7 +86,11 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
         .tooltip(tooltip(state))
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| handle_menu(app, event.id().as_ref()))
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == EXIT_ID {
+                request_exit(app);
+            }
+        })
         .on_tray_icon_event(move |tray, event| match event {
             TrayIconEvent::Click {
                 button: MouseButton::Left,
@@ -123,45 +105,38 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
             } => {
                 let follows_double_click = double_click.swap(false, Ordering::SeqCst);
                 let app = tray.app_handle();
-                let recording = {
-                    let handle = app.state::<TrayHandle>();
-                    let state = handle.state();
-                    state.recording_seconds.is_some()
-                };
-                if recording {
-                    return;
-                }
-                if app
-                    .state::<Services>()
-                    .settings_snapshot()
-                    .is_ok_and(|settings| settings.general.tray_click_capture)
-                {
-                    if follows_double_click {
+                let capture = capture_on_click(app);
+                let recording = is_recording(app);
+                let decision = left_click(capture, recording, follows_double_click);
+                tracing::info!(
+                    capture,
+                    recording,
+                    follows_double_click,
+                    ?decision,
+                    "tray click"
+                );
+                match decision {
+                    LeftClick::Panel => {
+                        let rect = crate::panel::TrayRect::from_tauri(rect);
+                        crate::panel::show(app, rect.x, rect.y, rect.width, rect.height);
                         return;
                     }
-                    let ticket = capture_click.fetch_add(1, Ordering::SeqCst) + 1;
-                    let capture_click = Arc::clone(&capture_click);
-                    let app = app.clone();
-                    tauri::async_runtime::spawn_blocking(move || {
-                        std::thread::sleep(snapline_win::input::double_click_interval());
-                        if capture_click.load(Ordering::SeqCst) == ticket
-                            && app
-                                .state::<TrayHandle>()
-                                .state()
-                                .recording_seconds
-                                .is_none()
-                            && app
-                                .state::<Services>()
-                                .settings_snapshot()
-                                .is_ok_and(|settings| settings.general.tray_click_capture)
-                        {
-                            run_action(&app, "capture_region");
-                        }
-                    });
-                } else {
-                    let rect = crate::panel::TrayRect::from_tauri(rect);
-                    crate::panel::show(app, rect.x, rect.y, rect.width, rect.height);
+                    LeftClick::Ignore => return,
+                    LeftClick::Capture => {}
                 }
+                let ticket = capture_click.fetch_add(1, Ordering::SeqCst) + 1;
+                let capture_click = Arc::clone(&capture_click);
+                let app = app.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    std::thread::sleep(snapline_win::input::double_click_interval());
+                    let current = capture_click.load(Ordering::SeqCst) == ticket;
+                    let still = left_click(capture_on_click(&app), is_recording(&app), false)
+                        == LeftClick::Capture;
+                    tracing::info!(current, still, "tray click capture check");
+                    if current && still {
+                        run_action(&app, "capture_region");
+                    }
+                });
             }
             TrayIconEvent::DoubleClick {
                 button: MouseButton::Left,
@@ -199,38 +174,13 @@ pub fn handle_second_instance(app: &AppHandle, argv: &[String]) {
     open_main(app, "/history");
 }
 
-pub fn set_paused(app: &AppHandle, paused: bool) {
-    let handle = app.state::<TrayHandle>();
-    {
-        let mut state = handle.state();
-        state.paused = paused;
-    }
-    if let Err(error) = handle.refresh() {
-        tracing::error!(%error, "could not refresh the tray");
-    }
-}
-
 pub fn set_recording(app: &AppHandle, elapsed_seconds: Option<u64>) {
     let handle = app.state::<TrayHandle>();
-    let menu_changed = {
+    let state = {
         let mut state = handle.state();
-        let changed = state.recording_seconds.is_some() != elapsed_seconds.is_some();
         state.recording_seconds = elapsed_seconds;
-        changed
+        *state
     };
-    if menu_changed {
-        if let Err(error) = handle
-            .tray
-            .set_show_menu_on_left_click(elapsed_seconds.is_some())
-        {
-            tracing::error!(%error, "could not update the tray click behaviour");
-        }
-        if let Err(error) = handle.refresh() {
-            tracing::error!(%error, "could not refresh the tray");
-        }
-        return;
-    }
-    let state = *handle.state();
     let icon = match icon_for_state(state.icon_state()) {
         Ok(icon) => icon,
         Err(error) => {
@@ -246,69 +196,11 @@ pub fn set_recording(app: &AppHandle, elapsed_seconds: Option<u64>) {
     }
 }
 
-fn handle_menu(app: &AppHandle, id: &str) {
-    match id {
-        "app_exit" => {
-            EXIT_REQUESTED.store(true, Ordering::SeqCst);
-            app.exit(0);
-        }
-        "app_open" => open_main(app, "/history"),
-        "app_settings" => open_main(app, "/settings/general"),
-        "app_pause_hotkeys" => {
-            let handle = app.state::<TrayHandle>();
-            let paused = !handle.state().paused;
-            drop(handle);
-            let services = app.state::<Services>();
-            if let Err(error) = services.hotkeys().set_paused(paused) {
-                tracing::warn!(%error, "could not change hotkey pause");
-                return;
-            }
-            set_paused(app, paused);
-        }
-        "record_system_audio" => toggle_check(app, CheckKind::SystemAudio),
-        "record_microphone" => toggle_check(app, CheckKind::Microphone),
-        "upload_file" => {
-            let app = app.clone();
-            tauri::async_runtime::spawn_blocking(move || run_action(&app, "upload_file"));
-        }
-        action => run_action(app, action),
-    }
-}
+const EXIT_ID: &str = "app_exit";
 
-enum CheckKind {
-    SystemAudio,
-    Microphone,
-}
-
-fn toggle_check(app: &AppHandle, kind: CheckKind) {
-    let patch = {
-        let services = app.state::<Services>();
-        let settings = match services.settings_snapshot() {
-            Ok(settings) => settings,
-            Err(error) => {
-                tracing::warn!(%error, "the recording audio setting could not be read");
-                return;
-            }
-        };
-        match kind {
-            CheckKind::SystemAudio => serde_json::json!({
-                "capture": { "record_system_audio": !settings.capture.record_system_audio }
-            }),
-            CheckKind::Microphone => serde_json::json!({
-                "capture": { "record_microphone": !settings.capture.record_microphone }
-            }),
-        }
-    };
-    let services = app.state::<Services>();
-    if let Err(error) = services.update_settings(&patch) {
-        tracing::warn!(%error, "the recording audio setting could not be saved");
-        return;
-    }
-    drop(services);
-    let handle = app.state::<TrayHandle>();
-    if let Err(error) = handle.refresh() {
-        tracing::error!(%error, "could not refresh the tray");
-    }
+fn request_exit(app: &AppHandle) {
+    EXIT_REQUESTED.store(true, Ordering::SeqCst);
+    app.exit(0);
 }
 
 fn open_main(app: &AppHandle, route: &str) {
@@ -319,9 +211,8 @@ fn open_main(app: &AppHandle, route: &str) {
 }
 
 fn run_action(app: &AppHandle, action: &str) {
-    if action == "app_exit" {
-        EXIT_REQUESTED.store(true, Ordering::SeqCst);
-        app.exit(0);
+    if action == EXIT_ID {
+        request_exit(app);
         return;
     }
     if action == "app_open" {
@@ -330,18 +221,6 @@ fn run_action(app: &AppHandle, action: &str) {
     }
     if action == "app_settings" {
         open_main(app, "/settings/general");
-        return;
-    }
-    if action == "app_pause_hotkeys" {
-        let handle = app.state::<TrayHandle>();
-        let paused = !handle.state().paused;
-        drop(handle);
-        let services = app.state::<Services>();
-        if let Err(error) = services.hotkeys().set_paused(paused) {
-            tracing::warn!(%error, "could not change hotkey pause");
-            return;
-        }
-        set_paused(app, paused);
         return;
     }
     let services = app.state::<Services>();
@@ -356,196 +235,25 @@ fn run_action(app: &AppHandle, action: &str) {
     }
 }
 
-fn chord_label(action: &str, label: &str) -> String {
-    match find(&ActionId::new(action)).and_then(|definition| definition.default_chord) {
-        Some(chord) => format!("{label} · {chord}"),
-        None => label.to_string(),
-    }
-}
-
-fn icon_item(
-    app: &AppHandle,
-    id: &str,
-    text: String,
-    icon: &str,
-) -> tauri::Result<IconMenuItem<Wry>> {
-    IconMenuItem::with_id(app, id, text, true, menu_icon(icon), None::<&str>)
-}
-
-fn menu_icon(name: &str) -> Option<Image<'static>> {
-    let light = crate::theme::is_light();
-    let bytes: &'static [u8] = match (name, light) {
-        ("region", false) => include_bytes!("../icons/menu/region-16-dark.png"),
-        ("region", true) => include_bytes!("../icons/menu/region-16-light.png"),
-        ("window", false) => include_bytes!("../icons/menu/window-16-dark.png"),
-        ("window", true) => include_bytes!("../icons/menu/window-16-light.png"),
-        ("screen", false) => include_bytes!("../icons/menu/screen-16-dark.png"),
-        ("screen", true) => include_bytes!("../icons/menu/screen-16-light.png"),
-        ("record", false) => include_bytes!("../icons/menu/record-16-dark.png"),
-        ("record", true) => include_bytes!("../icons/menu/record-16-light.png"),
-        ("gif", false) => include_bytes!("../icons/menu/gif-16-dark.png"),
-        ("gif", true) => include_bytes!("../icons/menu/gif-16-light.png"),
-        ("open", false) => include_bytes!("../icons/menu/open-16-dark.png"),
-        ("open", true) => include_bytes!("../icons/menu/open-16-light.png"),
-        ("gear", false) => include_bytes!("../icons/menu/gear-16-dark.png"),
-        ("gear", true) => include_bytes!("../icons/menu/gear-16-light.png"),
-        ("pause", false) => include_bytes!("../icons/menu/pause-16-dark.png"),
-        ("pause", true) => include_bytes!("../icons/menu/pause-16-light.png"),
-        ("power", false) => include_bytes!("../icons/menu/power-16-dark.png"),
-        ("power", true) => include_bytes!("../icons/menu/power-16-light.png"),
-        _ => return None,
+fn menu_icon() -> Option<Image<'static>> {
+    let bytes: &'static [u8] = if crate::theme::is_light() {
+        include_bytes!("../icons/menu/power-16-light.png")
+    } else {
+        include_bytes!("../icons/menu/power-16-dark.png")
     };
     Image::from_bytes(bytes).ok()
 }
 
-fn build_menu(app: &AppHandle, state: TrayState) -> tauri::Result<Menu<Wry>> {
-    let capture_region = icon_item(
-        app,
-        "capture_region",
-        chord_label("capture_region", "Capture region"),
-        "region",
-    )?;
-    let capture_window = icon_item(
-        app,
-        "capture_window",
-        chord_label("capture_window", "Capture window"),
-        "window",
-    )?;
-    let capture_screen = icon_item(
-        app,
-        "capture_screen",
-        chord_label("capture_screen", "Capture full screen"),
-        "screen",
-    )?;
-    let record_video = icon_item(
-        app,
-        "record_video",
-        chord_label("record_video", "Record video (MP4)"),
-        "record",
-    )?;
-    let record_gif = icon_item(
-        app,
-        "record_gif",
-        chord_label("record_gif", "Record GIF"),
-        "gif",
-    )?;
-    let record_window = icon_item(
-        app,
-        "record_window",
-        "Record active window".to_string(),
-        "window",
-    )?;
-    let record_separator = PredefinedMenuItem::separator(app)?;
-    let upload_file = icon_item(app, "upload_file", "Upload file…".to_string(), "open")?;
-    let system_audio = CheckMenuItem::with_id(
-        app,
-        "record_system_audio",
-        "System audio",
-        true,
-        state.system_audio,
-        None::<&str>,
-    )?;
-    let microphone = CheckMenuItem::with_id(
-        app,
-        "record_microphone",
-        "Microphone",
-        true,
-        state.microphone,
-        None::<&str>,
-    )?;
-    let separator_one = PredefinedMenuItem::separator(app)?;
-    let open = icon_item(app, "app_open", "Open Snapline".to_string(), "open")?;
-    let settings = icon_item(app, "app_settings", "Settings".to_string(), "gear")?;
-    let pause = icon_item(
-        app,
-        "app_pause_hotkeys",
-        if state.paused {
-            "Resume hotkeys".to_string()
-        } else {
-            "Pause hotkeys".to_string()
-        },
-        "pause",
-    )?;
-    let separator_two = PredefinedMenuItem::separator(app)?;
-    let exit = icon_item(app, "app_exit", "Exit".to_string(), "power")?;
-
-    if !recording_entries(&state).is_empty() {
-        let stop = icon_item(
-            app,
-            "record_stop",
-            chord_label("record_video", "Stop recording"),
-            "record",
-        )?;
-        let cancel = icon_item(
-            app,
-            "record_cancel",
-            "Cancel recording".to_string(),
-            "record",
-        )?;
-        Menu::with_items(
-            app,
-            &[
-                &capture_region,
-                &capture_window,
-                &capture_screen,
-                &stop,
-                &cancel,
-                &upload_file,
-                &separator_one,
-                &open,
-                &settings,
-                &pause,
-                &separator_two,
-                &exit,
-            ],
-        )
-    } else {
-        let record = Submenu::with_items(
-            app,
-            "Record screen",
-            true,
-            &[
-                &record_video,
-                &record_gif,
-                &record_window,
-                &record_separator,
-                &system_audio,
-                &microphone,
-            ],
-        )?;
-        Menu::with_items(
-            app,
-            &[
-                &capture_region,
-                &capture_window,
-                &capture_screen,
-                &record,
-                &upload_file,
-                &separator_one,
-                &open,
-                &settings,
-                &pause,
-                &separator_two,
-                &exit,
-            ],
-        )
-    }
-}
-
-fn recording_entries(state: &TrayState) -> &'static [&'static str] {
-    if state.recording_seconds.is_some() {
-        &["record_stop", "record_cancel"]
-    } else {
-        &[]
-    }
+fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
+    let exit = IconMenuItem::with_id(app, EXIT_ID, "Exit", true, menu_icon(), None::<&str>)?;
+    let menu = Menu::new(app)?;
+    menu.append(&exit)?;
+    Ok(menu)
 }
 
 fn tooltip(state: TrayState) -> String {
     if let Some(seconds) = state.recording_seconds {
         return format!("Snapline · recording {}", format_elapsed(seconds));
-    }
-    if state.paused {
-        return "Snapline · hotkeys paused".to_string();
     }
     "Snapline".to_string()
 }
@@ -562,9 +270,6 @@ fn icon_for_state(state: IconState) -> tauri::Result<Image<'static>> {
         IconState::Recording => Image::from_bytes(include_bytes!(
             "../../../assets/icons/tray-recording-32.png"
         )),
-        IconState::Paused => {
-            Image::from_bytes(include_bytes!("../../../assets/icons/tray-paused-32.png"))
-        }
     }
 }
 
@@ -573,62 +278,64 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tooltip_has_three_states() {
-        let normal = TrayState::default();
-        assert_eq!(tooltip(normal), "Snapline");
-        let paused = TrayState {
-            paused: true,
-            ..normal
-        };
-        assert_eq!(tooltip(paused), "Snapline · hotkeys paused");
+    fn with_capture_on_click_off_a_click_opens_the_quick_panel() {
+        assert_eq!(left_click(false, false, false), LeftClick::Panel);
+        assert_eq!(left_click(false, false, true), LeftClick::Panel);
+    }
+
+    #[test]
+    fn with_capture_on_click_on_a_click_starts_a_region_capture() {
+        assert_eq!(left_click(true, false, false), LeftClick::Capture);
+    }
+
+    #[test]
+    fn the_second_click_of_a_double_click_does_not_capture() {
+        assert_eq!(left_click(true, false, true), LeftClick::Ignore);
+    }
+
+    #[test]
+    fn toggling_the_setting_live_changes_the_next_click_and_cancels_a_pending_capture() {
+        assert_eq!(left_click(true, false, false), LeftClick::Capture);
+        assert_ne!(left_click(false, false, false), LeftClick::Capture);
+        assert_eq!(left_click(false, false, false), LeftClick::Panel);
+        assert_eq!(left_click(true, false, false), LeftClick::Capture);
+    }
+
+    #[test]
+    fn a_recording_started_while_a_capture_is_pending_cancels_it() {
+        assert_eq!(left_click(true, false, false), LeftClick::Capture);
+        assert_eq!(left_click(true, true, false), LeftClick::Panel);
+        assert_eq!(left_click(true, false, false), LeftClick::Capture);
+    }
+
+    #[test]
+    fn while_recording_a_click_always_opens_the_quick_panel() {
+        assert_eq!(left_click(true, true, false), LeftClick::Panel);
+        assert_eq!(left_click(false, true, false), LeftClick::Panel);
+    }
+
+    #[test]
+    fn the_tray_menu_is_just_exit_and_exit_is_a_catalogue_action() {
+        assert_eq!(EXIT_ID, "app_exit");
+        assert!(snapline_core::actions::find(&ActionId::new(EXIT_ID)).is_some());
+    }
+
+    #[test]
+    fn tooltip_has_two_states() {
+        assert_eq!(tooltip(TrayState::default()), "Snapline");
         let recording = TrayState {
             recording_seconds: Some(42),
-            ..normal
         };
         assert_eq!(tooltip(recording), "Snapline · recording 0:42");
     }
 
     #[test]
-    fn the_cancel_entry_shows_only_while_recording() {
-        let idle = TrayState::default();
-        assert!(recording_entries(&idle).is_empty());
-        let recording = TrayState {
-            recording_seconds: Some(3),
-            ..idle
-        };
-        assert_eq!(
-            recording_entries(&recording),
-            ["record_stop", "record_cancel"]
-        );
-        let after = TrayState {
-            recording_seconds: None,
-            ..recording
-        };
-        assert!(recording_entries(&after).is_empty());
-    }
-
-    #[test]
-    fn the_icon_returns_to_normal_when_recording_ends() {
+    fn the_icon_follows_the_recording_state() {
         let recording = TrayState {
             recording_seconds: Some(5),
-            ..TrayState::default()
         };
         assert_eq!(recording.icon_state(), IconState::Recording);
-        let ended = TrayState {
-            recording_seconds: None,
-            ..recording
-        };
-        assert_eq!(ended.icon_state(), IconState::Normal);
-    }
-
-    #[test]
-    fn recording_wins_over_paused_icon() {
-        let state = TrayState {
-            paused: true,
-            recording_seconds: Some(1),
-            ..TrayState::default()
-        };
-        assert_eq!(state.icon_state(), IconState::Recording);
+        assert_eq!(TrayState::default().icon_state(), IconState::Normal);
     }
 
     #[test]
@@ -638,10 +345,5 @@ mod tests {
         assert_eq!(format_elapsed(60), "1:00");
         assert_eq!(format_elapsed(3599), "59:59");
         assert_eq!(format_elapsed(3600), "60:00");
-        let recording = TrayState {
-            recording_seconds: Some(60),
-            ..TrayState::default()
-        };
-        assert_eq!(tooltip(recording), "Snapline · recording 1:00");
     }
 }

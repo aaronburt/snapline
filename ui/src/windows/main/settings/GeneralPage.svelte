@@ -97,7 +97,7 @@
     matches('Notifications', 'Show a toast when an upload finishes or a link is copied'),
   );
   const trayClickVisible = $derived(
-    matches('Open capture on tray click', 'When off, clicking the tray icon opens the menu'),
+    matches('Open capture on tray click', 'When off, clicking the tray icon opens the Quick Panel'),
   );
   const showStartup = $derived(
     matches('Startup') ||
@@ -166,7 +166,7 @@
         <ToggleRow
           icon="tray"
           title="Open capture on tray click"
-          description="When off, clicking the tray icon opens the menu"
+          description="When off, clicking the tray icon opens the Quick Panel"
           checked={rows.trayClickCapture}
           onchange={(value) => updateGeneral('trayClickCapture', value)}
         />
