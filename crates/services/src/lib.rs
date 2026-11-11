@@ -25,6 +25,7 @@ pub mod job;
 pub mod recording;
 pub mod saver;
 pub mod settings;
+pub mod shell_actions;
 pub mod thumbs;
 pub mod tools;
 pub mod uninstall;

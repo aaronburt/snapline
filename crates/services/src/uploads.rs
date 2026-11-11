@@ -29,7 +29,6 @@ pub enum Event {
     StateChanged(UploadState),
 }
 
-pub const LAST_LINK_KEY: &str = "last_link";
 pub const TEST_RUN_ID: &str = "snapline-destination-test";
 
 pub const UPLOAD_COMPLETE_TITLE: &str = "Upload complete";
@@ -184,25 +183,48 @@ pub fn destination_for(uploads: &Uploads, media: MediaKind) -> &DestinationRef {
 }
 
 pub fn last_link(services: &Services) -> Result<Option<String>, ServiceError> {
-    let settings = services.settings_snapshot()?;
-    Ok(settings
-        .uploads
-        .extra
-        .get(LAST_LINK_KEY)
-        .and_then(toml::Value::as_str)
-        .map(str::to_owned))
+    let path = services.paths()?.history_file;
+    if !path.is_file() {
+        return Ok(None);
+    }
+    HistoryRepo::open_read(&path)
+        .and_then(|repo| repo.latest_upload_url())
+        .map_err(|error| ServiceError::Io(error.to_string()))
 }
 
-pub fn record_last_link(services: &Services, link: &str) -> Result<(), ServiceError> {
-    let mut uploads = serde_json::Map::new();
-    uploads.insert(
-        LAST_LINK_KEY.to_owned(),
-        serde_json::Value::String(link.to_owned()),
-    );
-    let mut patch = serde_json::Map::new();
-    patch.insert("uploads".to_owned(), serde_json::Value::Object(uploads));
-    services.update_settings(&serde_json::Value::Object(patch))?;
-    Ok(())
+#[cfg(test)]
+pub(crate) fn seed_done_upload(services: &Services, name: &str, url: &str, updated_at: i64) -> i64 {
+    use snapline_store::history::{CaptureKind, NewCapture};
+
+    let path = services.paths().expect("paths").history_file;
+    let mut repo = HistoryRepo::open_write(&path).expect("history");
+    let id = repo
+        .record(NewCapture {
+            kind: CaptureKind::Image,
+            path: format!("C:\\captures\\{name}"),
+            bytes: 3,
+            width: None,
+            height: None,
+            duration_ms: None,
+            source_app: None,
+            created_at: updated_at,
+            ocr_text: None,
+        })
+        .expect("capture");
+    repo.set_upload(UploadUpdate {
+        sent: 0,
+        total: 0,
+        capture_id: id,
+        dest_id: "test".to_owned(),
+        state: HistoryUploadState::Done,
+        url: Some(url.to_owned()),
+        deletion_url: None,
+        error: None,
+        attempts: 1,
+        updated_at,
+    })
+    .expect("upload");
+    id
 }
 
 pub fn maintain_history(services: &Services, startup: bool) -> Result<(), ServiceError> {
@@ -539,11 +561,6 @@ impl UploaderThread {
                 notify_uploaded(&sink_services, &state);
             }
             if state.status == UploadStatus::Done && state.run_id.as_deref() != Some(TEST_RUN_ID) {
-                if let Some(link) = state.link.as_deref() {
-                    if let Err(error) = record_last_link(&sink_services, link) {
-                        tracing::warn!(%error, "the last link could not be saved");
-                    }
-                }
                 notify_uploaded(&sink_services, &state);
             }
             let _ = events.send(AppEvent::Upload(Event::StateChanged(state)));
@@ -687,6 +704,9 @@ pub fn run(action: &ActionId, services: &Services) -> Result<(), ServiceError> {
             .upload()
             .handle(UploadReq::PickAndUpload)
             .map(|_| ()),
+        crate::shell_actions::COPY_LAST_LINK => {
+            crate::shell_actions::run(action.as_str(), services)
+        }
         _ => Err(ServiceError::NotYet),
     }
 }
@@ -1078,128 +1098,60 @@ mod tests {
     }
 
     #[test]
-    fn a_successful_upload_saves_the_last_link_in_settings() {
+    fn the_last_link_is_the_newest_finished_upload_in_history() {
         let fixture = settings_fixture();
-        let uploader = Arc::new(TestUploader {
-            calls: Mutex::new(0),
-        });
-        let thread = UploaderThread::start(
-            &fixture.services,
-            Arc::new(TestSecrets),
-            queue::RetryPolicy::new(0),
-            Arc::new(TestFiles),
-            Arc::new(TestDestinations { uploader }),
-        )
-        .expect("uploader thread");
-        let accepted = thread
-            .service()
-            .handle(UploadReq::UploadElsewhere {
-                capture_id: 1,
-                dest: "test".to_owned(),
-            })
-            .expect("accepted");
-        let UploadResp::Accepted { id } = accepted else {
-            panic!("unexpected response");
-        };
-        loop {
-            match event(&thread) {
-                AppEvent::Upload(Event::StateChanged(state))
-                    if state.id == id && state.status == UploadStatus::Done =>
-                {
-                    break;
-                }
-                AppEvent::Upload(Event::StateChanged(_)) => continue,
-                other => panic!("unexpected event: {other:?}"),
-            }
-        }
-        let expected = Some("https://example.test/shot.png".to_owned());
+        seed_done_upload(&fixture.services, "a.png", "https://example.test/a.png", 10);
+        seed_done_upload(&fixture.services, "b.png", "https://example.test/b.png", 20);
         assert_eq!(
-            thread.service().handle(UploadReq::LastLink),
-            Ok(UploadResp::LastLink {
-                link: expected.clone()
-            })
+            last_link(&fixture.services),
+            Ok(Some("https://example.test/b.png".to_owned()))
         );
-        let settings = fixture.services.settings_snapshot().expect("settings");
+    }
+
+    #[test]
+    fn deleting_the_newest_upload_falls_back_and_deleting_all_clears_it() {
+        let fixture = settings_fixture();
+        let first = seed_done_upload(&fixture.services, "a.png", "https://example.test/a.png", 10);
+        let second = seed_done_upload(&fixture.services, "b.png", "https://example.test/b.png", 20);
+        let path = fixture.services.paths().expect("paths").history_file;
+        let mut repo = HistoryRepo::open_write(&path).expect("history");
+        repo.delete(second).expect("delete");
         assert_eq!(
-            settings
-                .uploads
-                .extra
-                .get(LAST_LINK_KEY)
-                .and_then(toml::Value::as_str)
-                .map(str::to_owned),
-            expected
+            last_link(&fixture.services),
+            Ok(Some("https://example.test/a.png".to_owned()))
         );
-        let settings_file = fixture.services.paths().expect("paths").settings_file;
-        let saved = std::fs::read_to_string(settings_file).expect("settings file");
-        assert!(saved.contains("last_link"));
-        thread.join().expect("join");
+        repo.delete(first).expect("delete");
+        assert_eq!(last_link(&fixture.services), Ok(None));
+        assert_eq!(
+            fixture.services.upload().handle(UploadReq::LastLink),
+            Ok(UploadResp::LastLink { link: None })
+        );
     }
 
     #[test]
     fn a_failed_upload_does_not_replace_the_last_link() {
-        struct FailingUploader;
-
-        impl queue::Uploader for FailingUploader {
-            fn upload(
-                &self,
-                _file: &queue::UploadFile,
-                _secrets: &dyn queue::SecretStore,
-            ) -> Result<queue::Uploaded, UploadError> {
-                Err(UploadError::Permanent(
-                    "the host refused the file".to_owned(),
-                ))
-            }
-
-            fn delete(
-                &self,
-                _link: &queue::DeletionLink,
-                _secrets: &dyn queue::SecretStore,
-            ) -> Result<(), UploadError> {
-                Ok(())
-            }
-        }
-
         let fixture = settings_fixture();
-        record_last_link(&fixture.services, "https://example.test/previous.png")
-            .expect("last link");
-        let thread = UploaderThread::start(
-            &fixture.services,
-            Arc::new(TestSecrets),
-            queue::RetryPolicy::new(0),
-            Arc::new(TestFiles),
-            Arc::new(TestDestinations {
-                uploader: Arc::new(FailingUploader),
-            }),
-        )
-        .expect("uploader thread");
-        let accepted = thread
-            .service()
-            .handle(UploadReq::UploadElsewhere {
-                capture_id: 1,
-                dest: "test".to_owned(),
-            })
-            .expect("accepted");
-        let UploadResp::Accepted { id } = accepted else {
-            panic!("unexpected response");
-        };
-        loop {
-            match event(&thread) {
-                AppEvent::Upload(Event::StateChanged(state))
-                    if state.id == id && state.status == UploadStatus::Failed =>
-                {
-                    break;
-                }
-                AppEvent::Upload(Event::StateChanged(_)) => continue,
-                other => panic!("unexpected event: {other:?}"),
-            }
-        }
+        seed_done_upload(&fixture.services, "a.png", "https://example.test/a.png", 10);
+        let id = seed_upload(&fixture.services, "b.png", HistoryUploadState::Failed, 20);
+        let path = fixture.services.paths().expect("paths").history_file;
+        let mut repo = HistoryRepo::open_write(&path).expect("history");
+        repo.set_upload(UploadUpdate {
+            sent: 0,
+            total: 0,
+            capture_id: id,
+            dest_id: "other".to_owned(),
+            state: HistoryUploadState::Failed,
+            url: Some("https://example.test/failed.png".to_owned()),
+            deletion_url: None,
+            error: Some("refused".to_owned()),
+            attempts: 1,
+            updated_at: 30,
+        })
+        .expect("failed upload");
         assert_eq!(
-            thread.service().handle(UploadReq::LastLink),
-            Ok(UploadResp::LastLink {
-                link: Some("https://example.test/previous.png".to_owned())
-            })
+            last_link(&fixture.services),
+            Ok(Some("https://example.test/a.png".to_owned()))
         );
-        thread.join().expect("join");
     }
 
     const DAY_MS: i64 = 86_400_000;

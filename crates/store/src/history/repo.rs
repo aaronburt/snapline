@@ -208,6 +208,17 @@ impl HistoryRepo {
         })
     }
 
+    pub fn latest_upload_url(&self) -> Result<Option<String>, HistoryError> {
+        self.conn
+            .query_row(
+                "SELECT url FROM upload WHERE state = 'done' AND url IS NOT NULL AND url <> '' ORDER BY updated_at DESC, id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(HistoryError::from)
+    }
+
     pub fn set_ocr_text(&mut self, id: CaptureId, text: &str) -> Result<(), HistoryError> {
         let transaction = self.conn.transaction()?;
         let row: Option<(String, Option<String>, Option<String>)> = transaction
@@ -999,6 +1010,39 @@ mod tests {
             0
         );
         assert_eq!(repo.delete(id).expect("delete missing"), None);
+    }
+
+    #[test]
+    fn the_latest_upload_url_follows_the_newest_finished_upload() {
+        let (_directory, mut repo) = repo();
+        assert_eq!(repo.latest_upload_url().expect("none"), None);
+        let older = repo
+            .record(capture(CaptureKind::Image, "older.png", BASE))
+            .expect("record");
+        let newer = repo
+            .record(capture(CaptureKind::Image, "newer.png", BASE + 1))
+            .expect("record");
+        let mut first = upload(older, UploadState::Done, BASE + 2);
+        first.url = Some("https://example.test/older".to_owned());
+        repo.set_upload(first).expect("older upload");
+        let mut second = upload(newer, UploadState::Done, BASE + 3);
+        second.url = Some("https://example.test/newer".to_owned());
+        repo.set_upload(second).expect("newer upload");
+        let mut failed = upload(newer, UploadState::Failed, BASE + 4);
+        failed.dest_id = "s3".to_owned();
+        failed.url = Some("https://example.test/failed".to_owned());
+        repo.set_upload(failed).expect("failed upload");
+        assert_eq!(
+            repo.latest_upload_url().expect("latest"),
+            Some("https://example.test/newer".to_owned())
+        );
+        repo.delete(newer).expect("delete");
+        assert_eq!(
+            repo.latest_upload_url().expect("fallback"),
+            Some("https://example.test/older".to_owned())
+        );
+        repo.delete(older).expect("delete");
+        assert_eq!(repo.latest_upload_url().expect("cleared"), None);
     }
 
     #[test]

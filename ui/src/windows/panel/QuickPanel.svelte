@@ -86,10 +86,20 @@
     let unlisten: (() => void) | undefined;
     let observed: Set<number> | null = new Set();
     void onEvent((event) => {
+      if (event.area === 'history') {
+        if (event.event.kind !== 'ping') {
+          void loadRecent();
+          void loadLastLink();
+        }
+        return;
+      }
       if (event.area !== 'upload' || event.event.kind !== 'stateChanged') {
         return;
       }
       const state = event.event.data;
+      if (state.status === 'done') {
+        void loadLastLink();
+      }
       observed?.add(state.id);
       const before = activeUploads.length;
       if (isActiveUpload(state)) {
