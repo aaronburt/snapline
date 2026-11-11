@@ -4,3 +4,15 @@ ui/dist/
 ui/coverage/
 third_party/
 *.log
+.env
+.env.*
+*.db
+*.db-wal
+*.db-shm
+*.bak
+*.dmp
+settings.toml
+*.pdb
+Thumbs.db
+.vs/
+.idea/
