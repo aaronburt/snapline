@@ -134,6 +134,10 @@ pub enum HistoryReq {
         #[ts(as = "i32")]
         id: i64,
     },
+    DeleteMany {
+        #[ts(as = "Vec<i32>")]
+        ids: Vec<i64>,
+    },
     CopyImage {
         #[ts(as = "i32")]
         id: i64,
@@ -179,6 +183,11 @@ pub enum HistoryResp {
     Delete {
         #[ts(as = "i32")]
         id: i64,
+    },
+    DeleteMany {
+        #[ts(as = "Vec<i32>")]
+        removed: Vec<i64>,
+        failed: usize,
     },
     CopyImage,
     ShowInFolder,

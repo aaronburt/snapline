@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -30,6 +31,10 @@ pub enum Event {
     Removed {
         #[ts(as = "i32")]
         id: i64,
+    },
+    RemovedMany {
+        #[ts(as = "Vec<i32>")]
+        ids: Vec<i64>,
     },
 }
 
@@ -145,6 +150,7 @@ impl HistoryService {
                 self.delete(&paths, id)?;
                 Ok(HistoryResp::Delete { id })
             }
+            HistoryReq::DeleteMany { ids } => self.delete_many(ids),
             HistoryReq::CopyImage { id } => {
                 let paths = self.paths()?;
                 let capture = self.capture(&paths, id)?;
@@ -242,10 +248,54 @@ impl HistoryService {
     }
 
     fn delete(&self, paths: &Paths, id: i64) -> Result<(), ServiceError> {
+        let mut repo = self.delete_repo(paths)?;
+        self.delete_entry(paths, &mut repo, id)
+    }
+
+    fn delete_repo(&self, paths: &Paths) -> Result<HistoryRepo, ServiceError> {
         if !paths.history_file.is_file() {
             return Err(ServiceError::NotFound);
         }
-        let mut repo = HistoryRepo::open_write(&paths.history_file).map_err(delete_error)?;
+        HistoryRepo::open_write(&paths.history_file).map_err(delete_error)
+    }
+
+    fn delete_many(&self, mut ids: Vec<i64>) -> Result<HistoryResp, ServiceError> {
+        if ids.is_empty() || ids.iter().any(|id| *id <= 0) {
+            return Err(ServiceError::Invalid(
+                "Select valid History items to delete.".to_owned(),
+            ));
+        }
+        let mut seen = HashSet::new();
+        ids.retain(|id| seen.insert(*id));
+        let paths = self.paths()?;
+        let noun = if ids.len() == 1 { "item" } else { "items" };
+        let message = format!(
+            "{} {noun} selected.\n\nFiles saved by Snapline go to the Recycle Bin. Original files added for upload stay where they are.",
+            ids.len()
+        );
+        let mut removed = Vec::new();
+        let mut failed = 0;
+        if self.host()?.confirm_delete(&message)? {
+            let mut repo = self.delete_repo(&paths)?;
+            for id in ids {
+                match self.delete_entry(&paths, &mut repo, id) {
+                    Ok(()) | Err(ServiceError::NotFound) => removed.push(id),
+                    Err(error) => {
+                        tracing::warn!(id, %error, "history item could not be deleted");
+                        failed += 1;
+                    }
+                }
+            }
+        }
+        Ok(HistoryResp::DeleteMany { removed, failed })
+    }
+
+    fn delete_entry(
+        &self,
+        paths: &Paths,
+        repo: &mut HistoryRepo,
+        id: i64,
+    ) -> Result<(), ServiceError> {
         let capture = repo
             .get(id)
             .map_err(delete_error)?
@@ -772,6 +822,60 @@ mod tests {
             host.calls(),
             vec!["confirm:named.png\n\nThe file goes to the Recycle Bin.".to_owned()]
         );
+    }
+
+    #[test]
+    fn bulk_delete_confirms_once_and_preserves_entries_that_cannot_be_recycled() {
+        use snapline_store::history::{BorrowedFile, Origin};
+
+        let fixture = fixture();
+        let (owned, path) = fixture.capture("kept.png", CaptureKind::Image, BASE);
+        let original = fixture._directory.path().join("original.txt");
+        fs::write(&original, b"original").expect("original file");
+        let borrowed = fixture
+            .repo()
+            .record_borrowed_files(&[BorrowedFile {
+                kind: CaptureKind::File,
+                origin: Origin::File,
+                path: original.to_string_lossy().into_owned(),
+                bytes: 8,
+                source_modified_ms: BASE,
+                created_at: BASE,
+            }])
+            .expect("borrowed file")[0];
+        let request = HistoryReq::DeleteMany {
+            ids: vec![owned, borrowed, owned],
+        };
+        assert_eq!(
+            fixture.service().handle(request.clone()).expect("cancel"),
+            HistoryResp::DeleteMany {
+                removed: vec![],
+                failed: 0
+            }
+        );
+        assert_eq!(fixture.host.calls().len(), 1);
+        assert!(fixture.repo().get(borrowed).expect("get").is_some());
+
+        let host = Arc::new(FakeHost {
+            confirmed: true,
+            fail_recycle: true,
+            ..FakeHost::default()
+        });
+        let service = HistoryService::with_host(&fixture.services, host.clone());
+        assert_eq!(
+            service.handle(request).expect("delete"),
+            HistoryResp::DeleteMany {
+                removed: vec![borrowed],
+                failed: 1
+            }
+        );
+        let calls = host.calls();
+        assert_eq!(calls.len(), 2);
+        assert!(calls[0].starts_with("confirm:2 items selected."));
+        assert_eq!(calls[1], format!("recycle:{}", path.display()));
+        assert!(fixture.repo().get(owned).expect("get").is_some());
+        assert!(fixture.repo().get(borrowed).expect("get").is_none());
+        assert_eq!(fs::read(original).expect("original remains"), b"original");
     }
 
     #[test]

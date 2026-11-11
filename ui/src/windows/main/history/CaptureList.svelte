@@ -18,12 +18,13 @@
   interface Props {
     items: HistoryCaptureDto[];
     activeUploads?: Record<number, UploadState>;
-    selectedId: number | null;
+    selectedIds: ReadonlySet<number>;
+    focusId: number | null;
     viewportHeight: number;
     viewportWidth?: number;
     scrollTop?: number;
     scroller?: HTMLDivElement;
-    onselect: (id: number) => void;
+    onselect: (id: number, event: MouseEvent | KeyboardEvent) => void;
     onopen: (id: number) => void;
     oncancel?: (id: number) => void;
   }
@@ -31,7 +32,8 @@
   let {
     items,
     activeUploads = {},
-    selectedId,
+    selectedIds,
+    focusId,
     viewportHeight,
     viewportWidth = 800,
     scrollTop = $bindable(0),
@@ -57,7 +59,7 @@
   const bottomPad = $derived(Math.max(0, (items.length - end) * ROW));
 
   $effect(() => {
-    const id = selectedId;
+    const id = focusId;
     if (id === null) {
       return;
     }
@@ -103,21 +105,22 @@
         {@const captured = formatCaptured(capture.createdAt)}
         {@const duration = capture.durationMs !== null ? formatDuration(capture.durationMs) : null}
         <tr
-          class:selected={capture.id === selectedId}
-          aria-current={capture.id === selectedId ? 'true' : undefined}
+          class:selected={selectedIds.has(capture.id)}
           data-capture-id={capture.id}
           tabindex="0"
-          onclick={() => onselect(capture.id)}
+          onclick={(event) => onselect(capture.id, event)}
           onkeydown={(event) => {
             if (event.target instanceof HTMLElement && event.target.closest('button')) {
               return;
             }
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault();
-              onselect(capture.id);
+              onselect(capture.id, event);
             }
           }}
-          ondblclick={() => onopen(capture.id)}
+          ondblclick={(event) => {
+            if (!event.ctrlKey && !event.metaKey && !event.shiftKey) onopen(capture.id);
+          }}
         >
           <td>
             <span class="file">
@@ -130,6 +133,7 @@
               {/if}
               <span class="file-label">
                 <span class="filename" title={capture.name}>{capture.name}</span>
+                {#if selectedIds.has(capture.id)}<span class="sr-only">Selected</span>{/if}
                 {#if compact}
                   <span class="metadata">
                     {type} · {captured}{#if duration}
@@ -260,6 +264,7 @@
   }
 
   tbody tr.selected {
+    background: var(--accentSoft);
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 
