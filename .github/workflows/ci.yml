@@ -39,8 +39,9 @@ jobs:
         run: cargo clippy --workspace --all-targets
       - name: Test
         run: cargo test --workspace -- --skip crash::tests::panic_child_process
+      - uses: taiki-e/install-action@cargo-deny
       - name: Cargo deny
-        uses: EmbarkStudios/cargo-deny-action@v2
+        run: cargo deny check
       - name: UI tests
         working-directory: ui
         run: npm test
