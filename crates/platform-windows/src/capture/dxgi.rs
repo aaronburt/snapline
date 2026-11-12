@@ -32,27 +32,34 @@ pub fn output_bounds() -> Vec<snapline_core::record_place::OutputBounds> {
     let Ok(factory) = (unsafe { CreateDXGIFactory1::<IDXGIFactory1>() }) else {
         return Vec::new();
     };
-    // SAFETY: the factory is live and index zero is the adapter ddagrab opens by default.
-    let Ok(adapter) = (unsafe { factory.EnumAdapters1(0) }) else {
-        return Vec::new();
-    };
     let mut outputs = Vec::new();
-    let mut index = 0_u32;
+    let mut adapter_index = 0_u32;
+    // Adapter zero is the one ddagrab opens; later adapters are listed so a screen on one of
+    // them is reported clearly and not as "off every screen".
     loop {
-        // SAFETY: the adapter is live and the output index advances until enumeration ends.
-        let Ok(output) = (unsafe { adapter.EnumOutputs(index) }) else {
+        // SAFETY: the factory is live and the adapter index advances until enumeration ends.
+        let Ok(adapter) = (unsafe { factory.EnumAdapters1(adapter_index) }) else {
             break;
         };
-        // SAFETY: the output is live and the descriptor is a live out-parameter.
-        if let Ok(desc) = unsafe { output.GetDesc() } {
-            if desc.AttachedToDesktop.as_bool() {
-                outputs.push(snapline_core::record_place::OutputBounds {
-                    index,
-                    bounds: rect_from(desc.DesktopCoordinates),
-                });
+        let mut index = 0_u32;
+        loop {
+            // SAFETY: the adapter is live and the output index advances until enumeration ends.
+            let Ok(output) = (unsafe { adapter.EnumOutputs(index) }) else {
+                break;
+            };
+            // SAFETY: the output is live and the descriptor is a live out-parameter.
+            if let Ok(desc) = unsafe { output.GetDesc() } {
+                if desc.AttachedToDesktop.as_bool() {
+                    outputs.push(snapline_core::record_place::OutputBounds {
+                        adapter: adapter_index,
+                        index,
+                        bounds: rect_from(desc.DesktopCoordinates),
+                    });
+                }
             }
+            index = index.saturating_add(1);
         }
-        index = index.saturating_add(1);
+        adapter_index = adapter_index.saturating_add(1);
     }
     outputs
 }

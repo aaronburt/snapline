@@ -256,6 +256,41 @@ pub fn maintain_history(services: &Services, startup: bool) -> Result<(), Servic
     Ok(())
 }
 
+/// Decides which upload events are worth a History write: every status change, and byte
+/// progress at most once per interval, so a big upload does not open the database hundreds of times.
+#[derive(Debug, Default)]
+pub struct PersistGate {
+    last: std::collections::HashMap<u64, (UploadStatus, Instant)>,
+}
+
+impl PersistGate {
+    const PROGRESS_INTERVAL: Duration = Duration::from_secs(2);
+
+    pub fn should_persist(&mut self, state: &UploadState) -> bool {
+        self.should_persist_at(state, Instant::now())
+    }
+
+    fn should_persist_at(&mut self, state: &UploadState, now: Instant) -> bool {
+        let finished = matches!(
+            state.status,
+            UploadStatus::Done | UploadStatus::Failed | UploadStatus::Cancelled
+        );
+        let write = match self.last.get(&state.id) {
+            Some((status, at)) => {
+                *status != state.status
+                    || now.saturating_duration_since(*at) >= Self::PROGRESS_INTERVAL
+            }
+            None => true,
+        };
+        if finished {
+            self.last.remove(&state.id);
+        } else if write {
+            self.last.insert(state.id, (state.status, now));
+        }
+        write
+    }
+}
+
 pub fn persist(services: &Services, state: &UploadState) {
     let Some(capture_id) = state.capture_id else {
         return;
@@ -714,6 +749,43 @@ pub fn run(action: &ActionId, services: &Services) -> Result<(), ServiceError> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn progress_ticks_are_written_at_most_once_per_interval() {
+        fn state(status: UploadStatus, sent: u64) -> UploadState {
+            UploadState {
+                id: 9,
+                capture_id: Some(1),
+                file_name: "a.png".to_owned(),
+                dest: "test".to_owned(),
+                run_id: None,
+                status,
+                cancellable: true,
+                progress_available: true,
+                sent,
+                total: 100,
+                link_batch: None,
+                attempts: 1,
+                link: None,
+                page_link: None,
+                deletion_link: None,
+                error: None,
+                retry_in_ms: None,
+            }
+        }
+        let mut gate = PersistGate::default();
+        let start = Instant::now();
+        assert!(gate.should_persist_at(&state(UploadStatus::Queued, 0), start));
+        assert!(gate.should_persist_at(&state(UploadStatus::Uploading, 0), start));
+        for sent in 1..50 {
+            let at = start + Duration::from_millis(sent * 10);
+            assert!(!gate.should_persist_at(&state(UploadStatus::Uploading, sent), at));
+        }
+        let later = start + Duration::from_secs(3);
+        assert!(gate.should_persist_at(&state(UploadStatus::Uploading, 60), later));
+        assert!(gate.should_persist_at(&state(UploadStatus::Done, 100), later));
+        assert!(gate.last.is_empty());
+    }
     use std::path::PathBuf;
     use std::sync::Mutex;
     use std::time::Duration;

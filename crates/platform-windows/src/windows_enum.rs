@@ -125,7 +125,8 @@ fn is_cloaked(hwnd: HWND) -> bool {
     status.is_ok() && cloaked != 0
 }
 
-fn frame_bounds(hwnd: HWND) -> Rect {
+/// The visible bounds of a window, without the invisible resize border `GetWindowRect` includes.
+pub fn frame_bounds(hwnd: HWND) -> Rect {
     let mut rect = RECT::default();
     // SAFETY: the attribute and out-parameter are the documented types for DWMWA_EXTENDED_FRAME_BOUNDS.
     let status = unsafe {

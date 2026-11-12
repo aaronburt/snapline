@@ -2419,6 +2419,7 @@ mod tests {
     fn a_secondary_screen_uses_its_own_output_and_relative_offsets() {
         let outputs = vec![
             OutputBounds {
+                adapter: 0,
                 index: 0,
                 bounds: snapline_core::geometry::Rect::new(
                     snapline_core::geometry::Px(1920),
@@ -2428,6 +2429,7 @@ mod tests {
                 ),
             },
             OutputBounds {
+                adapter: 0,
                 index: 2,
                 bounds: snapline_core::geometry::Rect::new(
                     snapline_core::geometry::Px(-30),
@@ -2448,6 +2450,7 @@ mod tests {
     fn an_area_spanning_two_screens_fails_with_a_clear_message_and_no_ffmpeg() {
         let outputs = vec![
             OutputBounds {
+                adapter: 0,
                 index: 0,
                 bounds: snapline_core::geometry::Rect::new(
                     snapline_core::geometry::Px(-1620),
@@ -2457,6 +2460,7 @@ mod tests {
                 ),
             },
             OutputBounds {
+                adapter: 0,
                 index: 1,
                 bounds: snapline_core::geometry::Rect::new(
                     snapline_core::geometry::Px(300),
