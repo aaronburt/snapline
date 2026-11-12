@@ -885,6 +885,7 @@ impl WorkflowRunner {
             Err(error) => {
                 if (context.explicit_capture_output || context.saved_file.is_some())
                     && !matches!(error.kind, workflow::RunErrorKind::Cancelled { .. })
+                    && !crate::recording::was_reported(&error.to_string())
                 {
                     self.inner
                         .ports

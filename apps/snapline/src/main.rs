@@ -25,7 +25,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 
-use ::windows::Win32::Foundation::{HWND, RECT};
+use ::windows::Win32::Foundation::HWND;
 use ::windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
 use ::windows::Win32::System::Ole::CF_HDROP;
 use ::windows::Win32::System::Threading::CREATE_NO_WINDOW;
@@ -74,7 +74,7 @@ use tauri::{Manager, RunEvent};
 use windows::WindowManager;
 
 use ::windows::Win32::Foundation::POINT;
-use ::windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect};
+use ::windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 struct InputPort(InputHandle);
 
@@ -565,16 +565,7 @@ fn current_overlay_theme() -> OverlayTheme {
 fn active_window_target() -> Result<PickedTarget, recording::RecordError> {
     let id = CaptureBackend::foreground_window().ok_or(recording::RecordError::NoTarget)?;
     let hwnd = HWND(id.get() as *mut c_void);
-    let mut rect = RECT::default();
-    // SAFETY: the handle belongs to the foreground window and `rect` is a writable out-parameter.
-    unsafe { GetWindowRect(hwnd, &mut rect) }
-        .map_err(|error| recording::RecordError::Invalid(error.to_string()))?;
-    let bounds = Rect::new(
-        Px(rect.left),
-        Px(rect.top),
-        Px(rect.right - rect.left),
-        Px(rect.bottom - rect.top),
-    );
+    let bounds = snapline_win::windows_enum::frame_bounds(hwnd);
     if bounds.is_empty() {
         return Err(recording::RecordError::NoTarget);
     }
@@ -1233,12 +1224,15 @@ fn main() -> anyhow::Result<()> {
                 let persist_services = services.clone();
                 std::thread::spawn(move || {
                     let mut batches = IntakeLinkBatches::default();
+                    let mut gate = snapline_services::uploads::PersistGate::default();
                     while let Ok(event) = upload_events.recv() {
                         if let snapline_services::AppEvent::Upload(
                             snapline_services::uploads::Event::StateChanged(state),
                         ) = &event
                         {
-                            snapline_services::uploads::persist(&persist_services, state);
+                            if gate.should_persist(state) {
+                                snapline_services::uploads::persist(&persist_services, state);
+                            }
                             if state.status == snapline_services::dto::upload::UploadStatus::Done {
                                 if let Some(link) = &state.link {
                                     if let Ok(runner) =

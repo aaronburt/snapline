@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -121,7 +122,7 @@ fn open(app: &AppHandle, tray: TrayRect) -> Option<(PanelHandle, Services)> {
     let activate_app = app.clone();
     let activate_services = services.clone();
     let on_activate = Box::new(move |activation: Activation| {
-        handle_activation(&activate_app, &activate_services, activation);
+        handle_activation(&activate_app, &activate_services, activation)
     });
     let on_closed = Box::new(|| {
         with_slot(|slot| slot.closed_at = Some(Instant::now()));
@@ -153,7 +154,8 @@ fn to_i32(value: f64) -> i32 {
         .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32
 }
 
-fn handle_activation(app: &AppHandle, services: &Services, activation: Activation) {
+/// Returns whether the action went through (only the copy can fail in a way the panel shows).
+fn handle_activation(app: &AppHandle, services: &Services, activation: Activation) -> bool {
     match activation {
         Activation::OpenMain | Activation::ViewAll | Activation::Recent(_) => {
             open_main(app, "/history");
@@ -164,17 +166,21 @@ fn handle_activation(app: &AppHandle, services: &Services, activation: Activatio
             std::thread::spawn(move || run_native_panel_action(&services, action));
         }
         Activation::CopyLink => {
-            let services = services.clone();
-            std::thread::spawn(move || {
-                if let Err(error) = snapline_services::shell_actions::run(
-                    snapline_services::shell_actions::COPY_LAST_LINK,
-                    &services,
-                ) {
-                    tracing::warn!(%error, "could not copy the last link");
-                }
+            // The panel shows "Copied" only if the link really reached the clipboard.
+            let copied = snapline_services::shell_actions::installed().and_then(|host| {
+                snapline_services::shell_actions::copy_last_link(services, host.as_ref())
             });
+            return match copied {
+                Ok(copied) => copied,
+                Err(error) => {
+                    tracing::warn!(%error, "could not copy the last link");
+                    snapline_services::actions::notify_failure(&error, services);
+                    false
+                }
+            };
         }
     }
+    true
 }
 
 fn open_main(app: &AppHandle, route: &str) {
@@ -198,31 +204,76 @@ fn utc_offset_minutes() -> i64 {
         .unwrap_or(0)
 }
 
+const REFRESH_EVERY: Duration = Duration::from_millis(400);
+
+/// What the panel shows, without the thumbnails, so a refresh only repaints when it changed.
+#[derive(PartialEq)]
+struct DataKey {
+    recent: Vec<(i64, String, String, Option<String>, bool)>,
+    uploads: Vec<UploadView>,
+    link: Option<String>,
+}
+
+fn data_key(data: &PanelData) -> DataKey {
+    DataKey {
+        recent: data
+            .recent
+            .iter()
+            .map(|recent| {
+                (
+                    recent.id,
+                    recent.name.clone(),
+                    recent.time.clone(),
+                    recent.duration.clone(),
+                    recent.uploaded,
+                )
+            })
+            .collect(),
+        uploads: data.uploads.clone(),
+        link: data.link.clone(),
+    }
+}
+
+/// Fills the panel after it opens and keeps it current (upload progress, new captures) until it
+/// closes.
 fn populate(handle: &PanelHandle, services: &Services) {
-    if !handle.is_open() {
-        return;
-    }
-    let mut data = load_data(services);
-    handle.update(data.clone());
-    if data.recent.is_empty() || !handle.is_open() {
-        return;
-    }
     let thumbs = services.thumbs();
+    let mut cache: HashMap<i64, snapline_core::image::Image> = HashMap::new();
     let mut codec = None;
-    for recent in &mut data.recent {
-        if !handle.is_open() {
-            return;
+    let mut last: Option<DataKey> = None;
+    while handle.is_open() {
+        let mut data = load_data(services);
+        let key = data_key(&data);
+        if last.as_ref() != Some(&key) {
+            if last.is_none() {
+                // Paint the text straight away; thumbnails follow once they are decoded.
+                handle.update(data.clone());
+            }
+            let mut any_thumb = false;
+            for recent in &mut data.recent {
+                if !handle.is_open() {
+                    return;
+                }
+                if let Some(image) = cache.get(&recent.id) {
+                    recent.thumb = Some(image.clone());
+                } else if let Ok(thumbnail) = thumbs.get_stored(recent.id) {
+                    let Ok(codec) = codec.get_or_insert_with(snapline_win::wic::WicCodec::new)
+                    else {
+                        break;
+                    };
+                    if let Ok(image) = codec.decode(&thumbnail.bytes) {
+                        cache.insert(recent.id, image.clone());
+                        recent.thumb = Some(image);
+                    }
+                }
+                any_thumb |= recent.thumb.is_some();
+            }
+            if any_thumb || last.is_some() {
+                handle.update(data);
+            }
+            last = Some(key);
         }
-        let Ok(thumbnail) = thumbs.get_stored(recent.id) else {
-            continue;
-        };
-        let Ok(codec) = codec.get_or_insert_with(snapline_win::wic::WicCodec::new) else {
-            return;
-        };
-        recent.thumb = codec.decode(&thumbnail.bytes).ok();
-    }
-    if data.recent.iter().any(|recent| recent.thumb.is_some()) {
-        handle.update(data);
+        std::thread::sleep(REFRESH_EVERY);
     }
 }
 

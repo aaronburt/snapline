@@ -33,12 +33,13 @@ use windows::Win32::UI::HiDpi::{
     MDT_EFFECTIVE_DPI,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_DOWN, VK_ESCAPE,
-    VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+    GetAsyncKeyState, GetKeyState, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_DOWN,
+    VK_ESCAPE, VK_LBUTTON, VK_LEFT, VK_RBUTTON, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB,
+    VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetForegroundWindow, GetMessageW,
-    GetWindowLongPtrW, GetWindowThreadProcessId, KillTimer, LoadCursorW, PostMessageW,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorPos, GetForegroundWindow,
+    GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId, KillTimer, LoadCursorW, PostMessageW,
     PostQuitMessage, RegisterClassExW, SetCursor, SetForegroundWindow, SetTimer, SetWindowPos,
     ShowWindow, TranslateMessage, UnregisterClassW, GWLP_USERDATA, HTCLIENT, IDC_ARROW, IDC_HAND,
     MA_ACTIVATE, MSG, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW, WA_INACTIVE, WM_ACTIVATE, WM_APP,
@@ -60,6 +61,8 @@ static NEXT_CLASS: AtomicU32 = AtomicU32::new(1);
 const SHADOW: f32 = 18.0;
 const SHADOW_STEPS: i32 = 9;
 const TIMER_COPIED: usize = 2;
+const TIMER_WATCH: usize = 3;
+const WATCH_MS: u32 = 100;
 const WM_DATA: u32 = WM_APP + 1;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
@@ -109,7 +112,8 @@ pub enum Activation {
     CopyLink,
 }
 
-pub type ActivateFn = Box<dyn Fn(Activation) + Send>;
+/// Returns whether the action went through; the panel only shows "Copied" when it did.
+pub type ActivateFn = Box<dyn Fn(Activation) -> bool + Send>;
 pub type PlaceFn = Box<dyn Fn(i32, i32) -> (i32, i32) + Send>;
 
 pub struct PanelRequest {
@@ -1052,11 +1056,21 @@ impl Context {
         )?;
         self.surface = Some(surface);
         self.present()?;
+        // Showing and focusing send messages straight back to the window procedure, which would
+        // build a second `&mut Context` while this one is live. Route them to the default
+        // procedure instead and note the activation afterwards.
+        let _quiet = HandlerGuard::enter();
         // SAFETY: the window handle is a live top level window owned by this thread.
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_SHOW);
         }
         self.focus();
+        drop(_quiet);
+        // SAFETY: reads the foreground window and starts a timer owned by this window.
+        unsafe {
+            self.activated = GetForegroundWindow() == self.hwnd;
+            SetTimer(Some(self.hwnd), TIMER_WATCH, WATCH_MS, None);
+        }
         tracing::info!("native quick panel ready");
         Ok(())
     }
@@ -1201,14 +1215,16 @@ impl Context {
             },
             Item::Copy => Activation::CopyLink,
         };
-        (self.on_activate)(activation);
+        let done = (self.on_activate)(activation);
         if activation == Activation::CopyLink {
-            self.copied_at = Some(Instant::now());
-            // SAFETY: the one shot timer is owned by this window.
-            unsafe {
-                SetTimer(Some(self.hwnd), TIMER_COPIED, COPIED_MS + 50, None);
+            if done {
+                self.copied_at = Some(Instant::now());
+                // SAFETY: the one shot timer is owned by this window.
+                unsafe {
+                    SetTimer(Some(self.hwnd), TIMER_COPIED, COPIED_MS + 50, None);
+                }
+                self.redraw();
             }
-            self.redraw();
         } else {
             self.close();
         }
@@ -1224,6 +1240,37 @@ impl Context {
         crate::destroy_window(hwnd);
         // SAFETY: ends the message loop of this dedicated thread.
         unsafe { PostQuitMessage(0) };
+    }
+
+    /// Windows can refuse to make the panel the foreground window (another app holds the
+    /// foreground lock, a full screen app is running). Then it never receives a deactivation, so
+    /// a click anywhere outside it closes it instead.
+    fn close_on_outside_click(&mut self) {
+        if self.activated || self.hwnd.is_invalid() {
+            return;
+        }
+        // SAFETY: reads the asynchronous state of the mouse buttons.
+        let pressed = unsafe {
+            GetAsyncKeyState(i32::from(VK_LBUTTON.0)) < 0
+                || GetAsyncKeyState(i32::from(VK_RBUTTON.0)) < 0
+        };
+        if !pressed {
+            return;
+        }
+        let mut point = windows::Win32::Foundation::POINT::default();
+        // SAFETY: the point is a live out-parameter.
+        if unsafe { GetCursorPos(&mut point) }.is_err() {
+            return;
+        }
+        let (x, y, width, height) = self.window_rect();
+        let pad = to_px(self.pad, self.scale);
+        let inside = point.x >= x + pad
+            && point.x < x + width - pad
+            && point.y >= y + pad
+            && point.y < y + height - pad;
+        if !inside {
+            self.close();
+        }
     }
 
     fn adopt_data(&mut self) {
@@ -1370,7 +1417,9 @@ impl Context {
                 }
             }
             WM_TIMER => {
-                if wparam.0 == TIMER_COPIED {
+                if wparam.0 == TIMER_WATCH {
+                    self.close_on_outside_click();
+                } else if wparam.0 == TIMER_COPIED {
                     // SAFETY: stops the one shot timer owned by this window.
                     unsafe {
                         let _ = KillTimer(Some(hwnd), TIMER_COPIED);
@@ -1430,6 +1479,32 @@ impl Context {
     }
 }
 
+thread_local! {
+    static IN_HANDLER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// While held, messages sent to the panel by its own calls (resizing, showing, focusing) go to the
+/// default window procedure, so the context is never borrowed mutably twice.
+struct HandlerGuard {
+    entered: bool,
+}
+
+impl HandlerGuard {
+    fn enter() -> Self {
+        Self {
+            entered: !IN_HANDLER.replace(true),
+        }
+    }
+}
+
+impl Drop for HandlerGuard {
+    fn drop(&mut self) {
+        if self.entered {
+            IN_HANDLER.set(false);
+        }
+    }
+}
+
 unsafe extern "system" fn window_proc(
     hwnd: HWND,
     message: u32,
@@ -1442,7 +1517,13 @@ unsafe extern "system" fn window_proc(
         // SAFETY: windows created before the context is attached use the default procedure.
         return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
     }
-    // SAFETY: the pointer was installed by Context::create_window and remains valid.
+    let guard = HandlerGuard::enter();
+    if !guard.entered {
+        // SAFETY: a message sent while the context is already being used takes the default path.
+        return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
+    }
+    // SAFETY: the pointer was installed by Context::create_window and remains valid, and the guard
+    // ensures this is the only live mutable borrow on this thread.
     let context = unsafe { &mut *pointer };
     context.handle(hwnd, message, wparam, lparam)
 }

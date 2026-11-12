@@ -143,7 +143,7 @@ impl Request {
     }
 
     pub fn multipart(self, form: Multipart) -> Self {
-        let (content_type, bytes) = form.encode();
+        let (content_type, bytes) = form.into_encoded();
         self.body(&content_type, bytes)
     }
 
@@ -211,10 +211,26 @@ impl Multipart {
         self
     }
 
-    fn encode(&self) -> (String, Vec<u8>) {
+    fn into_encoded(self) -> (String, Vec<u8>) {
         const BOUNDARY: &str = "----SnaplineFormBoundaryJ7x2Vq9mR4tL";
-        let mut body = Vec::new();
-        for part in &self.parts {
+        let capacity = self
+            .parts
+            .iter()
+            .map(|part| match part {
+                MultipartPart::Text { name, value } => name.len() + value.len() + 128,
+                MultipartPart::File {
+                    name,
+                    file_name,
+                    content_type,
+                    bytes,
+                } => name.len() + file_name.len() + content_type.len() + bytes.len() + 192,
+            })
+            .sum::<usize>()
+            + BOUNDARY.len()
+            + 8;
+        let mut body = Vec::with_capacity(capacity);
+        // Each part is dropped as soon as it is copied, so its bytes are not held twice for long.
+        for part in self.parts {
             body.extend_from_slice(b"--");
             body.extend_from_slice(BOUNDARY.as_bytes());
             body.extend_from_slice(b"\r\n");
@@ -222,7 +238,7 @@ impl Multipart {
                 MultipartPart::Text { name, value } => {
                     let header = format!(
                         "Content-Disposition: form-data; name=\"{}\"\r\n\r\n",
-                        escape_field(name)
+                        escape_field(&name)
                     );
                     body.extend_from_slice(header.as_bytes());
                     body.extend_from_slice(value.as_bytes());
@@ -235,12 +251,12 @@ impl Multipart {
                 } => {
                     let header = format!(
                         "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\nContent-Type: {}\r\n\r\n",
-                        escape_field(name),
-                        escape_field(file_name),
-                        escape_field(content_type)
+                        escape_field(&name),
+                        escape_field(&file_name),
+                        escape_field(&content_type)
                     );
                     body.extend_from_slice(header.as_bytes());
-                    body.extend_from_slice(bytes);
+                    body.extend_from_slice(&bytes);
                 }
             }
             body.extend_from_slice(b"\r\n");
@@ -420,7 +436,8 @@ impl HttpClient {
 }
 
 impl HttpTransport for HttpClient {
-    fn execute(&self, request: Request) -> Result<Response, UploadError> {
+    fn execute(&self, mut request: Request) -> Result<Response, UploadError> {
+        let body = std::mem::take(&mut request.body);
         let mut builder = ureq::http::Request::builder()
             .method(request.method().to_ureq())
             .uri(request.url());
@@ -428,7 +445,7 @@ impl HttpTransport for HttpClient {
             builder = builder.header(name.as_str(), value.as_str());
         }
         let built = builder
-            .body(request.body_bytes().to_vec())
+            .body(body)
             .map_err(|_| UploadError::Permanent("The request could not be built.".to_owned()))?;
         let response = self
             .agent

@@ -1,11 +1,11 @@
 use thiserror::Error;
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HWND, POINT};
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DestroyMenu, DestroyWindow, GetCursorPos,
-    GetDesktopWindow, GetForegroundWindow, SetForegroundWindow, TrackPopupMenuEx, MF_SEPARATOR,
-    MF_STRING, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WS_EX_TOOLWINDOW,
-    WS_POPUP,
+    GetDesktopWindow, GetForegroundWindow, PostMessageW, SetForegroundWindow, TrackPopupMenuEx,
+    MF_SEPARATOR, MF_STRING, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WINDOW_EX_STYLE,
+    WM_NULL, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +134,9 @@ pub fn choose_from(labels: &[String]) -> Result<Option<usize>, MenuError> {
             None,
         )
     };
+    // SAFETY: the documented follow-up to TrackPopupMenu, so the menu closes on an outside click
+    // even when the owner was not made the foreground window.
+    let _ = unsafe { PostMessageW(Some(owner), WM_NULL, WPARAM(0), LPARAM(0)) };
     if let Some(helper) = helper {
         destroy(helper);
     }

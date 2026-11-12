@@ -51,6 +51,16 @@ pub struct HotkeysRuntime {
     paused: bool,
     applied: bool,
     prtsc_applied: bool,
+    prtsc_owned: bool,
+}
+
+/// Stored in the settings when the PrtSc registry value did not exist before Snapline changed it,
+/// so "absent" can be told apart from "Snapline never touched it" (no stored value).
+pub const PRTSC_WAS_ABSENT: u32 = u32::MAX;
+
+/// The value to put back in the registry for a stored restore value (`None` removes it).
+pub fn prtsc_restore_value(stored: u32) -> Option<u32> {
+    (stored != PRTSC_WAS_ABSENT).then_some(stored)
 }
 
 impl Default for HotkeysRuntime {
@@ -67,6 +77,7 @@ impl Default for HotkeysRuntime {
             paused: false,
             applied: false,
             prtsc_applied: false,
+            prtsc_owned: false,
         }
     }
 }
@@ -170,8 +181,9 @@ impl HotkeysService {
         };
         let failures: Vec<Chord> = external.iter().map(|blocked| blocked.chord).collect();
         let full = plan.with_external(&failures);
-        {
+        let blocked_changed = {
             let mut runtime = self.runtime()?;
+            let changed = runtime.blocked != full.blocked;
             runtime.entries = entries;
             runtime.bindings = if runtime.paused {
                 Vec::new()
@@ -182,8 +194,14 @@ impl HotkeysService {
             runtime.external = failures;
             runtime.labels = labels;
             runtime.applied = true;
-        }
-        if notify && settings.hotkeys.warn_about_clashes && !full.blocked.is_empty() {
+            changed
+        };
+        // Tell the user once per change in what is blocked, not on every settings save.
+        if notify
+            && blocked_changed
+            && settings.hotkeys.warn_about_clashes
+            && !full.blocked.is_empty()
+        {
             let off = full
                 .blocked
                 .iter()
@@ -196,9 +214,13 @@ impl HotkeysService {
 
     fn sync_prtsc(&self) -> Result<(), ServiceError> {
         let settings = self.services.settings_snapshot()?;
-        let (registry, applied) = {
+        let (registry, applied, owned) = {
             let runtime = self.runtime()?;
-            (runtime.prtsc.clone(), runtime.prtsc_applied)
+            (
+                runtime.prtsc.clone(),
+                runtime.prtsc_applied,
+                runtime.prtsc_owned,
+            )
         };
         let Some(registry) = registry else {
             return Ok(());
@@ -213,20 +235,32 @@ impl HotkeysService {
                 return Ok(());
             }
             if stored.is_some() {
+                // Snapline changed the value in an earlier session and still remembers the original.
                 let _ = registry.enable()?;
+                self.set_prtsc_state(true, true)?;
             } else if registry.current()? == Some(0) {
-                self.runtime()?.prtsc_applied = true;
-                return Ok(());
+                // The user already turned the Snipping Tool shortcut off. That is theirs to keep.
+                self.set_prtsc_state(true, false)?;
             } else {
-                let previous = registry.enable()?;
-                self.store_restore(previous)?;
+                let previous = registry.current()?;
+                self.store_restore(Some(previous.unwrap_or(PRTSC_WAS_ABSENT)))?;
+                let _ = registry.enable()?;
+                self.set_prtsc_state(true, true)?;
             }
-            self.runtime()?.prtsc_applied = true;
-        } else if applied || stored.is_some() {
-            registry.restore(stored)?;
+        } else if owned || stored.is_some() {
+            registry.restore(stored.and_then(prtsc_restore_value))?;
             self.store_restore(None)?;
-            self.runtime()?.prtsc_applied = false;
+            self.set_prtsc_state(false, false)?;
+        } else if applied {
+            self.set_prtsc_state(false, false)?;
         }
+        Ok(())
+    }
+
+    fn set_prtsc_state(&self, applied: bool, owned: bool) -> Result<(), ServiceError> {
+        let mut runtime = self.runtime()?;
+        runtime.prtsc_applied = applied;
+        runtime.prtsc_owned = owned;
         Ok(())
     }
 
@@ -880,7 +914,7 @@ mod tests {
                 .hotkeys
                 .restore
                 .print_screen_key_for_snipping_enabled,
-            None
+            Some(PRTSC_WAS_ABSENT)
         );
         services
             .update_settings(&serde_json::json!({
@@ -889,6 +923,32 @@ mod tests {
             .expect("settings");
         services.hotkeys().on_settings_changed().expect("restore");
         assert_eq!(*registry.value.lock().expect("value"), None);
+    }
+
+    #[test]
+    fn prtsc_already_off_is_left_alone_when_the_takeover_ends() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let registry = Arc::new(FakeRegistry {
+            value: Mutex::new(Some(0)),
+        });
+        let services = services(directory.path()).with_prtsc_registry(registry.clone());
+        services.hotkeys().on_settings_changed().expect("enable");
+        assert_eq!(
+            services
+                .settings_snapshot()
+                .expect("settings")
+                .hotkeys
+                .restore
+                .print_screen_key_for_snipping_enabled,
+            None
+        );
+        services
+            .update_settings(&serde_json::json!({
+                "hotkeys": { "take_over_prtsc": false }
+            }))
+            .expect("settings");
+        services.hotkeys().on_settings_changed().expect("end");
+        assert_eq!(*registry.value.lock().expect("value"), Some(0));
     }
 
     #[test]

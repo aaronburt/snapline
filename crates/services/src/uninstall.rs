@@ -131,8 +131,9 @@ pub fn cleanup(host: &dyn UninstallHost, paths: &Paths) -> UninstallReport {
         report.run_value_removed = true;
     }
 
-    if let Some(previous) = previous_prtsc {
-        if let Err(error) = host.restore_prtsc(previous) {
+    // Only a value Snapline itself changed is put back; a missing stored value means it never did.
+    if let Some(stored) = previous_prtsc.flatten() {
+        if let Err(error) = host.restore_prtsc(crate::hotkeys::prtsc_restore_value(stored)) {
             report.failures.push(error.to_string());
         } else {
             report.prtsc_restored = true;
@@ -435,10 +436,18 @@ mod tests {
 
     #[test]
     fn restores_prtsc_absence_exactly() {
-        let fixture = fixture(Some(None));
+        let fixture = fixture(Some(Some(crate::hotkeys::PRTSC_WAS_ABSENT)));
         let report = cleanup(&fixture.host, &fixture.paths);
         assert!(report.succeeded());
         assert_eq!(fixture.host.state_mut().prtsc_previous, Some(None));
+    }
+
+    #[test]
+    fn leaves_prtsc_alone_when_snapline_never_changed_it() {
+        let fixture = fixture(Some(None));
+        let report = cleanup(&fixture.host, &fixture.paths);
+        assert!(report.succeeded());
+        assert_eq!(fixture.host.state_mut().prtsc_previous, None);
     }
 
     #[test]
@@ -537,7 +546,7 @@ mod tests {
         let second = cleanup(&fixture.host, &fixture.paths);
         assert!(second.succeeded());
         assert!(second.run_value_removed);
-        assert!(second.prtsc_restored);
+        assert!(!second.prtsc_restored);
         assert!(second.app_id_removed);
         assert!(second.failures.is_empty());
     }
@@ -559,10 +568,10 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_settings_file_still_removes_the_prtsc_value() {
+    fn a_missing_settings_file_leaves_the_prtsc_value_alone() {
         let fixture = fixture(None);
         let report = cleanup(&fixture.host, &fixture.paths);
         assert!(report.succeeded());
-        assert_eq!(fixture.host.state_mut().prtsc_previous, Some(None));
+        assert_eq!(fixture.host.state_mut().prtsc_previous, None);
     }
 }

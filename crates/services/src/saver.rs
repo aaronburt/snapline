@@ -4,7 +4,7 @@ use std::sync::Arc;
 use snapline_core::image::{Image, ImageFormat};
 use snapline_core::naming::{self, NameContext, NameFormat, TokenSource};
 use snapline_core::ports::{
-    Clipboard, Clock, CodecError, ImageCodec, NoticeButton, Notifier, RichNotice, Sound,
+    Clipboard, Clock, CodecError, ImageCodec, Notice, NoticeButton, Notifier, RichNotice, Sound,
 };
 use snapline_store::history::{CaptureId, CaptureKind, HistoryRepo, NewCapture};
 use snapline_store::io;
@@ -269,19 +269,42 @@ impl Saver {
         }
 
         let created_at = now.unix_timestamp().saturating_mul(1000) + i64::from(now.millisecond());
-        let id = repo
-            .record(NewCapture {
-                kind: CaptureKind::Image,
-                path: path.to_string_lossy().into_owned(),
-                bytes,
-                width: Some(i64::from(image.width())),
-                height: Some(i64::from(image.height())),
-                duration_ms: None,
-                source_app: request.source_app.clone(),
-                created_at,
-                ocr_text: None,
-            })
-            .map_err(|error| SaveError::History(error.to_string()))?;
+        let id = repo.record(NewCapture {
+            kind: CaptureKind::Image,
+            path: path.to_string_lossy().into_owned(),
+            bytes,
+            width: Some(i64::from(image.width())),
+            height: Some(i64::from(image.height())),
+            duration_ms: None,
+            source_app: request.source_app.clone(),
+            created_at,
+            ocr_text: None,
+        });
+        let id = match id {
+            Ok(id) => id,
+            Err(error) => {
+                // The image is already on disk. Keep it, and tell the user where it is, rather
+                // than failing as if nothing had been saved.
+                tracing::warn!(%error, "the capture could not be added to History");
+                if general.notifications && !request.quiet {
+                    self.ports.notifier.toast(Notice::new(
+                        "Saved, but not added to History",
+                        format!("{} is in {}", file_name, folder.display()),
+                    ));
+                }
+                return Ok(SaveOutcome {
+                    capture_id: None,
+                    path: Some(path),
+                    file_name: Some(file_name),
+                    bytes,
+                    width: image.width(),
+                    height: image.height(),
+                    copied,
+                    saved: true,
+                    next_counter: Some(next_counter),
+                });
+            }
+        };
 
         let thumbnail = match self.write_thumbnail(id, &image, quality) {
             Ok(path) => Some(path),

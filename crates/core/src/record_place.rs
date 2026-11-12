@@ -4,6 +4,8 @@ use crate::geometry::{Px, Rect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutputBounds {
+    /// Which graphics adapter drives the screen; FFmpeg's screen capture only opens adapter 0.
+    pub adapter: u32,
     pub index: u32,
     pub bounds: Rect,
 }
@@ -22,9 +24,14 @@ pub enum PlaceError {
     OffScreen,
     #[error("The recording area spans more than one screen. Choose an area on a single screen.")]
     SpansScreens,
+    #[error("This screen is driven by a different graphics adapter, which screen recording cannot capture yet. Record a screen on the main adapter instead.")]
+    OtherAdapter,
     #[error("The recording area is too small to record.")]
     TooSmall,
 }
+
+/// Spill onto another screen above one part in this many of the area counts as spanning.
+const SPAN_LIMIT_DENOMINATOR: i64 = 20;
 
 pub fn place(rect: Rect, outputs: &[OutputBounds]) -> Result<Placement, PlaceError> {
     let rect = rect.normalized();
@@ -32,8 +39,10 @@ pub fn place(rect: Rect, outputs: &[OutputBounds]) -> Result<Placement, PlaceErr
         return Err(PlaceError::Empty);
     }
     let mut best: Option<(&OutputBounds, Rect)> = None;
+    let mut total_overlap = 0_i64;
     for output in outputs {
         if let Some(overlap) = rect.intersection(output.bounds) {
+            total_overlap += overlap.area();
             let better = best
                 .as_ref()
                 .is_none_or(|(_, current)| overlap.area() > current.area());
@@ -45,9 +54,17 @@ pub fn place(rect: Rect, outputs: &[OutputBounds]) -> Result<Placement, PlaceErr
     let Some((output, overlap)) = best else {
         return Err(PlaceError::OffScreen);
     };
-    if overlap != rect {
+    // A sliver on a neighbouring screen (a window's invisible border, say) does not count as
+    // spanning; a real share of the area on a second screen does.
+    let spill = total_overlap - overlap.area();
+    if spill * SPAN_LIMIT_DENOMINATOR > rect.area() {
         return Err(PlaceError::SpansScreens);
     }
+    if output.adapter != 0 {
+        return Err(PlaceError::OtherAdapter);
+    }
+    // Anything hanging off the desktop is cropped to the screen it mostly sits on.
+    let rect = overlap;
     let width = rect.width.get() & !1;
     let height = rect.height.get() & !1;
     if width <= 0 || height <= 0 {
@@ -75,24 +92,29 @@ mod tests {
     fn desk() -> Vec<OutputBounds> {
         vec![
             OutputBounds {
+                adapter: 0,
                 index: 0,
                 bounds: rect(0, 0, 1920, 1080),
             },
             OutputBounds {
+                adapter: 0,
                 index: 1,
                 bounds: rect(-1920, 0, 1920, 1080),
             },
             OutputBounds {
+                adapter: 0,
                 index: 2,
                 bounds: rect(1920, 0, 1920, 1080),
             },
             OutputBounds {
+                adapter: 0,
                 index: 3,
                 bounds: rect(0, -1440, 2560, 1440),
             },
             OutputBounds {
+                adapter: 0,
                 index: 4,
-                bounds: rect(2560, -300, 3840, 2160),
+                bounds: rect(3840, -300, 3840, 2160),
             },
         ]
     }
@@ -127,7 +149,7 @@ mod tests {
 
     #[test]
     fn a_high_dpi_screen_uses_physical_pixels() {
-        let placed = place(rect(2560, -300, 3840, 2160), &desk()).expect("place");
+        let placed = place(rect(3840, -300, 3840, 2160), &desk()).expect("place");
         assert_eq!(placed.output_index, 4);
         assert_eq!(placed.rect, rect(0, 0, 3840, 2160));
     }
@@ -143,6 +165,30 @@ mod tests {
         assert_eq!(
             place(rect(1800, 100, 400, 300), &desk()),
             Err(PlaceError::SpansScreens)
+        );
+    }
+
+    #[test]
+    fn a_window_border_spilling_onto_a_neighbour_is_cropped_not_rejected() {
+        let placed = place(rect(1912, -8, 1936, 1096), &desk()).expect("place");
+        assert_eq!(placed.output_index, 2);
+        assert_eq!(placed.rect, rect(0, 0, 1920, 1080));
+    }
+
+    #[test]
+    fn an_area_hanging_off_the_desktop_is_cropped_to_its_screen() {
+        let placed = place(rect(-8, -8, 1936, 1096), &desk()).expect("place");
+        assert_eq!(placed.output_index, 0);
+        assert_eq!(placed.rect, rect(0, 0, 1920, 1080));
+    }
+
+    #[test]
+    fn a_screen_on_another_adapter_gets_a_clear_message() {
+        let mut outputs = desk();
+        outputs[2].adapter = 1;
+        assert_eq!(
+            place(rect(2020, 100, 800, 600), &outputs),
+            Err(PlaceError::OtherAdapter)
         );
     }
 
