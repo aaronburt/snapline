@@ -1,4 +1,4 @@
-url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+url = "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip"
 version = "9.0.2"
 released = "2026-09-19"
 sha256 = "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"

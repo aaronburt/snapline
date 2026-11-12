@@ -328,7 +328,13 @@ mod tests {
     fn lock_file_parses() {
         let lock = parse_lock(lock_text()).expect("the lock file should parse");
         assert!(!lock.version.is_empty());
-        assert!(lock.url.starts_with("https://www.gyan.dev/"));
+        assert_eq!(
+            lock.url,
+            format!(
+                "https://github.com/GyanD/codexffmpeg/releases/download/{}/{}.zip",
+                lock.version, lock.archive
+            )
+        );
         assert!(lock
             .source_url
             .starts_with("https://github.com/FFmpeg/FFmpeg/"));
