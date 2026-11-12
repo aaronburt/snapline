@@ -765,17 +765,14 @@ impl UploadControl for JobUploadControl {
 enum Control {
     Continue,
     Shutdown,
-    Cancelled(UploadId),
 }
 
-enum Wait {
-    Elapsed,
-    Cancelled,
-    Shutdown,
-}
+/// How many finished uploads are kept for `state` and `list` before the oldest are dropped.
+const MAX_COMPLETED: usize = 200;
 
 struct State {
     pending: VecDeque<UploadId>,
+    delayed: Vec<(Instant, UploadId)>,
     records: HashMap<UploadId, JobRecord>,
     completed: HashMap<UploadId, UploadSnapshot>,
     listener: Listener,
@@ -785,10 +782,33 @@ impl State {
     fn new(listener: Listener) -> Self {
         Self {
             pending: VecDeque::new(),
+            delayed: Vec::new(),
             records: HashMap::new(),
             completed: HashMap::new(),
             listener,
         }
+    }
+
+    /// Moves every job whose backoff has elapsed back to the front of the line.
+    fn promote_due(&mut self) {
+        let now = Instant::now();
+        let mut due: Vec<(Instant, UploadId)> = Vec::new();
+        self.delayed.retain(|entry| {
+            if entry.0 <= now {
+                due.push(*entry);
+                false
+            } else {
+                true
+            }
+        });
+        due.sort_by_key(|entry| entry.0);
+        for (_, id) in due.into_iter().rev() {
+            self.pending.push_front(id);
+        }
+    }
+
+    fn next_due(&self) -> Option<Instant> {
+        self.delayed.iter().map(|entry| entry.0).min()
     }
 
     fn snapshot(&self, id: UploadId) -> Option<UploadSnapshot> {
@@ -816,10 +836,16 @@ impl State {
         snapshot.page_link = uploaded.page_link;
         snapshot.deletion_link = uploaded.deletion_link.map(|link| link.url);
         self.completed.insert(id, snapshot);
+        while self.completed.len() > MAX_COMPLETED {
+            let Some(oldest) = self.completed.keys().min().copied() else {
+                break;
+            };
+            self.completed.remove(&oldest);
+        }
         self.emit(id);
     }
 
-    fn handle(&mut self, command: Command, current: Option<UploadId>) -> Control {
+    fn handle(&mut self, command: Command) -> Control {
         match command {
             Command::Enqueue(entries) => {
                 for (id, job) in entries {
@@ -844,13 +870,14 @@ impl State {
                         let _ = reply.send(Err(QueueError::NotFound));
                         Control::Continue
                     }
-                    Some(Status::BackingOff { .. }) if current == Some(id) => {
+                    Some(Status::BackingOff { .. }) => {
+                        self.delayed.retain(|entry| entry.1 != id);
                         if let Some(record) = self.records.get_mut(&id) {
                             record.status = Status::Cancelled;
                         }
                         let _ = reply.send(Ok(()));
                         self.emit(id);
-                        Control::Cancelled(id)
+                        Control::Continue
                     }
                     Some(Status::Queued) => {
                         if let Some(position) = self.pending.iter().position(|item| *item == id) {
@@ -934,18 +961,24 @@ fn run(
     let mut state = State::new(listener);
     loop {
         while let Ok(command) = commands.try_recv() {
-            if matches!(state.handle(command, None), Control::Shutdown) {
+            if matches!(state.handle(command), Control::Shutdown) {
                 return;
             }
         }
+        state.promote_due();
         let Some(id) = state.pending.pop_front() else {
-            match commands.recv() {
+            let received = match state.next_due() {
+                Some(at) => commands.recv_timeout(at.saturating_duration_since(Instant::now())),
+                None => commands.recv().map_err(|_| RecvTimeoutError::Disconnected),
+            };
+            match received {
                 Ok(command) => {
-                    if matches!(state.handle(command, None), Control::Shutdown) {
+                    if matches!(state.handle(command), Control::Shutdown) {
                         return;
                     }
                 }
-                Err(_) => return,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return,
             }
             continue;
         };
@@ -970,42 +1003,42 @@ fn run_job(
     state: &mut State,
     cancellations: &Arc<Mutex<HashMap<UploadId, ActiveCancellation>>>,
 ) -> bool {
-    loop {
-        let Some(record) = state.records.get_mut(&id) else {
-            return true;
-        };
-        record.attempts += 1;
-        record.status = Status::Uploading;
-        record.error = None;
-        let uploader = Arc::clone(&record.job.uploader);
-        let file = record.job.file.clone();
-        let attempts = record.attempts;
-        let progress = Arc::clone(&record.progress);
-        if let Ok(mut progress) = progress.lock() {
-            progress.sent = 0;
-            progress.total = file.len;
-            progress.last_emit = Instant::now();
-            progress.last_emitted_sent = 0;
-        }
-        let cancelled = Arc::new(AtomicBool::new(false));
-        if let Ok(mut active) = cancellations.lock() {
-            active.insert(
-                id,
-                ActiveCancellation {
-                    cancelled: Arc::clone(&cancelled),
-                    cancellable: record.job.uploader.supports_in_flight_cancel(),
-                },
-            );
-        }
-        let snapshot = record.snapshot();
-        let control = JobUploadControl {
-            cancelled: Arc::clone(&cancelled),
-            progress,
-            listener: state.listener.clone(),
-            snapshot,
-        };
-        state.emit(id);
-        let result = thread::scope(|scope| {
+    let Some(record) = state.records.get_mut(&id) else {
+        return true;
+    };
+    record.attempts += 1;
+    record.status = Status::Uploading;
+    record.error = None;
+    let uploader = Arc::clone(&record.job.uploader);
+    let file = record.job.file.clone();
+    let attempts = record.attempts;
+    let progress = Arc::clone(&record.progress);
+    if let Ok(mut progress) = progress.lock() {
+        progress.sent = 0;
+        progress.total = file.len;
+        progress.last_emit = Instant::now();
+        progress.last_emitted_sent = 0;
+    }
+    let cancelled = Arc::new(AtomicBool::new(false));
+    if let Ok(mut active) = cancellations.lock() {
+        active.insert(
+            id,
+            ActiveCancellation {
+                cancelled: Arc::clone(&cancelled),
+                cancellable: record.job.uploader.supports_in_flight_cancel(),
+            },
+        );
+    }
+    let snapshot = record.snapshot();
+    let control = JobUploadControl {
+        cancelled: Arc::clone(&cancelled),
+        progress,
+        listener: state.listener.clone(),
+        snapshot,
+    };
+    state.emit(id);
+    let result =
+        thread::scope(|scope| {
             let attempt = match thread::Builder::new()
                 .name("snapline-upload-transfer".to_owned())
                 .spawn_scoped(scope, move || {
@@ -1017,7 +1050,7 @@ fn run_job(
             while !attempt.is_finished() {
                 match commands.recv_timeout(Duration::from_millis(20)) {
                     Ok(command) => {
-                        if !matches!(state.handle(command, None), Control::Shutdown) {
+                        if !matches!(state.handle(command), Control::Shutdown) {
                             continue;
                         }
                     }
@@ -1032,69 +1065,44 @@ fn run_job(
                 Err(UploadError::permanent("The upload stopped unexpectedly."))
             }))
         });
-        if let Ok(mut active) = cancellations.lock() {
-            active.remove(&id);
+    if let Ok(mut active) = cancellations.lock() {
+        active.remove(&id);
+    }
+    let Some(result) = result else {
+        return false;
+    };
+    match result {
+        Ok(uploaded) => {
+            state.complete(id, uploaded);
+            return true;
         }
-        let Some(result) = result else {
-            return false;
-        };
-        match result {
-            Ok(uploaded) => {
-                state.complete(id, uploaded);
+        Err(error) => {
+            if error == UploadError::Cancelled || cancelled.load(Ordering::SeqCst) {
+                if let Some(record) = state.records.get_mut(&id) {
+                    record.status = Status::Cancelled;
+                    record.error = None;
+                }
+                state.emit(id);
                 return true;
             }
-            Err(error) => {
-                if error == UploadError::Cancelled || cancelled.load(Ordering::SeqCst) {
-                    if let Some(record) = state.records.get_mut(&id) {
-                        record.status = Status::Cancelled;
-                        record.error = None;
-                    }
-                    state.emit(id);
-                    return true;
-                }
-                let retryable = error.is_retryable() && attempts <= policy.max_retries();
-                if !retryable {
-                    if let Some(record) = state.records.get_mut(&id) {
-                        record.status = Status::Failed;
-                        record.error = Some(error);
-                    }
-                    state.emit(id);
-                    return true;
-                }
-                let delay = policy.delay_for(attempts, &error);
+            let retryable = error.is_retryable() && attempts <= policy.max_retries();
+            if !retryable {
                 if let Some(record) = state.records.get_mut(&id) {
-                    record.status = Status::BackingOff { retry_in: delay };
+                    record.status = Status::Failed;
                     record.error = Some(error);
                 }
                 state.emit(id);
-                match wait(commands, delay, id, state) {
-                    Wait::Elapsed => continue,
-                    Wait::Cancelled => return true,
-                    Wait::Shutdown => return false,
-                }
+                return true;
             }
-        }
-    }
-}
-
-fn wait(
-    commands: &Receiver<Command>,
-    delay: Duration,
-    current: UploadId,
-    state: &mut State,
-) -> Wait {
-    let deadline = Instant::now() + delay;
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        match commands.recv_timeout(remaining) {
-            Ok(command) => match state.handle(command, Some(current)) {
-                Control::Continue => continue,
-                Control::Cancelled(id) if id == current => return Wait::Cancelled,
-                Control::Cancelled(_) => continue,
-                Control::Shutdown => return Wait::Shutdown,
-            },
-            Err(RecvTimeoutError::Timeout) => return Wait::Elapsed,
-            Err(RecvTimeoutError::Disconnected) => return Wait::Shutdown,
+            let delay = policy.delay_for(attempts, &error);
+            if let Some(record) = state.records.get_mut(&id) {
+                record.status = Status::BackingOff { retry_in: delay };
+                record.error = Some(error);
+            }
+            // The job waits its turn in `delayed` so the worker can serve other uploads.
+            state.delayed.push((Instant::now() + delay, id));
+            state.emit(id);
+            return true;
         }
     }
 }
@@ -1505,6 +1513,56 @@ mod tests {
             seen,
             vec!["queued", "uploading", "backing-off", "uploading", "done"]
         );
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn a_backing_off_upload_does_not_block_the_next_one() {
+        let slow = FakeUploader::new(vec![Err(UploadError::Retryable(
+            "The server returned HTTP 429, retry after 3600 s.".to_owned(),
+        ))]);
+        let quick = FakeUploader::new(Vec::new());
+        let (queue, events) =
+            Queue::start(Arc::new(TestSecrets), RetryPolicy::new(1)).expect("queue");
+        let handle = queue.handle();
+        let first = handle.enqueue(job(slow, "slow.png")).expect("first");
+        let second = handle.enqueue(job(quick, "quick.png")).expect("second");
+        wait_for(
+            &events,
+            first,
+            &Status::BackingOff {
+                retry_in: Duration::from_secs(3600),
+            },
+        );
+        let done = wait_for(&events, second, &Status::Done);
+        assert_eq!(done.id, second);
+        assert!(matches!(
+            handle.state(first).expect("state").expect("first").status,
+            Status::BackingOff { .. }
+        ));
+        handle.cancel(first).expect("cancel while backing off");
+        assert_eq!(
+            handle.state(first).expect("state").expect("first").status,
+            Status::Cancelled
+        );
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn only_the_newest_finished_uploads_are_kept() {
+        let (_, queue, events, handle) = queue(Vec::new(), RetryPolicy::new(0));
+        let mut ids = Vec::new();
+        for index in 0..(MAX_COMPLETED + 5) {
+            let uploader = FakeUploader::new(Vec::new());
+            let name = format!("{index}.png");
+            ids.push(handle.enqueue(job(uploader, &name)).expect("enqueue"));
+        }
+        let last = *ids.last().expect("last");
+        wait_for(&events, last, &Status::Done);
+        let listed = handle.list().expect("list");
+        assert_eq!(listed.len(), MAX_COMPLETED);
+        assert!(handle.state(ids[0]).expect("state").is_none());
+        assert!(handle.state(last).expect("state").is_some());
         queue.join().expect("join");
     }
 
