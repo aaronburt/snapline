@@ -42,7 +42,7 @@ pub fn place(rect: Rect, outputs: &[OutputBounds]) -> Result<Placement, PlaceErr
     let mut total_overlap = 0_i64;
     for output in outputs {
         if let Some(overlap) = rect.intersection(output.bounds) {
-            total_overlap += i64::from(overlap.area());
+            total_overlap += overlap.area();
             let better = best
                 .as_ref()
                 .is_none_or(|(_, current)| overlap.area() > current.area());
@@ -56,8 +56,8 @@ pub fn place(rect: Rect, outputs: &[OutputBounds]) -> Result<Placement, PlaceErr
     };
     // A sliver on a neighbouring screen (a window's invisible border, say) does not count as
     // spanning; a real share of the area on a second screen does.
-    let spill = total_overlap - i64::from(overlap.area());
-    if spill * SPAN_LIMIT_DENOMINATOR > i64::from(rect.area()) {
+    let spill = total_overlap - overlap.area();
+    if spill * SPAN_LIMIT_DENOMINATOR > rect.area() {
         return Err(PlaceError::SpansScreens);
     }
     if output.adapter != 0 {

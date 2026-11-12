@@ -26,7 +26,8 @@ pub fn installed() -> Result<Arc<dyn ShellHost>, ServiceError> {
     HOST.get().cloned().ok_or(ServiceError::NotYet)
 }
 
-pub fn copy_last_link(services: &Services, host: &dyn ShellHost) -> Result<(), ServiceError> {
+/// Copies the newest upload link. Returns whether a link was copied (false when there is none).
+pub fn copy_last_link(services: &Services, host: &dyn ShellHost) -> Result<bool, ServiceError> {
     let notifications = services
         .settings_snapshot()
         .map(|settings| settings.general.notifications)
@@ -38,7 +39,7 @@ pub fn copy_last_link(services: &Services, host: &dyn ShellHost) -> Result<(), S
             "No link to copy",
             "Nothing has been uploaded yet.",
         );
-        return Ok(());
+        return Ok(false);
     };
     host.copy_text(&link)?;
     notify(
@@ -47,7 +48,7 @@ pub fn copy_last_link(services: &Services, host: &dyn ShellHost) -> Result<(), S
         "Link copied",
         "The last upload link is on the clipboard.",
     );
-    Ok(())
+    Ok(true)
 }
 
 pub fn open_save_folder(services: &Services, host: &dyn ShellHost) -> Result<(), ServiceError> {
@@ -77,7 +78,7 @@ pub fn save_folder_path(settings: &Settings, paths: &Paths) -> PathBuf {
 
 pub fn run(action: &str, services: &Services) -> Result<(), ServiceError> {
     match action {
-        COPY_LAST_LINK => copy_last_link(services, installed()?.as_ref()),
+        COPY_LAST_LINK => copy_last_link(services, installed()?.as_ref()).map(|_| ()),
         OPEN_SAVE_FOLDER => open_save_folder(services, installed()?.as_ref()),
         _ => Err(ServiceError::NotYet),
     }
@@ -161,7 +162,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("temp");
         let (services, notifier) = services_in(directory.path());
         let host = FakeHost::default();
-        copy_last_link(&services, &host).expect("copy");
+        assert!(!copy_last_link(&services, &host).expect("copy"));
         assert!(host.copied.lock().expect("copied").is_empty());
         let notices = notifier.notices.lock().expect("notices");
         assert_eq!(notices.len(), 1);
@@ -174,7 +175,7 @@ mod tests {
         let (services, notifier) = services_in(directory.path());
         uploads::seed_done_upload(&services, "a.png", "https://example.test/a.png", 10);
         let host = FakeHost::default();
-        copy_last_link(&services, &host).expect("copy");
+        assert!(copy_last_link(&services, &host).expect("copy"));
         assert_eq!(
             *host.copied.lock().expect("copied"),
             vec!["https://example.test/a.png".to_owned()]

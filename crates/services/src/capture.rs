@@ -302,8 +302,17 @@ impl CaptureService {
 
     pub(crate) fn window_image(&self) -> Result<Option<Shot>, ServiceError> {
         let settings = self.inner.context.capture_settings()?;
-        let active = self.inner.context.foreground_window();
         let choices = self.inner.context.list_windows();
+        let foreground = self.inner.context.foreground_window();
+        // Opened from the tray or the Quick Panel, the foreground can be the taskbar or one of
+        // Snapline's own windows. Those are not capturable, so use the topmost window that is.
+        let active = if choices.is_empty() {
+            foreground
+        } else {
+            foreground
+                .filter(|id| choices.iter().any(|choice| choice.id == *id))
+                .or_else(|| choices.first().map(|choice| choice.id))
+        };
         let Some(pick) = self.inner.context.choose_window(&choices)? else {
             return Ok(None);
         };
@@ -1247,7 +1256,7 @@ mod tests {
 
     fn window_menu_harness(directory: &std::path::Path, selection: Option<usize>) -> Harness {
         let harness = harness(directory, desktop_of(vec![]), selected(Rect::ZERO, 1));
-        *harness.context.foreground.lock().expect("foreground") = Some(WindowId::new(42));
+        *harness.context.foreground.lock().expect("foreground") = Some(WindowId::new(7));
         *harness.context.choices.lock().expect("choices") = vec![
             window_choice(7, "Notes", Some("notepad.exe")),
             window_choice(8, "Browser", Some("chrome.exe")),
@@ -1295,7 +1304,19 @@ mod tests {
         harness.service.capture_window().expect("window");
         assert_eq!(
             harness.capture.calls.lock().expect("calls")[0].0,
-            WindowId::new(42)
+            WindowId::new(7)
+        );
+    }
+
+    #[test]
+    fn an_unlisted_foreground_window_falls_back_to_the_topmost_listed_one() {
+        let directory = tempfile::tempdir().expect("temp");
+        let harness = window_menu_harness(directory.path(), Some(0));
+        *harness.context.foreground.lock().expect("foreground") = Some(WindowId::new(42));
+        harness.service.capture_window().expect("window");
+        assert_eq!(
+            harness.capture.calls.lock().expect("calls")[0].0,
+            WindowId::new(7)
         );
     }
 
