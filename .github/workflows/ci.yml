@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'push' && 'snapline-main' || format('snapline-pr-{0}', github.run_id) }}
+  queue: max
+
 jobs:
   check:
     runs-on: windows-latest
@@ -48,3 +55,55 @@ jobs:
       - name: UI check
         working-directory: ui
         run: npm run check
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.deleted
+    needs: check
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select release version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./.github/scripts/prepare-release.ps1
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.version.outputs.tag != ''
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        if: steps.version.outputs.tag != ''
+      - uses: actions/setup-node@v4
+        if: steps.version.outputs.tag != ''
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Restore FFmpeg
+        if: steps.version.outputs.tag != ''
+        uses: actions/cache/restore@v4
+        with:
+          path: third_party/ffmpeg
+          key: ffmpeg-${{ hashFiles('xtask/ffmpeg.lock') }}
+      - name: Package Windows release
+        if: steps.version.outputs.tag != ''
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cargo xtask fetch-ffmpeg
+          cargo xtask package
+      - name: Publish GitHub release
+        if: steps.version.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE_VERSION: ${{ steps.version.outputs.package_version }}
+          RESUME_DRAFT: ${{ steps.version.outputs.resume_draft }}
+          MARK_LATEST: ${{ steps.version.outputs.mark_latest }}
+        run: ./.github/scripts/publish-release.ps1

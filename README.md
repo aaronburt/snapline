@@ -40,6 +40,12 @@ cargo xtask package
 
 The unsigned installer is written to `target/release/bundle/nsis` and the portable zip to `target/portable`.
 
+## GitHub releases
+
+After a pull request merges into `main` and the merged commit passes CI, GitHub Actions publishes a Windows x64 release with the app executable, the unsigned NSIS installer, and a portable ZIP containing the executable and its runtime files.
+
+Release tags start at `v0.1` and increase the minor number for each release. The minor number keeps growing past `0.999` to `0.1000` and beyond. Windows package metadata uses a three-part version such as `0.1.0`. Above minor 65535 it uses `0.65535.65535` to fit Windows version fields, while the GitHub release and download filenames retain the full version.
+
 ## Tests and checks
 
 ```
