@@ -26,6 +26,13 @@ jobs:
       - name: Build UI
         working-directory: ui
         run: npm run build
+      - name: Cache FFmpeg
+        uses: actions/cache@v4
+        with:
+          path: third_party/ffmpeg
+          key: ffmpeg-${{ hashFiles('xtask/ffmpeg.lock') }}
+      - name: Fetch FFmpeg
+        run: cargo xtask fetch-ffmpeg
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
