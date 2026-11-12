@@ -406,15 +406,9 @@ fn saved_notice(
         detail.push_str(&format!(" in {name}"));
     }
     let image_url = file_url(path);
-    let mut buttons = vec![NoticeButton {
-        label: "Open image".to_owned(),
-        target: image_url.clone(),
-    }];
+    let mut buttons = vec![NoticeButton::open("Open image", image_url.clone())];
     if let Some(folder) = folder {
-        buttons.push(NoticeButton {
-            label: "Open folder".to_owned(),
-            target: file_url(folder),
-        });
+        buttons.push(NoticeButton::open("Open folder", file_url(folder)));
     }
     RichNotice {
         title: SAVED_TITLE.to_owned(),
@@ -1067,7 +1061,10 @@ mod tests {
             notice.open.as_deref(),
             Some("file:///C:/Shots/My%20Folder/a%20b.png")
         );
-        assert_eq!(notice.buttons[1].target, "file:///C:/Shots/My%20Folder");
+        assert_eq!(
+            notice.buttons[1],
+            NoticeButton::open("Open folder", "file:///C:/Shots/My%20Folder".to_owned())
+        );
     }
 
     #[test]

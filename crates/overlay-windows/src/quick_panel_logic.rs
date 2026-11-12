@@ -1,8 +1,6 @@
 pub const WIDTH: f32 = 344.0;
 pub const BORDER: f32 = 1.0;
 pub const RADIUS: f32 = 8.0;
-pub const FADE_MS: u32 = 120;
-pub const FADE_OFFSET: f32 = 6.0;
 pub const COPIED_MS: u32 = 1500;
 
 const HEADER_HEIGHT: f32 = 62.0;
@@ -138,6 +136,12 @@ fn thumb_height() -> f32 {
     thumb_width() * 10.0 / 16.0
 }
 
+fn recent_thumb(index: usize, y: f32) -> RectF {
+    let width = thumb_width();
+    let x = BORDER + SECTION_PAD_X + index as f32 * (width + THUMB_GAP);
+    RectF::new(x, y, width, thumb_height())
+}
+
 impl Layout {
     pub fn compute(content: Content) -> Self {
         let inner_x = BORDER;
@@ -190,12 +194,11 @@ impl Layout {
             y += EMPTY_HEIGHT;
         } else {
             let th = thumb_height();
-            let tw = thumb_width();
             for index in 0..content.recent_shown() {
-                let x = inner_x + SECTION_PAD_X + index as f32 * (tw + THUMB_GAP);
+                let thumb = recent_thumb(index, y);
                 items.push((
                     Item::Recent(index),
-                    RectF::new(x, y, tw, th + THUMB_META_GAP + THUMB_META_HEIGHT),
+                    RectF::new(thumb.x, y, thumb.w, th + THUMB_META_GAP + THUMB_META_HEIGHT),
                 ));
             }
             y += th + THUMB_META_GAP + THUMB_META_HEIGHT;
@@ -252,6 +255,16 @@ impl Layout {
     pub fn thumb_rect(&self, index: usize) -> Option<RectF> {
         self.rect(Item::Recent(index))
             .map(|rect| RectF::new(rect.x, rect.y, rect.w, thumb_height()))
+    }
+
+    pub fn recent_placeholders(&self) -> impl Iterator<Item = (RectF, RectF)> {
+        let count = if self.content.loaded { 0 } else { MAX_RECENT };
+        let y = self.recent_title.bottom() + RECENT_GAP;
+        (0..count).map(move |index| {
+            let thumb = recent_thumb(index, y);
+            let meta = RectF::new(thumb.x, thumb.bottom() + THUMB_META_GAP + 3.0, 36.0, 8.0);
+            (thumb, meta)
+        })
     }
 
     pub fn meta_rect(&self, index: usize) -> Option<RectF> {
@@ -330,6 +343,13 @@ pub struct Interaction {
 }
 
 impl Interaction {
+    pub fn retain_for_layout(&mut self, layout: &Layout) {
+        let available = |item: &Item| layout.rect(*item).is_some() && layout.is_enabled(*item);
+        self.focus = self.focus.filter(available);
+        self.hover = self.hover.filter(available);
+        self.pressed = self.pressed.filter(available);
+    }
+
     pub fn pointer_move(&mut self, layout: &Layout, x: f32, y: f32) -> Outcome {
         let hit = layout.hit(x, y);
         self.keyboard = false;
@@ -413,15 +433,6 @@ impl Interaction {
     pub fn is_down(&self, item: Item) -> bool {
         self.pressed == Some(item) && self.hover == Some(item)
     }
-}
-
-pub fn fade(elapsed_ms: u32, reduced_motion: bool) -> (f32, f32) {
-    if reduced_motion || elapsed_ms >= FADE_MS {
-        return (1.0, 0.0);
-    }
-    let t = elapsed_ms as f32 / FADE_MS as f32;
-    let eased = 1.0 - (1.0 - t).powi(3);
-    (eased, FADE_OFFSET * (1.0 - eased))
 }
 
 pub fn copy_label(copied_for_ms: Option<u32>) -> &'static str {
@@ -695,13 +706,36 @@ mod tests {
     }
 
     #[test]
-    fn the_fade_runs_for_120_ms_and_is_skipped_for_reduced_motion() {
-        assert_eq!(fade(0, false).0, 0.0);
-        assert_eq!(fade(0, false).1, FADE_OFFSET);
-        let mid = fade(60, false);
-        assert!(mid.0 > 0.5 && mid.0 < 1.0);
-        assert_eq!(fade(120, false), (1.0, 0.0));
-        assert_eq!(fade(10, true), (1.0, 0.0));
+    fn history_placeholders_leave_capture_actions_usable_and_keep_keyboard_focus() {
+        let loading = Layout::compute(Content {
+            loaded: false,
+            has_link: false,
+            ..content(0)
+        });
+        let populated = Layout::compute(content(3));
+        assert_eq!(loading.height, populated.height);
+        let placeholders: Vec<_> = loading.recent_placeholders().collect();
+        assert_eq!(placeholders.len(), MAX_RECENT);
+        for (index, (thumb, _)) in placeholders.into_iter().enumerate() {
+            assert_eq!(Some(thumb), populated.thumb_rect(index));
+            assert_eq!(loading.hit(thumb.x + 1.0, thumb.y + 1.0), None);
+        }
+        assert_eq!(populated.recent_placeholders().count(), 0);
+        let mut interaction = Interaction::default();
+        for _ in 0..3 {
+            interaction.key(&loading, Key::Tab);
+        }
+        let region = Item::Tile(Tile::Region);
+        assert_eq!(
+            interaction.key(&loading, Key::Enter),
+            Outcome::Activate(region)
+        );
+        interaction.retain_for_layout(&populated);
+        assert!(interaction.show_focus_ring(region));
+        assert_eq!(
+            interaction.key(&populated, Key::Enter),
+            Outcome::Activate(region)
+        );
     }
 
     #[test]

@@ -11,6 +11,33 @@ use super::IpcError;
 
 const PANEL_HIDE_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 
+#[derive(serde::Serialize)]
+pub struct MonitorLayout {
+    id: u32,
+    name: String,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    primary: bool,
+}
+
+#[tauri::command]
+pub fn ipc_monitors() -> Vec<MonitorLayout> {
+    snapline_win::monitors::enumerate()
+        .into_iter()
+        .map(|monitor| MonitorLayout {
+            id: monitor.id,
+            name: monitor.name,
+            x: monitor.bounds.x.0,
+            y: monitor.bounds.y.0,
+            width: monitor.bounds.width.0,
+            height: monitor.bounds.height.0,
+            primary: monitor.primary,
+        })
+        .collect()
+}
+
 fn hides_panel_first(action: &str) -> bool {
     action.starts_with("capture_") || action.starts_with("record_")
 }

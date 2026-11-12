@@ -1,7 +1,6 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use snapline_core::image::Image;
 use windows::core::{Interface, PCWSTR};
@@ -12,7 +11,6 @@ use windows::Win32::Graphics::Direct2D::Common::{
 use windows::Win32::Graphics::Direct2D::{
     ID2D1Bitmap, ID2D1Bitmap1, ID2D1Image, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
     D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
-    D2D1_LAYER_OPTIONS1_NONE, D2D1_LAYER_PARAMETERS1,
 };
 use windows::Win32::Graphics::DirectComposition::{IDCompositionTarget, IDCompositionVisual};
 use windows::Win32::Graphics::DirectWrite::{
@@ -42,9 +40,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetForegroundWindow, GetMessageW,
     GetWindowLongPtrW, GetWindowThreadProcessId, KillTimer, LoadCursorW, PostMessageW,
     PostQuitMessage, RegisterClassExW, SetCursor, SetForegroundWindow, SetTimer, SetWindowPos,
-    ShowWindow, SystemParametersInfoW, TranslateMessage, UnregisterClassW, GWLP_USERDATA, HTCLIENT,
-    IDC_ARROW, IDC_HAND, MA_ACTIVATE, MSG, SPI_GETCLIENTAREAANIMATION, SWP_NOACTIVATE, SWP_NOSIZE,
-    SWP_NOZORDER, SW_SHOW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WA_INACTIVE, WM_ACTIVATE, WM_APP,
+    ShowWindow, TranslateMessage, UnregisterClassW, GWLP_USERDATA, HTCLIENT, IDC_ARROW, IDC_HAND,
+    MA_ACTIVATE, MSG, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW, WA_INACTIVE, WM_ACTIVATE, WM_APP,
     WM_CLOSE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE,
     WM_MOUSEMOVE, WM_PAINT, WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW,
     WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
@@ -53,8 +50,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::d2d::{self, Gpu};
 use crate::icons::{self, Icon, IconCache};
 use crate::quick_panel_logic::{
-    copy_label, fade, link_without_scheme, Content, Interaction, Item, Key, Layout, Outcome, RectF,
-    Tile, BORDER, COPIED_MS, FADE_MS, MAX_RECENT, RADIUS, WIDTH,
+    copy_label, link_without_scheme, Content, Interaction, Item, Key, Layout, Outcome, RectF, Tile,
+    BORDER, COPIED_MS, MAX_RECENT, RADIUS, WIDTH,
 };
 use crate::{OverlayError, Theme};
 
@@ -62,9 +59,7 @@ const CLASS_NAME: &str = "SnaplineQuickPanel";
 static NEXT_CLASS: AtomicU32 = AtomicU32::new(1);
 const SHADOW: f32 = 18.0;
 const SHADOW_STEPS: i32 = 9;
-const TIMER_FADE: usize = 1;
 const TIMER_COPIED: usize = 2;
-const FADE_TICK_MS: u32 = 15;
 const WM_DATA: u32 = WM_APP + 1;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
@@ -131,10 +126,10 @@ struct Shared {
     pending: Mutex<Option<PanelData>>,
 }
 
+#[derive(Clone)]
 pub struct PanelHandle {
     window: isize,
     shared: Arc<Shared>,
-    thread: Option<JoinHandle<()>>,
 }
 
 impl PanelHandle {
@@ -143,24 +138,18 @@ impl PanelHandle {
     }
 
     pub fn update(&self, data: PanelData) {
-        if !self.is_open() {
+        let Ok(mut pending) = self.shared.pending.lock() else {
             return;
-        }
-        if let Ok(mut pending) = self.shared.pending.lock() {
+        };
+        if self.is_open() {
             *pending = Some(data);
+            self.post(WM_DATA);
         }
-        self.post(WM_DATA);
     }
 
     pub fn close(&self) {
         if self.is_open() {
             self.post(WM_CLOSE);
-        }
-    }
-
-    pub fn join(&mut self) {
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
         }
     }
 
@@ -171,20 +160,6 @@ impl PanelHandle {
             let _ = PostMessageW(Some(window), message, WPARAM(0), LPARAM(0));
         }
     }
-}
-
-pub fn animations_enabled() -> bool {
-    let mut enabled: i32 = 1;
-    // SAFETY: the out pointer is a live four byte integer as the query requires.
-    let queried = unsafe {
-        SystemParametersInfoW(
-            SPI_GETCLIENTAREAANIMATION,
-            0,
-            Some(std::ptr::from_mut(&mut enabled).cast()),
-            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-        )
-    };
-    queried.is_err() || enabled != 0
 }
 
 pub fn open(request: PanelRequest) -> Result<PanelHandle, OverlayError> {
@@ -199,11 +174,7 @@ pub fn open(request: PanelRequest) -> Result<PanelHandle, OverlayError> {
         .spawn(move || run(request, thread_shared, ready_sender))
         .map_err(|_| OverlayError::Thread)?;
     match ready_receiver.recv() {
-        Ok(Ok(window)) => Ok(PanelHandle {
-            window,
-            shared,
-            thread: Some(thread),
-        }),
+        Ok(Ok(window)) => Ok(PanelHandle { window, shared }),
         Ok(Err(error)) => {
             let _ = thread.join();
             Err(error)
@@ -233,18 +204,22 @@ fn run(
     let result = Context::build(theme, data, anchor, place, on_activate, shared.clone()).and_then(
         |context| {
             let mut context = Box::new(context);
-            context.activate()?;
-            let _ = ready.send(Ok(context.hwnd.0 as isize));
-            Context::run_message_loop();
+            let result = context.activate().map(|()| {
+                let _ = ready.send(Ok(context.hwnd.0 as isize));
+                Context::run_message_loop();
+            });
             context.destroy();
-            Ok(())
+            result
         },
     );
+    on_closed();
     shared.open.store(false, Ordering::SeqCst);
+    if let Ok(mut pending) = shared.pending.lock() {
+        pending.take();
+    }
     if let Err(error) = result {
         let _ = ready.send(Err(error));
     }
-    on_closed();
 }
 
 struct ComGuard {
@@ -481,14 +456,7 @@ fn fill_bitmap_cover(gpu: &Gpu, bitmap: &ID2D1Bitmap1, area: D2D_RECT_F, radius:
     unsafe { gpu.context.FillRoundedRectangle(&rounded, &brush) };
 }
 
-pub(crate) fn render(
-    gpu: &mut Gpu,
-    icons: &mut IconCache,
-    view: &View,
-    scale: f32,
-    pad: f32,
-    opacity: f32,
-) {
+pub(crate) fn render(gpu: &mut Gpu, icons: &mut IconCache, view: &View, scale: f32, pad: f32) {
     let Some(fonts) = fonts(gpu) else {
         return;
     };
@@ -517,22 +485,6 @@ pub(crate) fn render(
         };
         context.Clear(Some(&clear));
     }
-    let layer = D2D1_LAYER_PARAMETERS1 {
-        contentBounds: D2D_RECT_F {
-            left: -1.0e9,
-            top: -1.0e9,
-            right: 1.0e9,
-            bottom: 1.0e9,
-        },
-        geometricMask: std::mem::ManuallyDrop::new(None),
-        maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-        maskTransform: transform,
-        opacity,
-        opacityBrush: std::mem::ManuallyDrop::new(None),
-        layerOptions: D2D1_LAYER_OPTIONS1_NONE,
-    };
-    // SAFETY: the parameters are plain values and a null layer asks Direct2D to manage one.
-    unsafe { context.PushLayer(&layer, None) };
     let origin = (pad, pad);
     let layout = view.layout;
     let body = d2d::rect(origin.0, origin.1, WIDTH, layout.height);
@@ -593,9 +545,7 @@ pub(crate) fn render(
         BORDER,
         palette.stroke_hi,
     );
-    // SAFETY: pairs with the PushLayer above and restores the original transform.
     unsafe {
-        context.PopLayer();
         context.SetTransform(&previous);
     }
     gpu.end();
@@ -743,6 +693,10 @@ fn draw_recent(gpu: &Gpu, icons: &mut IconCache, view: &View, fonts: &Fonts, ori
             palette.text3,
             false,
         );
+    }
+    for (thumb, meta) in layout.recent_placeholders() {
+        d2d::fill_round(&gpu.context, local(thumb, origin), 4.0, palette.subtle);
+        d2d::fill_round(&gpu.context, local(meta, origin), 3.0, palette.subtle);
     }
     for index in 0..view.data.recent.len().min(MAX_RECENT) {
         let (Some(thumb), Some(meta), Some(whole)) = (
@@ -958,13 +912,9 @@ struct Context {
     scale: f32,
     pad: f32,
     body_origin: (i32, i32),
-    anchor: (i32, i32),
     place: PlaceFn,
     on_activate: ActivateFn,
     shared: Arc<Shared>,
-    started: Instant,
-    reduced_motion: bool,
-    direction: f32,
     copied_at: Option<Instant>,
     activated: bool,
     tracking: bool,
@@ -1043,13 +993,9 @@ impl Context {
             scale,
             pad: SHADOW,
             body_origin: (0, 0),
-            anchor,
             place,
             on_activate,
             shared,
-            started: Instant::now(),
-            reduced_motion: !animations_enabled(),
-            direction: 1.0,
             copied_at: None,
             activated: false,
             tracking: false,
@@ -1080,13 +1026,13 @@ impl Context {
         self.bitmaps = self
             .data
             .recent
-            .iter()
+            .iter_mut()
             .take(MAX_RECENT)
             .map(|recent| {
                 recent
                     .thumb
-                    .as_ref()
-                    .and_then(|image| self.gpu.upload_image(image).ok())
+                    .take()
+                    .and_then(|image| self.gpu.upload_image(&image).ok())
             })
             .collect();
     }
@@ -1096,11 +1042,6 @@ impl Context {
         self.load_bitmaps();
         let (width, height) = self.body_size();
         self.body_origin = (self.place)(width, height);
-        self.direction = if self.body_origin.1 < self.anchor.1 {
-            1.0
-        } else {
-            -1.0
-        };
         let (x, y, window_width, window_height) = self.window_rect();
         self.create_window(x, y, window_width, window_height)?;
         let surface = create_surface(
@@ -1110,21 +1051,13 @@ impl Context {
             u32::try_from(window_height).unwrap_or(1),
         )?;
         self.surface = Some(surface);
-        self.started = Instant::now();
-        self.redraw();
+        self.present()?;
         // SAFETY: the window handle is a live top level window owned by this thread.
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_SHOW);
         }
         self.focus();
-        if self.reduced_motion {
-            self.redraw();
-        } else {
-            // SAFETY: the timer is owned by this window and killed when the fade ends.
-            unsafe {
-                SetTimer(Some(self.hwnd), TIMER_FADE, FADE_TICK_MS, None);
-            }
-        }
+        tracing::info!("native quick panel ready");
         Ok(())
     }
 
@@ -1209,13 +1142,16 @@ impl Context {
     }
 
     fn redraw(&mut self) {
+        if let Err(error) = self.present() {
+            tracing::warn!(%error, "could not present the native quick panel");
+            self.close();
+        }
+    }
+
+    fn present(&mut self) -> Result<(), OverlayError> {
         let Some(surface) = self.surface.as_ref() else {
-            return;
+            return Ok(());
         };
-        let target = surface.target.clone();
-        let swap_chain = surface.swap_chain.clone();
-        let elapsed = u32::try_from(self.started.elapsed().as_millis()).unwrap_or(u32::MAX);
-        let (opacity, _) = fade(elapsed, self.reduced_motion);
         let copy_text = self.copy_text();
         let view = View {
             layout: &self.layout,
@@ -1227,47 +1163,15 @@ impl Context {
         };
         // SAFETY: the swap chain target belongs to this render pass.
         unsafe {
-            self.gpu.context.SetTarget(&target);
+            self.gpu.context.SetTarget(&surface.target);
         }
-        render(
-            &mut self.gpu,
-            &mut self.icons,
-            &view,
-            self.scale,
-            self.pad,
-            opacity,
-        );
+        render(&mut self.gpu, &mut self.icons, &view, self.scale, self.pad);
         // SAFETY: the render pass is finished and the buffer can be presented.
         unsafe {
             let _ = self.gpu.context.SetTarget(None::<&ID2D1Image>);
-            let _ = swap_chain.Present(1, DXGI_PRESENT(0));
+            surface.swap_chain.Present(1, DXGI_PRESENT(0)).ok()
         }
-    }
-
-    fn tick_fade(&mut self) {
-        let elapsed = u32::try_from(self.started.elapsed().as_millis()).unwrap_or(u32::MAX);
-        let (_, offset) = fade(elapsed, self.reduced_motion);
-        let (x, y, _, _) = self.window_rect();
-        let shifted = y + to_px(offset * self.direction, self.scale);
-        // SAFETY: the window is live and owned by this thread.
-        unsafe {
-            let _ = SetWindowPos(
-                self.hwnd,
-                None,
-                x,
-                shifted,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-            );
-        }
-        self.redraw();
-        if elapsed >= FADE_MS {
-            // SAFETY: stops the fade timer owned by this window.
-            unsafe {
-                let _ = KillTimer(Some(self.hwnd), TIMER_FADE);
-            }
-        }
+        .map_err(device_error)
     }
 
     fn logical(&self, lparam: LPARAM) -> (f32, f32) {
@@ -1332,42 +1236,56 @@ impl Context {
         let Some(data) = pending else {
             return;
         };
+        let history_loaded = !self.data.loaded && data.loaded;
+        let thumbnails_loaded = data.recent.iter().any(|recent| recent.thumb.is_some());
+        let previous_size = self.body_size();
         self.data = data;
         self.layout = Layout::compute(self.data.content());
         self.load_bitmaps();
-        self.interaction = Interaction::default();
-        let (width, height) = self.body_size();
-        let previous = self.body_origin;
-        self.body_origin = (self.place)(width, height);
-        let _ = previous;
-        let (x, y, window_width, window_height) = self.window_rect();
-        self.surface = None;
-        // SAFETY: the window is live and owned by this thread.
-        unsafe {
-            let _ = SetWindowPos(
+        self.interaction.retain_for_layout(&self.layout);
+        let size = self.body_size();
+        if size != previous_size {
+            self.interaction.pointer_leave();
+            self.body_origin = (self.place)(size.0, size.1);
+            let (x, y, width, height) = self.window_rect();
+            self.surface = None;
+            unsafe {
+                let _ = SetWindowPos(
+                    self.hwnd,
+                    None,
+                    x,
+                    y,
+                    width,
+                    height,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+            match create_surface(
+                &self.gpu,
                 self.hwnd,
-                None,
-                x,
-                y,
-                window_width,
-                window_height,
-                SWP_NOZORDER | SWP_NOACTIVATE,
-            );
-        }
-        match create_surface(
-            &self.gpu,
-            self.hwnd,
-            u32::try_from(window_width).unwrap_or(1),
-            u32::try_from(window_height).unwrap_or(1),
-        ) {
-            Ok(surface) => self.surface = Some(surface),
-            Err(_) => {
-                self.close();
-                return;
+                u32::try_from(width).unwrap_or(1),
+                u32::try_from(height).unwrap_or(1),
+            ) {
+                Ok(surface) => self.surface = Some(surface),
+                Err(error) => {
+                    tracing::warn!(%error, "could not resize the native quick panel");
+                    self.close();
+                    return;
+                }
             }
         }
-        self.started = Instant::now() - Duration::from_millis(u64::from(FADE_MS));
         self.redraw();
+        if !self.hwnd.is_invalid() {
+            if history_loaded {
+                tracing::info!(
+                    recent = self.data.recent.len(),
+                    "native quick panel history ready"
+                );
+            }
+            if thumbnails_loaded {
+                tracing::info!("native quick panel thumbnails ready");
+            }
+        }
     }
 
     fn handle(&mut self, hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -1452,17 +1370,13 @@ impl Context {
                 }
             }
             WM_TIMER => {
-                match wparam.0 {
-                    TIMER_FADE => self.tick_fade(),
-                    TIMER_COPIED => {
-                        // SAFETY: stops the one shot timer owned by this window.
-                        unsafe {
-                            let _ = KillTimer(Some(hwnd), TIMER_COPIED);
-                        }
-                        self.copied_at = None;
-                        self.redraw();
+                if wparam.0 == TIMER_COPIED {
+                    // SAFETY: stops the one shot timer owned by this window.
+                    unsafe {
+                        let _ = KillTimer(Some(hwnd), TIMER_COPIED);
                     }
-                    _ => {}
+                    self.copied_at = None;
+                    self.redraw();
                 }
                 return LRESULT(0);
             }
@@ -1649,7 +1563,7 @@ mod tests {
         };
         // SAFETY: the bitmap was created as a render target.
         unsafe { gpu.context.SetTarget(&target) };
-        render(&mut gpu, &mut icons, &view, 1.0, SHADOW, 1.0);
+        render(&mut gpu, &mut icons, &view, 1.0, SHADOW);
         // SAFETY: detaches the target after the pass.
         unsafe {
             let _ = gpu.context.SetTarget(None::<&ID2D1Image>);

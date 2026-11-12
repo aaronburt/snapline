@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { expectAccessible } from '../../../test/axe';
 import CapturePage from './CapturePage.svelte';
 import { BUNDLED_FFMPEG_PATH, resetSettings } from './settings';
@@ -12,8 +12,15 @@ const ipc = vi.hoisted(() => ({
   previewName: vi.fn(),
   browseFolder: vi.fn(),
 }));
+const displayIpc = vi.hoisted(() => ({ monitors: vi.fn() }));
 
 vi.mock('../../../lib/ipc/settings', () => ipc);
+vi.mock('../../../lib/ipc/app', () => displayIpc);
+
+const displays = [
+  { id: 81, name: '\\\\.\\DISPLAY1', x: -1920, y: 360, width: 1920, height: 1080, primary: false },
+  { id: 84, name: '\\\\.\\DISPLAY4', x: 0, y: 0, width: 2560, height: 1440, primary: true },
+];
 
 beforeEach(() => {
   resetSettings();
@@ -21,6 +28,8 @@ beforeEach(() => {
   ipc.update.mockReset();
   ipc.get.mockResolvedValue(settingsDto());
   ipc.update.mockResolvedValue(settingsDto());
+  displayIpc.monitors.mockReset();
+  displayIpc.monitors.mockResolvedValue(displays);
 });
 
 afterEach(cleanup);
@@ -41,7 +50,7 @@ describe('CapturePage', () => {
     await waitFor(() => expect(ipc.get).toHaveBeenCalledTimes(1));
   });
 
-  it('shows the documented defaults', () => {
+  it('shows the documented defaults', async () => {
     render(CapturePage);
     expect(
       (screen.getByRole('checkbox', { name: /Include mouse cursor/ }) as HTMLInputElement).checked,
@@ -71,7 +80,41 @@ describe('CapturePage', () => {
     expect((screen.getByLabelText('FFmpeg location') as HTMLInputElement).value).toBe(
       BUNDLED_FFMPEG_PATH,
     );
-    expect(screen.getByText('The monitor with the cursor is captured')).not.toBeNull();
+    expect(await screen.findByText('The monitor with the cursor is captured')).not.toBeNull();
+  });
+
+  it('shows the detected desktop bounds and highlights the real primary display', async () => {
+    const settings = settingsDto();
+    settings.capture.fullscreenCaptureUses = 'all_monitors';
+    ipc.get.mockResolvedValue(settings);
+    render(CapturePage);
+
+    expect(
+      await screen.findByText('All monitors are captured as one 4480 × 1440 image'),
+    ).not.toBeNull();
+    const diagram = screen.getByRole('img', { name: /Monitor 1.*Monitor 4.*primary/ });
+    const left = within(diagram).getByText('1').parentElement!;
+    const primary = within(diagram).getByText('4').parentElement!;
+    expect(left.parentElement!.style.top).toBe('25%');
+    expect(Number.parseFloat(primary.parentElement!.style.left)).toBeCloseTo(42.857);
+    expect(left.classList.contains('on')).toBe(true);
+
+    settings.capture.fullscreenCaptureUses = 'primary_monitor';
+    ipc.update.mockResolvedValue(settings);
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Full-screen capture uses' }), {
+      target: { value: 'Primary monitor' },
+    });
+    expect(await screen.findByText('Monitor 4 (primary) is captured')).not.toBeNull();
+    expect(left.classList.contains('on')).toBe(false);
+    expect(primary.classList.contains('on')).toBe(true);
+  });
+
+  it('refreshes the layout on focus and handles an unavailable monitor list', async () => {
+    displayIpc.monitors.mockRejectedValueOnce(new Error('Unavailable'));
+    render(CapturePage);
+    expect(await screen.findByText('Monitor layout is unavailable.')).not.toBeNull();
+    await fireEvent.focus(window);
+    expect(await screen.findByRole('img', { name: /Monitor 1.*Monitor 4/ })).not.toBeNull();
   });
 
   it('lists only the placeholder microphone', () => {

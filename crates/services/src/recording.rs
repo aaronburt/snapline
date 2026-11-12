@@ -410,15 +410,9 @@ pub fn recording_saved_notice(
     use snapline_core::ports::{NoticeButton, RichNotice};
 
     let video = file_url(&saved.path);
-    let mut buttons = vec![NoticeButton {
-        label: "Open video".to_owned(),
-        target: video.clone(),
-    }];
+    let mut buttons = vec![NoticeButton::open("Open video", video.clone())];
     if let Some(folder) = saved.path.parent() {
-        buttons.push(NoticeButton {
-            label: "Open folder".to_owned(),
-            target: file_url(folder),
-        });
+        buttons.push(NoticeButton::open("Open folder", file_url(folder)));
     }
     RichNotice {
         title: RECORDING_SAVED_TITLE.to_owned(),

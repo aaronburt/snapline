@@ -115,22 +115,7 @@ impl Notifier for ToastNotifier {
     }
 
     fn toast_rich(&self, notice: RichNotice) {
-        let platform = notify::RichNotice {
-            title: notice.title,
-            lines: notice.lines,
-            image: notice.image,
-            open: notice.open,
-            tag: notice.tag,
-            buttons: notice
-                .buttons
-                .into_iter()
-                .map(|button| notify::RichButton {
-                    label: button.label,
-                    target: button.target,
-                })
-                .collect(),
-        };
-        if let Err(error) = notify::show_rich(&platform) {
+        if let Err(error) = notify::show_rich(&notice) {
             tracing::warn!(%error, "could not show a notification");
         }
     }

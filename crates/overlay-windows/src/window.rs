@@ -32,8 +32,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PostQuitMessage, RegisterClassExW, SetCursor, SetForegroundWindow, SetTimer, ShowWindow,
     TranslateMessage, UnregisterClassW, GWLP_USERDATA, HTCLIENT, IDC_ARROW, IDC_CROSS, MA_ACTIVATE,
     MSG, SW_SHOW, WM_CLOSE, WM_CTLCOLOREDIT, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCCREATE, WM_PAINT, WM_RBUTTONDOWN,
-    WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP,
+    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCCREATE, WM_PAINT,
+    WM_RBUTTONDOWN, WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
@@ -1610,6 +1610,21 @@ impl Context {
                 }
                 self.apply(Input::RightClick);
                 self.refresh();
+                return LRESULT(0);
+            }
+            WM_MBUTTONDOWN => {
+                let point = self.pointer(index, lparam);
+                self.scene.cursor = Some(point);
+                if self.annotating() && self.scene.tool == Tool::Move {
+                    if self.text_edit.is_some() {
+                        self.commit_text();
+                    }
+                    self.scene.pending_action = self.scene.editing.then_some(OverlayAction::Upload);
+                    self.apply(Input::MiddleClick);
+                    if self.outcome.is_none() {
+                        self.refresh();
+                    }
+                }
                 return LRESULT(0);
             }
             WM_KEYDOWN => {

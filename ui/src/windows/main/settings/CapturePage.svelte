@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { monitors as getMonitors, type MonitorLayout } from '../../../lib/ipc/app';
   import Card from '../../../components/Card.svelte';
-  import Icon from '../../../components/Icon.svelte';
   import ToggleRow from '../../../components/ToggleRow.svelte';
   import SelectRow from '../../../components/SelectRow.svelte';
   import SegmentedRow from '../../../components/SegmentedRow.svelte';
@@ -33,9 +33,19 @@
   let { filter = '' }: Props = $props();
 
   const rows = $derived($settings.capture);
+  let displays = $state<MonitorLayout[] | null>(null);
+
+  async function refreshMonitors() {
+    try {
+      displays = (await getMonitors()).filter((monitor) => monitor.width > 0 && monitor.height > 0);
+    } catch {
+      displays = [];
+    }
+  }
 
   onMount(() => {
     void loadSettings();
+    void refreshMonitors();
   });
 
   function matches(title: string, description = ''): boolean {
@@ -131,35 +141,41 @@
     matches('GIF') || gifFrameRateVisible || gifWidthVisible || paletteVisible,
   );
 
-  const monitors = $derived([
-    {
-      n: '1',
-      res: '1920 × 1080 · primary',
-      w: 216,
-      h: 122,
-      captured: rows.monitorMode !== 'Monitor under cursor',
-      cursor: false,
-    },
-    {
-      n: '2',
-      res: '2560 × 1440',
-      w: 288,
-      h: 162,
-      captured: rows.monitorMode !== 'Primary monitor',
-      cursor: rows.monitorMode === 'Monitor under cursor',
-    },
-  ]);
+  const topology = $derived.by(() => {
+    if (!displays?.length) return null;
+    const left = Math.min(...displays.map((monitor) => monitor.x));
+    const top = Math.min(...displays.map((monitor) => monitor.y));
+    const width = Math.max(...displays.map((monitor) => monitor.x + monitor.width)) - left;
+    const height = Math.max(...displays.map((monitor) => monitor.y + monitor.height)) - top;
+    const monitors = displays.map((monitor, index) => ({
+      ...monitor,
+      number: /DISPLAY(\d+)$/i.exec(monitor.name)?.[1] ?? String(index + 1),
+      left: ((monitor.x - left) / width) * 100,
+      top: ((monitor.y - top) / height) * 100,
+      widthPercent: (monitor.width / width) * 100,
+      heightPercent: (monitor.height / height) * 100,
+    }));
+    return { width, height, monitors, primary: monitors.find((monitor) => monitor.primary) };
+  });
 
   const monitorCaption = $derived(
-    rows.monitorMode === 'All monitors'
-      ? 'All monitors are captured as one 4480 × 1440 image'
-      : rows.monitorMode === 'Primary monitor'
-        ? 'Monitor 1 (primary) is captured'
-        : 'The monitor with the cursor is captured',
+    topology &&
+      (rows.monitorMode === 'All monitors'
+        ? `All monitors are captured as one ${topology.width} × ${topology.height} image`
+        : rows.monitorMode === 'Primary monitor'
+          ? topology.primary
+            ? `Monitor ${topology.primary.number} (primary) is captured`
+            : 'The primary monitor is captured'
+          : 'The monitor with the cursor is captured'),
   );
 
   const monitorLabel = $derived(
-    `Monitor 1, 1920 by 1080, primary; Monitor 2, 2560 by 1440. Highlighted: ${rows.monitorMode}`,
+    topology?.monitors
+      .map(
+        (monitor) =>
+          `Monitor ${monitor.number}, ${monitor.width} by ${monitor.height}${monitor.primary ? ', primary' : ''}`,
+      )
+      .join('; '),
   );
 
   const microphoneOptions = $derived(
@@ -168,6 +184,8 @@
       : [...MICROPHONE_OPTIONS, rows.microphoneDevice],
   );
 </script>
+
+<svelte:window onfocus={refreshMonitors} />
 
 <SettingsPage title="Capture">
   {#if showScreenshots}
@@ -277,25 +295,40 @@
     >
       <Card>
         <div class="monitor-card">
-          <div class="monitor-layout" role="img" aria-label={monitorLabel}>
-            {#each monitors as monitor}
-              <div
-                class="monitor-box"
-                class:on={monitor.captured}
-                style:width="{monitor.w}px"
-                style:height="{monitor.h}px"
-              >
-                <span class="monitor-number">{monitor.n}</span>
-                <span class="monitor-resolution">{monitor.res}</span>
-                {#if monitor.cursor}
-                  <span class="monitor-cursor">
-                    <Icon name="cursor" size={18} />
-                  </span>
-                {/if}
-              </div>
-            {/each}
+          {#if topology}
+            <div
+              class="monitor-layout"
+              role="img"
+              aria-label={monitorLabel}
+              style:aspect-ratio={`${topology.width} / ${topology.height}`}
+              style:max-width={`${Math.min(560, (220 * topology.width) / topology.height)}px`}
+            >
+              {#each topology.monitors as monitor (monitor.id)}
+                <div
+                  class="monitor-position"
+                  style:left="{monitor.left}%"
+                  style:top="{monitor.top}%"
+                  style:width="{monitor.widthPercent}%"
+                  style:height="{monitor.heightPercent}%"
+                >
+                  <div
+                    class="monitor-box"
+                    class:on={rows.monitorMode === 'All monitors' ||
+                      (rows.monitorMode === 'Primary monitor' && monitor.primary)}
+                  >
+                    <span class="monitor-number">{monitor.number}</span>
+                    <span class="monitor-resolution">
+                      {monitor.width} × {monitor.height}{monitor.primary ? ' · primary' : ''}
+                    </span>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+          <div class="monitor-caption">
+            {monitorCaption ??
+              (displays === null ? 'Reading monitor layout…' : 'Monitor layout is unavailable.')}
           </div>
-          <div class="monitor-caption">{monitorCaption}</div>
         </div>
       </Card>
       <SelectRow
@@ -436,16 +469,18 @@
   }
 
   .monitor-layout {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    justify-content: center;
-    gap: 10px;
+    position: relative;
+    width: 100%;
+  }
+
+  .monitor-position {
+    position: absolute;
+    padding: 2px;
   }
 
   .monitor-box {
-    position: relative;
     display: flex;
+    height: 100%;
     flex-direction: column;
     align-items: center;
     justify-content: center;
@@ -454,6 +489,7 @@
     background: var(--subtle);
     border: 1px solid var(--strokeHi);
     color: var(--text3);
+    overflow: hidden;
   }
 
   .monitor-box.on {
@@ -470,12 +506,7 @@
   .monitor-resolution {
     font-size: 11px;
     opacity: 0.85;
-  }
-
-  .monitor-cursor {
-    position: absolute;
-    right: 22px;
-    bottom: 18px;
+    text-align: center;
   }
 
   .monitor-caption {

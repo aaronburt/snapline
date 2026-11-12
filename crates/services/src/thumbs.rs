@@ -147,6 +147,16 @@ impl ThumbService {
         }
     }
 
+    pub fn get_stored(&self, id: CaptureId) -> Result<Thumbnail, ThumbError> {
+        if id <= 0 {
+            return Err(ThumbError::NotFound);
+        }
+        let paths = self.services.paths().map_err(|_| ThumbError::Unavailable)?;
+        let (path, format) =
+            existing_thumbnail(&paths.thumbs_dir, id).ok_or(ThumbError::NotFound)?;
+        read_thumbnail(&path, format)
+    }
+
     pub fn get(&self, id: CaptureId) -> Result<Thumbnail, ThumbError> {
         if id <= 0 {
             return Err(ThumbError::NotFound);
@@ -375,6 +385,27 @@ mod tests {
         let (path, format) = existing_thumbnail(&paths.thumbs_dir, id).expect("written");
         assert_eq!(format, ImageFormat::WebP);
         assert_eq!(std::fs::read(path).expect("bytes"), thumbnail.bytes);
+    }
+
+    #[test]
+    fn a_stored_lookup_leaves_a_miss_for_history_to_repair() {
+        use std::sync::Arc;
+
+        let directory = tempdir().expect("temp");
+        let paths = test_paths(directory.path());
+        let services = Services::with_paths(paths.clone())
+            .expect("services")
+            .with_codec_factory(Arc::new(|| Ok(Arc::new(FakeCodec::new(true)))));
+        let capture_path = directory.path().join("capture.png");
+        std::fs::write(&capture_path, b"source").expect("capture file");
+        let id = record_capture(&paths, &capture_path);
+        let thumbs = services.thumbs();
+
+        assert_eq!(thumbs.get_stored(id), Err(ThumbError::NotFound));
+        assert!(existing_thumbnail(&paths.thumbs_dir, id).is_none());
+
+        let repaired = thumbs.get(id).expect("regenerated thumbnail");
+        assert_eq!(thumbs.get_stored(id).expect("stored thumbnail"), repaired);
     }
 
     #[test]

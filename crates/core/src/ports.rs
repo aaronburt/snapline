@@ -158,7 +158,22 @@ impl Notice {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoticeButton {
     pub label: String,
-    pub target: String,
+    pub target: NoticeButtonTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoticeButtonTarget {
+    Open(String),
+    CopyImage(i64),
+}
+
+impl NoticeButton {
+    pub fn open(label: impl Into<String>, target: String) -> Self {
+        Self {
+            label: label.into(),
+            target: NoticeButtonTarget::Open(target),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

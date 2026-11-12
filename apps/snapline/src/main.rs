@@ -1150,6 +1150,7 @@ fn main() -> anyhow::Result<()> {
         })
         .invoke_handler(tauri::generate_handler![
             ipc::app::ipc_app,
+            ipc::app::ipc_monitors,
             ipc::settings::ipc_settings,
             ipc::hotkeys::ipc_hotkeys,
             ipc::history::ipc_history,
@@ -1177,16 +1178,25 @@ fn main() -> anyhow::Result<()> {
                 tracing::warn!(%error, "upload history could not be maintained");
             }
             let activation_services = startup_services.clone();
-            snapline_win::notify::set_activation_handler(move |activation| {
-                let Some(capture_id) = activation.capture_id.and_then(|id| i64::try_from(id).ok())
-                else {
-                    return;
-                };
-                if let Err(error) = activation_services
-                    .history()
-                    .open_from_notification(capture_id)
-                {
-                    tracing::warn!(%error, "the notified capture could not be opened");
+            snapline_win::notify::set_activation_handler(move |activation| match activation {
+                snapline_win::notify::ToastActivation::OpenCapture(id) => {
+                    let Ok(id) = i64::try_from(id) else {
+                        return;
+                    };
+                    if let Err(error) = activation_services.history().open_from_notification(id) {
+                        tracing::warn!(%error, "the notified capture could not be opened");
+                    }
+                }
+                snapline_win::notify::ToastActivation::CopyImage(id) => {
+                    let services = activation_services.clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if let Err(error) = services
+                            .history()
+                            .handle(snapline_services::dto::history::HistoryReq::CopyImage { id })
+                        {
+                            snapline_services::actions::notify_failure(&error, &services);
+                        }
+                    });
                 }
             });
             let maintenance_services = startup_services.clone();

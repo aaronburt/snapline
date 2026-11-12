@@ -91,21 +91,24 @@ pub fn show(app: &AppHandle, tray: TrayRect) {
         return;
     }
     let app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let opened = open(&app, tray);
-        with_slot(|slot| slot.opening = false);
-        if !opened {
+    tauri::async_runtime::spawn_blocking(move || match open(&app, tray) {
+        Some((handle, services)) => {
+            with_slot(|slot| {
+                slot.handle = Some(handle.clone());
+                slot.opening = false;
+            });
+            populate(&handle, &services);
+        }
+        None => {
+            with_slot(|slot| slot.opening = false);
             crate::panel::show_web(&app, tray.x, tray.y, tray.width, tray.height);
         }
     });
 }
 
-fn open(app: &AppHandle, tray: TrayRect) -> bool {
-    let Some(services) = app.try_state::<Services>() else {
-        return false;
-    };
+fn open(app: &AppHandle, tray: TrayRect) -> Option<(PanelHandle, Services)> {
+    let services = app.try_state::<Services>()?;
     let services = services.inner().clone();
-    let data = load_data(&services);
     let theme = if crate::theme::is_light() {
         Theme::Light
     } else {
@@ -125,7 +128,7 @@ fn open(app: &AppHandle, tray: TrayRect) -> bool {
     });
     let request = PanelRequest {
         theme,
-        data,
+        data: PanelData::default(),
         anchor: (
             to_i32(tray.x + tray.width / 2.0),
             to_i32(tray.y + tray.height / 2.0),
@@ -135,17 +138,10 @@ fn open(app: &AppHandle, tray: TrayRect) -> bool {
         on_closed,
     };
     match quick_panel::open(request) {
-        Ok(handle) => {
-            with_slot(|slot| {
-                if let Some(mut previous) = slot.handle.replace(handle) {
-                    previous.join();
-                }
-            });
-            true
-        }
+        Ok(handle) => Some((handle, services)),
         Err(error) => {
             tracing::error!(%error, "could not open the native quick panel; using the web panel");
-            false
+            None
         }
     }
 }
@@ -202,6 +198,34 @@ fn utc_offset_minutes() -> i64 {
         .unwrap_or(0)
 }
 
+fn populate(handle: &PanelHandle, services: &Services) {
+    if !handle.is_open() {
+        return;
+    }
+    let mut data = load_data(services);
+    handle.update(data.clone());
+    if data.recent.is_empty() || !handle.is_open() {
+        return;
+    }
+    let thumbs = services.thumbs();
+    let mut codec = None;
+    for recent in &mut data.recent {
+        if !handle.is_open() {
+            return;
+        }
+        let Ok(thumbnail) = thumbs.get_stored(recent.id) else {
+            continue;
+        };
+        let Ok(codec) = codec.get_or_insert_with(snapline_win::wic::WicCodec::new) else {
+            return;
+        };
+        recent.thumb = codec.decode(&thumbnail.bytes).ok();
+    }
+    if data.recent.iter().any(|recent| recent.thumb.is_some()) {
+        handle.update(data);
+    }
+}
+
 fn load_data(services: &Services) -> PanelData {
     let now = now_ms();
     let offset = utc_offset_minutes();
@@ -209,10 +233,9 @@ fn load_data(services: &Services) -> PanelData {
         Ok(AppResp::Recent { captures }) => captures,
         _ => Vec::new(),
     };
-    let codec = snapline_win::wic::WicCodec::new().ok();
     let recent = captures
         .iter()
-        .map(|capture| recent_view(services, codec.as_ref(), capture, now, offset))
+        .map(|capture| recent_view(capture, now, offset))
         .collect();
     let uploads = match services.upload().handle(UploadReq::List) {
         Ok(UploadResp::States(states)) => states
@@ -234,24 +257,14 @@ fn load_data(services: &Services) -> PanelData {
     }
 }
 
-fn recent_view(
-    services: &Services,
-    codec: Option<&snapline_win::wic::WicCodec>,
-    capture: &RecentCaptureDto,
-    now: i64,
-    offset: i64,
-) -> RecentView {
-    let thumb = codec.and_then(|codec| {
-        let thumbnail = services.thumbs().get(capture.id).ok()?;
-        codec.decode(&thumbnail.bytes).ok()
-    });
+fn recent_view(capture: &RecentCaptureDto, now: i64, offset: i64) -> RecentView {
     RecentView {
         id: capture.id,
         name: capture.name.clone(),
         time: relative_time(capture.created_at, now, offset),
         duration: duration_label(capture),
         uploaded: capture.status == RecentStatusDto::Uploaded,
-        thumb,
+        thumb: None,
     }
 }
 
