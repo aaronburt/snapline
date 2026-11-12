@@ -531,7 +531,10 @@ mod tests {
             ("capture_scrolling".to_owned(), "Ctrl+Alt+S".to_owned()),
         ]);
         let entries = plan_entries(&bindings, &[]);
-        assert_eq!(entries, vec![(Owner::new("capture_region"), chord("PrtSc"))]);
+        assert_eq!(
+            entries,
+            vec![(Owner::new("capture_region"), chord("PrtSc"))]
+        );
     }
 
     #[test]

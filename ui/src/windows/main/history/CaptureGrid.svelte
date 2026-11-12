@@ -26,19 +26,21 @@
   interface Props {
     groups: Group[];
     activeUploads?: Record<number, UploadState>;
-    selectedId: number | null;
+    selectedIds: ReadonlySet<number>;
+    focusId: number | null;
     columns: number;
     viewportHeight: number;
     scrollTop?: number;
     scroller?: HTMLDivElement;
-    onselect: (id: number) => void;
+    onselect: (id: number, event: MouseEvent) => void;
     onopen: (id: number) => void;
   }
 
   let {
     groups,
     activeUploads = {},
-    selectedId,
+    selectedIds,
+    focusId,
     columns,
     viewportHeight,
     scrollTop = $bindable(0),
@@ -112,7 +114,7 @@
   });
 
   $effect(() => {
-    const id = selectedId;
+    const id = focusId;
     if (id === null) {
       return;
     }
@@ -160,11 +162,13 @@
         <button
           type="button"
           class="hv card"
-          class:selected={capture.id === selectedId}
-          aria-pressed={capture.id === selectedId}
+          class:selected={selectedIds.has(capture.id)}
+          aria-pressed={selectedIds.has(capture.id)}
           data-capture-id={capture.id}
-          onclick={() => onselect(capture.id)}
-          ondblclick={() => onopen(capture.id)}
+          onclick={(event) => onselect(capture.id, event)}
+          ondblclick={(event) => {
+            if (!event.ctrlKey && !event.metaKey && !event.shiftKey) onopen(capture.id);
+          }}
         >
           {#if capture.kind === 'image' || capture.kind === 'video' || capture.kind === 'gif'}
             <Thumb
@@ -240,8 +244,8 @@
   }
 
   .card.selected {
+    background: var(--accentSoft);
     border-color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent);
   }
 
   .meta {

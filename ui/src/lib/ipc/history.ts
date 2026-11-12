@@ -79,6 +79,17 @@ export async function historyDelete(id: number): Promise<void> {
   }
 }
 
+export async function historyDeleteMany(
+  ids: number[],
+): Promise<{ removed: number[]; failed: number }> {
+  const req: HistoryReq = { kind: 'deleteMany', data: { ids } };
+  const resp = await call<HistoryReq, HistoryResp>('ipc_history', req);
+  if (resp.kind === 'deleteMany') {
+    return resp.data;
+  }
+  throw unexpected();
+}
+
 export async function historyCopyImage(id: number): Promise<void> {
   const req: HistoryReq = { kind: 'copyImage', data: { id } };
   const resp = await call<HistoryReq, HistoryResp>('ipc_history', req);

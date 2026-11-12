@@ -129,7 +129,7 @@ pub fn recycle(path: &Path) -> Result<(), ShellError> {
 pub fn confirm_delete(message: &str) -> Result<bool, ShellError> {
     let message = HSTRING::from(message);
     let title = HSTRING::from("Snapline");
-    let instruction = HSTRING::from("Delete this capture?");
+    let instruction = HSTRING::from("Delete from History?");
     let delete = HSTRING::from("Delete");
     let cancel = HSTRING::from("Cancel");
     let buttons = [

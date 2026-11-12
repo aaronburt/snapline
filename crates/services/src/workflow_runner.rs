@@ -719,6 +719,16 @@ impl WorkflowRunner {
         }
     }
 
+    pub fn recording_failed(&self, reason: &str) {
+        self.inner
+            .ports
+            .notify
+            .toast(snapline_core::ports::Notice::new(
+                "Recording failed",
+                reason.trim(),
+            ));
+    }
+
     pub fn recording_cancelled(&self) {
         let notifications = self
             .inner

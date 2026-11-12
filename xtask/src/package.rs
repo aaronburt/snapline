@@ -76,16 +76,14 @@ fn build_installer(root: &Path) -> Result<()> {
             local_bin.display()
         );
     }
-    println!("> npx tauri build --bundles nsis");
-    let mut command = if cfg!(windows) {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "npx", "tauri", "build", "--bundles", "nsis"]);
-        command
+    let program = if cfg!(windows) {
+        local_bin.join("tauri.cmd")
     } else {
-        let mut command = Command::new("npx");
-        command.args(["tauri", "build", "--bundles", "nsis"]);
-        command
+        local_bin.join("tauri")
     };
+    println!("> {} build --bundles nsis", program.display());
+    let mut command = Command::new(&program);
+    command.args(["build", "--bundles", "nsis"]);
     command.env("PATH", cli_path(&local_bin)?);
     let status = command
         .current_dir(&directory)
@@ -107,7 +105,7 @@ fn installer_path(root: &Path, config: &Config) -> Result<PathBuf> {
     let directory = root.join(NSIS_DIR);
     if !directory.is_dir() {
         bail!(
-            "package: the NSIS bundle directory {} is missing; `npx tauri build --bundles nsis` did not produce it",
+            "package: the NSIS bundle directory {} is missing; `tauri build --bundles nsis` did not produce it",
             directory.display()
         );
     }

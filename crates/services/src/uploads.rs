@@ -7,7 +7,7 @@ use snapline_core::actions::ActionId;
 use snapline_core::media::MediaKind;
 use snapline_core::ports::SecretStore as CoreSecretStore;
 use snapline_core::secret::SecretKey;
-use snapline_store::history::HistoryRepo;
+use snapline_store::history::{CaptureKind, HistoryRepo};
 use snapline_store::history::{UploadState as HistoryUploadState, UploadUpdate};
 use snapline_store::settings::uploads::Retry;
 use snapline_store::settings::uploads::{DestinationRef, Uploads};
@@ -29,7 +29,6 @@ pub enum Event {
     StateChanged(UploadState),
 }
 
-pub const LAST_LINK_KEY: &str = "last_link";
 pub const TEST_RUN_ID: &str = "snapline-destination-test";
 
 pub const UPLOAD_COMPLETE_TITLE: &str = "Upload complete";
@@ -37,6 +36,7 @@ pub const UPLOAD_COMPLETE_TITLE: &str = "Upload complete";
 pub struct LocalCapture {
     pub path: std::path::PathBuf,
     pub thumbnail: Option<std::path::PathBuf>,
+    pub can_copy_image: bool,
 }
 
 pub fn upload_notice(
@@ -44,9 +44,10 @@ pub fn upload_notice(
     local: Option<&LocalCapture>,
 ) -> Option<snapline_core::ports::RichNotice> {
     use crate::saver::file_url;
-    use snapline_core::ports::{NoticeButton, RichNotice};
+    use snapline_core::ports::{NoticeButton, NoticeButtonTarget, RichNotice};
 
-    if !notifies_for(&state.file_name) {
+    let kind = snapline_core::media::classify(&state.file_name, &[]);
+    if !notifies_for(kind) {
         return None;
     }
     let link = state.link.as_deref().filter(|link| !link.is_empty());
@@ -54,11 +55,7 @@ pub fn upload_notice(
     let mut buttons = Vec::new();
     let mut lines = vec![state.file_name.clone()];
     let open = if let Some(link) = link {
-        lines.push(link.to_owned());
-        buttons.push(NoticeButton {
-            label: "Open link".to_owned(),
-            target: link.to_owned(),
-        });
+        buttons.push(NoticeButton::open("Open link", link.to_owned()));
         link.to_owned()
     } else {
         let folder = folder?;
@@ -66,10 +63,15 @@ pub fn upload_notice(
         file_url(folder)
     };
     if let Some(folder) = folder {
-        buttons.push(NoticeButton {
-            label: "Open folder".to_owned(),
-            target: file_url(folder),
-        });
+        buttons.push(NoticeButton::open("Open folder", file_url(folder)));
+    }
+    if kind == MediaKind::Image && local.is_some_and(|capture| capture.can_copy_image) {
+        if let Some(id) = state.capture_id.filter(|id| *id > 0) {
+            buttons.push(NoticeButton {
+                label: "Copy image".to_owned(),
+                target: NoticeButtonTarget::CopyImage(id),
+            });
+        }
     }
     Some(RichNotice {
         title: UPLOAD_COMPLETE_TITLE.to_owned(),
@@ -81,11 +83,8 @@ pub fn upload_notice(
     })
 }
 
-fn notifies_for(file_name: &str) -> bool {
-    matches!(
-        snapline_core::media::classify(file_name, &[]),
-        MediaKind::Image | MediaKind::Video | MediaKind::Gif
-    )
+fn notifies_for(kind: MediaKind) -> bool {
+    matches!(kind, MediaKind::Image | MediaKind::Video | MediaKind::Gif)
 }
 
 fn open_label(file_name: &str) -> &'static str {
@@ -104,7 +103,9 @@ pub fn upload_failed_notice(
     use crate::saver::file_url;
     use snapline_core::ports::{NoticeButton, RichNotice};
 
-    if state.status != UploadStatus::Failed || !notifies_for(&state.file_name) {
+    if state.status != UploadStatus::Failed
+        || !notifies_for(snapline_core::media::classify(&state.file_name, &[]))
+    {
         return None;
     }
     let reason = state
@@ -116,15 +117,12 @@ pub fn upload_failed_notice(
     let mut open = None;
     if let Some(local) = local {
         let image_url = file_url(&local.path);
-        buttons.push(NoticeButton {
-            label: open_label(&state.file_name).to_owned(),
-            target: image_url.clone(),
-        });
+        buttons.push(NoticeButton::open(
+            open_label(&state.file_name),
+            image_url.clone(),
+        ));
         if let Some(folder) = local.path.parent() {
-            buttons.push(NoticeButton {
-                label: "Open folder".to_owned(),
-                target: file_url(folder),
-            });
+            buttons.push(NoticeButton::open("Open folder", file_url(folder)));
         }
         open = Some(image_url);
     }
@@ -158,8 +156,10 @@ fn local_capture(services: &Services, id: i64) -> Option<LocalCapture> {
     let repo = HistoryRepo::open_read(&paths.history_file).ok()?;
     let capture = repo.get(id).ok()??;
     let thumbnail = crate::thumbs::existing_thumbnail(&paths.thumbs_dir, id).map(|(path, _)| path);
+    let path = std::path::PathBuf::from(capture.path);
     Some(LocalCapture {
-        path: std::path::PathBuf::from(capture.path),
+        can_copy_image: capture.kind == CaptureKind::Image && path.is_file(),
+        path,
         thumbnail,
     })
 }
@@ -184,25 +184,48 @@ pub fn destination_for(uploads: &Uploads, media: MediaKind) -> &DestinationRef {
 }
 
 pub fn last_link(services: &Services) -> Result<Option<String>, ServiceError> {
-    let settings = services.settings_snapshot()?;
-    Ok(settings
-        .uploads
-        .extra
-        .get(LAST_LINK_KEY)
-        .and_then(toml::Value::as_str)
-        .map(str::to_owned))
+    let path = services.paths()?.history_file;
+    if !path.is_file() {
+        return Ok(None);
+    }
+    HistoryRepo::open_read(&path)
+        .and_then(|repo| repo.latest_upload_url())
+        .map_err(|error| ServiceError::Io(error.to_string()))
 }
 
-pub fn record_last_link(services: &Services, link: &str) -> Result<(), ServiceError> {
-    let mut uploads = serde_json::Map::new();
-    uploads.insert(
-        LAST_LINK_KEY.to_owned(),
-        serde_json::Value::String(link.to_owned()),
-    );
-    let mut patch = serde_json::Map::new();
-    patch.insert("uploads".to_owned(), serde_json::Value::Object(uploads));
-    services.update_settings(&serde_json::Value::Object(patch))?;
-    Ok(())
+#[cfg(test)]
+pub(crate) fn seed_done_upload(services: &Services, name: &str, url: &str, updated_at: i64) -> i64 {
+    use snapline_store::history::{CaptureKind, NewCapture};
+
+    let path = services.paths().expect("paths").history_file;
+    let mut repo = HistoryRepo::open_write(&path).expect("history");
+    let id = repo
+        .record(NewCapture {
+            kind: CaptureKind::Image,
+            path: format!("C:\\captures\\{name}"),
+            bytes: 3,
+            width: None,
+            height: None,
+            duration_ms: None,
+            source_app: None,
+            created_at: updated_at,
+            ocr_text: None,
+        })
+        .expect("capture");
+    repo.set_upload(UploadUpdate {
+        sent: 0,
+        total: 0,
+        capture_id: id,
+        dest_id: "test".to_owned(),
+        state: HistoryUploadState::Done,
+        url: Some(url.to_owned()),
+        deletion_url: None,
+        error: None,
+        attempts: 1,
+        updated_at,
+    })
+    .expect("upload");
+    id
 }
 
 pub fn maintain_history(services: &Services, startup: bool) -> Result<(), ServiceError> {
@@ -539,11 +562,6 @@ impl UploaderThread {
                 notify_uploaded(&sink_services, &state);
             }
             if state.status == UploadStatus::Done && state.run_id.as_deref() != Some(TEST_RUN_ID) {
-                if let Some(link) = state.link.as_deref() {
-                    if let Err(error) = record_last_link(&sink_services, link) {
-                        tracing::warn!(%error, "the last link could not be saved");
-                    }
-                }
                 notify_uploaded(&sink_services, &state);
             }
             let _ = events.send(AppEvent::Upload(Event::StateChanged(state)));
@@ -687,6 +705,9 @@ pub fn run(action: &ActionId, services: &Services) -> Result<(), ServiceError> {
             .upload()
             .handle(UploadReq::PickAndUpload)
             .map(|_| ()),
+        crate::shell_actions::COPY_LAST_LINK => {
+            crate::shell_actions::run(action.as_str(), services)
+        }
         _ => Err(ServiceError::NotYet),
     }
 }
@@ -966,9 +987,12 @@ mod tests {
 
     #[test]
     fn an_image_upload_notice_carries_the_link_thumbnail_and_buttons() {
+        use snapline_core::ports::{NoticeButton, NoticeButtonTarget};
+
         let local = LocalCapture {
             path: std::path::PathBuf::from(r"C:\Users\Aaron\Pictures\Snap line\shot.png"),
             thumbnail: Some(std::path::PathBuf::from(r"C:\Thumbs\7.webp")),
+            can_copy_image: true,
         };
         let notice = upload_notice(
             &done_state("shot.png", Some("https://example.test/shot.png")),
@@ -977,22 +1001,24 @@ mod tests {
         .expect("notice");
         assert_eq!(notice.title, "Upload complete");
         assert_eq!(notice.tag.as_deref(), Some("capture-7"));
-        assert_eq!(notice.lines, ["shot.png", "https://example.test/shot.png"]);
+        assert_eq!(notice.lines, ["shot.png"]);
         assert_eq!(
             notice.open.as_deref(),
             Some("https://example.test/shot.png")
         );
         assert_eq!(notice.image, local.thumbnail);
-        let buttons: Vec<(&str, &str)> = notice
-            .buttons
-            .iter()
-            .map(|button| (button.label.as_str(), button.target.as_str()))
-            .collect();
         assert_eq!(
-            buttons,
+            notice.buttons,
             [
-                ("Open link", "https://example.test/shot.png"),
-                ("Open folder", "file:///C:/Users/Aaron/Pictures/Snap%20line"),
+                NoticeButton::open("Open link", "https://example.test/shot.png".to_owned()),
+                NoticeButton::open(
+                    "Open folder",
+                    "file:///C:/Users/Aaron/Pictures/Snap%20line".to_owned()
+                ),
+                NoticeButton {
+                    label: "Copy image".to_owned(),
+                    target: NoticeButtonTarget::CopyImage(7),
+                },
             ]
         );
     }
@@ -1002,6 +1028,7 @@ mod tests {
         let local = LocalCapture {
             path: std::path::PathBuf::from(r"C:\Pics\shot.png"),
             thumbnail: None,
+            can_copy_image: false,
         };
         let notice = upload_notice(&done_state("shot.png", None), Some(&local)).expect("notice");
         assert_eq!(notice.open.as_deref(), Some("file:///C:/Pics"));
@@ -1018,6 +1045,7 @@ mod tests {
         let local = LocalCapture {
             path: std::path::PathBuf::from(r"C:\Pics\shot.png"),
             thumbnail: None,
+            can_copy_image: true,
         };
         let notice = upload_failed_notice(&state, Some(&local)).expect("notice");
         assert_eq!(notice.title, "Upload failed");
@@ -1050,10 +1078,16 @@ mod tests {
     #[test]
     fn a_video_upload_gets_an_upload_complete_notice_with_the_link() {
         let state = done_state("clip.mp4", Some("https://example.test/clip.mp4"));
-        let notice = upload_notice(&state, None).expect("notice");
+        let local = LocalCapture {
+            path: std::path::PathBuf::from(r"C:\Pics\clip.mp4"),
+            thumbnail: None,
+            can_copy_image: false,
+        };
+        let notice = upload_notice(&state, Some(&local)).expect("notice");
         assert_eq!(notice.title, "Upload complete");
         assert_eq!(notice.tag.as_deref(), Some("capture-7"));
         assert_eq!(notice.buttons[0].label, "Open link");
+        assert_eq!(notice.buttons.len(), 2);
         let gif = done_state("clip.gif", Some("https://example.test/clip.gif"));
         assert!(upload_notice(&gif, None).is_some());
     }
@@ -1065,6 +1099,7 @@ mod tests {
         let local = LocalCapture {
             path: std::path::PathBuf::from(r"C:\Pics\clip.mp4"),
             thumbnail: None,
+            can_copy_image: false,
         };
         let notice = upload_failed_notice(&state, Some(&local)).expect("notice");
         assert_eq!(notice.title, "Upload failed");
@@ -1078,128 +1113,60 @@ mod tests {
     }
 
     #[test]
-    fn a_successful_upload_saves_the_last_link_in_settings() {
+    fn the_last_link_is_the_newest_finished_upload_in_history() {
         let fixture = settings_fixture();
-        let uploader = Arc::new(TestUploader {
-            calls: Mutex::new(0),
-        });
-        let thread = UploaderThread::start(
-            &fixture.services,
-            Arc::new(TestSecrets),
-            queue::RetryPolicy::new(0),
-            Arc::new(TestFiles),
-            Arc::new(TestDestinations { uploader }),
-        )
-        .expect("uploader thread");
-        let accepted = thread
-            .service()
-            .handle(UploadReq::UploadElsewhere {
-                capture_id: 1,
-                dest: "test".to_owned(),
-            })
-            .expect("accepted");
-        let UploadResp::Accepted { id } = accepted else {
-            panic!("unexpected response");
-        };
-        loop {
-            match event(&thread) {
-                AppEvent::Upload(Event::StateChanged(state))
-                    if state.id == id && state.status == UploadStatus::Done =>
-                {
-                    break;
-                }
-                AppEvent::Upload(Event::StateChanged(_)) => continue,
-                other => panic!("unexpected event: {other:?}"),
-            }
-        }
-        let expected = Some("https://example.test/shot.png".to_owned());
+        seed_done_upload(&fixture.services, "a.png", "https://example.test/a.png", 10);
+        seed_done_upload(&fixture.services, "b.png", "https://example.test/b.png", 20);
         assert_eq!(
-            thread.service().handle(UploadReq::LastLink),
-            Ok(UploadResp::LastLink {
-                link: expected.clone()
-            })
+            last_link(&fixture.services),
+            Ok(Some("https://example.test/b.png".to_owned()))
         );
-        let settings = fixture.services.settings_snapshot().expect("settings");
+    }
+
+    #[test]
+    fn deleting_the_newest_upload_falls_back_and_deleting_all_clears_it() {
+        let fixture = settings_fixture();
+        let first = seed_done_upload(&fixture.services, "a.png", "https://example.test/a.png", 10);
+        let second = seed_done_upload(&fixture.services, "b.png", "https://example.test/b.png", 20);
+        let path = fixture.services.paths().expect("paths").history_file;
+        let mut repo = HistoryRepo::open_write(&path).expect("history");
+        repo.delete(second).expect("delete");
         assert_eq!(
-            settings
-                .uploads
-                .extra
-                .get(LAST_LINK_KEY)
-                .and_then(toml::Value::as_str)
-                .map(str::to_owned),
-            expected
+            last_link(&fixture.services),
+            Ok(Some("https://example.test/a.png".to_owned()))
         );
-        let settings_file = fixture.services.paths().expect("paths").settings_file;
-        let saved = std::fs::read_to_string(settings_file).expect("settings file");
-        assert!(saved.contains("last_link"));
-        thread.join().expect("join");
+        repo.delete(first).expect("delete");
+        assert_eq!(last_link(&fixture.services), Ok(None));
+        assert_eq!(
+            fixture.services.upload().handle(UploadReq::LastLink),
+            Ok(UploadResp::LastLink { link: None })
+        );
     }
 
     #[test]
     fn a_failed_upload_does_not_replace_the_last_link() {
-        struct FailingUploader;
-
-        impl queue::Uploader for FailingUploader {
-            fn upload(
-                &self,
-                _file: &queue::UploadFile,
-                _secrets: &dyn queue::SecretStore,
-            ) -> Result<queue::Uploaded, UploadError> {
-                Err(UploadError::Permanent(
-                    "the host refused the file".to_owned(),
-                ))
-            }
-
-            fn delete(
-                &self,
-                _link: &queue::DeletionLink,
-                _secrets: &dyn queue::SecretStore,
-            ) -> Result<(), UploadError> {
-                Ok(())
-            }
-        }
-
         let fixture = settings_fixture();
-        record_last_link(&fixture.services, "https://example.test/previous.png")
-            .expect("last link");
-        let thread = UploaderThread::start(
-            &fixture.services,
-            Arc::new(TestSecrets),
-            queue::RetryPolicy::new(0),
-            Arc::new(TestFiles),
-            Arc::new(TestDestinations {
-                uploader: Arc::new(FailingUploader),
-            }),
-        )
-        .expect("uploader thread");
-        let accepted = thread
-            .service()
-            .handle(UploadReq::UploadElsewhere {
-                capture_id: 1,
-                dest: "test".to_owned(),
-            })
-            .expect("accepted");
-        let UploadResp::Accepted { id } = accepted else {
-            panic!("unexpected response");
-        };
-        loop {
-            match event(&thread) {
-                AppEvent::Upload(Event::StateChanged(state))
-                    if state.id == id && state.status == UploadStatus::Failed =>
-                {
-                    break;
-                }
-                AppEvent::Upload(Event::StateChanged(_)) => continue,
-                other => panic!("unexpected event: {other:?}"),
-            }
-        }
+        seed_done_upload(&fixture.services, "a.png", "https://example.test/a.png", 10);
+        let id = seed_upload(&fixture.services, "b.png", HistoryUploadState::Failed, 20);
+        let path = fixture.services.paths().expect("paths").history_file;
+        let mut repo = HistoryRepo::open_write(&path).expect("history");
+        repo.set_upload(UploadUpdate {
+            sent: 0,
+            total: 0,
+            capture_id: id,
+            dest_id: "other".to_owned(),
+            state: HistoryUploadState::Failed,
+            url: Some("https://example.test/failed.png".to_owned()),
+            deletion_url: None,
+            error: Some("refused".to_owned()),
+            attempts: 1,
+            updated_at: 30,
+        })
+        .expect("failed upload");
         assert_eq!(
-            thread.service().handle(UploadReq::LastLink),
-            Ok(UploadResp::LastLink {
-                link: Some("https://example.test/previous.png".to_owned())
-            })
+            last_link(&fixture.services),
+            Ok(Some("https://example.test/a.png".to_owned()))
         );
-        thread.join().expect("join");
     }
 
     const DAY_MS: i64 = 86_400_000;

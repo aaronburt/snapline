@@ -22,6 +22,8 @@ pub mod magnifier;
 pub mod picker;
 pub mod pin;
 pub mod port_impl;
+pub mod quick_panel;
+pub mod quick_panel_logic;
 pub mod readout;
 pub mod record_border;
 pub mod record_controls;

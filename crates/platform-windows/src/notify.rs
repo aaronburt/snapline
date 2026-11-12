@@ -1,7 +1,9 @@
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use snapline_core::ports::{NoticeButtonTarget, RichNotice};
 use thiserror::Error;
 use windows::core::{Interface, HSTRING, PCWSTR};
 use windows::Data::Xml::Dom::XmlDocument;
@@ -24,6 +26,7 @@ pub const ICON_URI_VALUE: &str = "IconUri";
 pub const DISPLAY_NAME: &str = "Snapline";
 pub const ACTIVATION_SCHEME: &str = "snapline";
 pub const ACTIVATION_CAPTURE_PREFIX: &str = "snapline://capture/";
+const ACTIVATION_COPY_IMAGE_PREFIX: &str = "copy-image:";
 
 const MAX_LIVE_TOASTS: usize = 16;
 const TOAST_GROUP: &str = "snapline-capture";
@@ -35,8 +38,9 @@ thread_local! {
 static ACTIVATION_HANDLER: OnceLock<Mutex<Option<ActivationCallback>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ToastActivation {
-    pub capture_id: Option<u64>,
+pub enum ToastActivation {
+    OpenCapture(u64),
+    CopyImage(i64),
 }
 
 pub type ActivationCallback = Arc<dyn Fn(ToastActivation) + Send + Sync + 'static>;
@@ -109,6 +113,17 @@ pub fn parse_capture_id(arguments: &str) -> Option<u64> {
         .and_then(|id| id.parse().ok())
 }
 
+fn parse_activation(arguments: &str) -> Option<ToastActivation> {
+    if let Some(id) = arguments.strip_prefix(ACTIVATION_COPY_IMAGE_PREFIX) {
+        return id
+            .parse::<i64>()
+            .ok()
+            .filter(|id| *id > 0)
+            .map(ToastActivation::CopyImage);
+    }
+    parse_capture_id(arguments).map(ToastActivation::OpenCapture)
+}
+
 pub fn set_activation_handler<F>(handler: F)
 where
     F: Fn(ToastActivation) + Send + Sync + 'static,
@@ -148,22 +163,6 @@ pub fn show_with_target(notice: &Notice, target: &str) -> Result<(), NotifyError
     show_xml(toast_xml_with_target(notice, target))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RichButton {
-    pub label: String,
-    pub target: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RichNotice {
-    pub title: String,
-    pub lines: Vec<String>,
-    pub image: Option<PathBuf>,
-    pub open: Option<String>,
-    pub buttons: Vec<RichButton>,
-    pub tag: Option<String>,
-}
-
 const MAX_BUTTONS: usize = 5;
 
 pub fn show_rich(notice: &RichNotice) -> Result<(), NotifyError> {
@@ -198,19 +197,29 @@ fn rich_xml(notice: &RichNotice) -> String {
             )
         })
         .unwrap_or_default();
-    let mut actions = String::new();
-    for button in notice
+    let actions: String = notice
         .buttons
         .iter()
-        .filter(|button| !button.label.is_empty() && is_launchable_target(&button.target))
+        .filter(|button| !button.label.is_empty())
+        .filter_map(|button| {
+            let (activation, target) = match &button.target {
+                NoticeButtonTarget::Open(url) if is_launchable_target(url) => {
+                    ("protocol", Cow::Borrowed(url.as_str()))
+                }
+                NoticeButtonTarget::CopyImage(id) if *id > 0 => (
+                    "foreground",
+                    Cow::Owned(format!("{ACTIVATION_COPY_IMAGE_PREFIX}{id}")),
+                ),
+                _ => return None,
+            };
+            Some(format!(
+                "<action content=\"{}\" activationType=\"{activation}\" arguments=\"{}\"/>",
+                escape_xml(&button.label),
+                escape_xml(&target)
+            ))
+        })
         .take(MAX_BUTTONS)
-    {
-        actions.push_str(&format!(
-            "<action content=\"{}\" activationType=\"protocol\" arguments=\"{}\"/>",
-            escape_xml(&button.label),
-            escape_xml(&button.target)
-        ));
-    }
+        .collect();
     let actions = if actions.is_empty() {
         String::new()
     } else {
@@ -312,6 +321,9 @@ fn keep_alive(toast: ToastNotification) {
 }
 
 fn dispatch_activation(arguments: &str) {
+    let Some(activation) = parse_activation(arguments) else {
+        return;
+    };
     let callback = {
         let slot = ACTIVATION_HANDLER.get_or_init(|| Mutex::new(None));
         let guard = match slot.lock() {
@@ -321,9 +333,7 @@ fn dispatch_activation(arguments: &str) {
         guard.clone()
     };
     if let Some(callback) = callback {
-        callback(ToastActivation {
-            capture_id: parse_capture_id(arguments),
-        });
+        callback(activation);
     }
 }
 
@@ -469,6 +479,7 @@ fn wide(value: &str) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use snapline_core::ports::NoticeButton as RichButton;
     use windows::Win32::System::Registry::{RegDeleteKeyW, RegGetValueW, RRF_RT_REG_SZ};
 
     const TEST_KEY: &str = "SnapLineTest:io.github.aaronburt.snapline";
@@ -515,14 +526,8 @@ mod tests {
             open: Some("file:///C:/Shots/a.png".to_string()),
             tag: Some("capture-7".to_string()),
             buttons: vec![
-                RichButton {
-                    label: "Open image".to_string(),
-                    target: "file:///C:/Shots/a.png".to_string(),
-                },
-                RichButton {
-                    label: "Open folder".to_string(),
-                    target: "file:///C:/Shots".to_string(),
-                },
+                RichButton::open("Open image", "file:///C:/Shots/a.png".to_string()),
+                RichButton::open("Open folder", "file:///C:/Shots".to_string()),
             ],
         }
     }
@@ -551,19 +556,18 @@ mod tests {
         let mut notice = sample_rich();
         notice.open = Some("javascript:alert(1)".to_string());
         notice.buttons = vec![
-            RichButton {
-                label: "Run".to_string(),
-                target: "ms-settings:privacy".to_string(),
-            },
-            RichButton {
-                label: "Open link".to_string(),
-                target: "https://example.test/a.png?x=1&y=2".to_string(),
-            },
+            RichButton::open("Run", "ms-settings:privacy".to_string()),
+            RichButton::open(
+                "Open link",
+                "https://example.test/a.png?x=1&y=2".to_string(),
+            ),
+            RichButton::open("Forged copy", "copy-image:7".to_string()),
         ];
         let xml = rich_xml(&notice);
         assert!(!xml.contains("javascript"));
         assert!(!xml.contains("ms-settings"));
         assert!(!xml.contains("launch="));
+        assert!(!xml.contains("copy-image:7"));
         assert!(xml.contains("arguments=\"https://example.test/a.png?x=1&amp;y=2\""));
     }
 
@@ -591,12 +595,33 @@ mod tests {
     fn a_rich_toast_caps_the_button_count() {
         let mut notice = sample_rich();
         notice.buttons = (0..9)
-            .map(|index| RichButton {
-                label: format!("b{index}"),
-                target: "https://example.test/".to_string(),
-            })
+            .map(|index| RichButton::open(format!("b{index}"), "https://example.test/".to_string()))
             .collect();
         assert_eq!(rich_xml(&notice).matches("<action ").count(), MAX_BUTTONS);
+    }
+
+    #[test]
+    fn a_copy_button_emits_an_app_activation_for_the_saved_image() {
+        let mut notice = sample_rich();
+        notice.buttons.push(RichButton {
+            label: "Copy image".to_owned(),
+            target: NoticeButtonTarget::CopyImage(7),
+        });
+        let xml = rich_xml(&notice);
+        assert_eq!(xml.matches("<action ").count(), 3);
+        assert!(xml.contains(
+            "<action content=\"Copy image\" activationType=\"foreground\" arguments=\"copy-image:7\"/>"
+        ));
+        assert_eq!(
+            parse_activation("copy-image:7"),
+            Some(ToastActivation::CopyImage(7))
+        );
+        assert_eq!(parse_activation("copy-image:0"), None);
+        assert_eq!(parse_activation("copy-image:7/path"), None);
+        assert_eq!(
+            parse_activation("snapline://capture/7"),
+            Some(ToastActivation::OpenCapture(7))
+        );
     }
 
     #[test]

@@ -9,7 +9,8 @@ use windows::Win32::System::Threading::{
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, GetWindowLongPtrW, GetWindowThreadProcessId, GWL_EXSTYLE, WS_EX_TRANSPARENT,
+    FindWindowExW, GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic, GWL_EXSTYLE,
+    WS_EX_TRANSPARENT,
 };
 
 use crate::windows_enum::enumerate;
@@ -27,6 +28,33 @@ pub fn app_window_at(point: Point) -> Option<WindowId> {
         hwnd: entry.hwnd,
     });
     topmost_at(entries, point).and_then(window_id)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturableWindow {
+    pub id: WindowId,
+    pub title: String,
+}
+
+pub fn capturable_windows() -> Vec<CapturableWindow> {
+    // SAFETY: reads the id of the current process and has no preconditions.
+    let own = unsafe { GetCurrentProcessId() };
+    enumerate(&[])
+        .into_iter()
+        .filter_map(|entry| {
+            let title = entry.title?;
+            // SAFETY: the handle came from the enumeration moments ago and a stale one only returns false.
+            let minimised = unsafe { IsIconic(entry.hwnd) }.as_bool();
+            if !listable(process_id(entry.hwnd) == Some(own), minimised, &title) {
+                return None;
+            }
+            window_id(entry.hwnd).map(|id| CapturableWindow { id, title })
+        })
+        .collect()
+}
+
+fn listable(own: bool, minimised: bool, title: &str) -> bool {
+    !own && !minimised && !title.trim().is_empty()
 }
 
 pub fn process_name(id: WindowId) -> Option<String> {
@@ -148,6 +176,14 @@ mod tests {
             window(3, rect(0, 0, 800, 800)),
         ];
         assert_eq!(found(windows, point(50, 50)), Some(2));
+    }
+
+    #[test]
+    fn own_minimised_and_untitled_windows_are_not_listed() {
+        assert!(listable(false, false, "Notes"));
+        assert!(!listable(true, false, "Snapline"));
+        assert!(!listable(false, true, "Notes"));
+        assert!(!listable(false, false, "   "));
     }
 
     #[test]

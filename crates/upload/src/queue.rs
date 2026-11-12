@@ -665,9 +665,6 @@ struct JobRecord {
     job: UploadJob,
     status: Status,
     attempts: u32,
-    link: Option<String>,
-    page_link: Option<String>,
-    deletion_link: Option<String>,
     error: Option<UploadError>,
     progress: Arc<Mutex<ProgressData>>,
 }
@@ -680,9 +677,6 @@ impl JobRecord {
             job,
             status: Status::Queued,
             attempts: 0,
-            link: None,
-            page_link: None,
-            deletion_link: None,
             error: None,
             progress: Arc::new(Mutex::new(ProgressData {
                 sent: 0,
@@ -716,9 +710,9 @@ impl JobRecord {
             total,
             link_batch: self.job.link_batch.clone(),
             attempts: self.attempts,
-            link: self.link.clone(),
-            page_link: self.page_link.clone(),
-            deletion_link: self.deletion_link.clone(),
+            link: None,
+            page_link: None,
+            deletion_link: None,
             error: self.error.clone(),
         }
     }
@@ -783,6 +777,7 @@ enum Wait {
 struct State {
     pending: VecDeque<UploadId>,
     records: HashMap<UploadId, JobRecord>,
+    completed: HashMap<UploadId, UploadSnapshot>,
     listener: Listener,
 }
 
@@ -791,14 +786,37 @@ impl State {
         Self {
             pending: VecDeque::new(),
             records: HashMap::new(),
+            completed: HashMap::new(),
             listener,
         }
     }
 
+    fn snapshot(&self, id: UploadId) -> Option<UploadSnapshot> {
+        self.records
+            .get(&id)
+            .map(JobRecord::snapshot)
+            .or_else(|| self.completed.get(&id).cloned())
+    }
+
     fn emit(&self, id: UploadId) {
-        if let Some(record) = self.records.get(&id) {
-            self.listener.emit(UploadEvent(record.snapshot()));
+        if let Some(snapshot) = self.snapshot(id) {
+            self.listener.emit(UploadEvent(snapshot));
         }
+    }
+
+    fn complete(&mut self, id: UploadId, uploaded: Uploaded) {
+        let Some(mut record) = self.records.remove(&id) else {
+            return;
+        };
+        record.status = Status::Done;
+        let mut snapshot = record.snapshot();
+        drop(record);
+        snapshot.sent = snapshot.total;
+        snapshot.link = Some(uploaded.link);
+        snapshot.page_link = uploaded.page_link;
+        snapshot.deletion_link = uploaded.deletion_link.map(|link| link.url);
+        self.completed.insert(id, snapshot);
+        self.emit(id);
     }
 
     fn handle(&mut self, command: Command, current: Option<UploadId>) -> Control {
@@ -812,7 +830,15 @@ impl State {
                 Control::Continue
             }
             Command::Cancel { id, reply } => {
-                let status = self.records.get(&id).map(|record| record.status.clone());
+                let status = self
+                    .records
+                    .get(&id)
+                    .map(|record| record.status.clone())
+                    .or_else(|| {
+                        self.completed
+                            .get(&id)
+                            .map(|snapshot| snapshot.status.clone())
+                    });
                 match status {
                     None => {
                         let _ = reply.send(Err(QueueError::NotFound));
@@ -854,9 +880,6 @@ impl State {
                     if let Some(record) = self.records.get_mut(&id) {
                         record.status = Status::Queued;
                         record.attempts = 0;
-                        record.link = None;
-                        record.page_link = None;
-                        record.deletion_link = None;
                         record.error = None;
                         if record.job.link_batch.is_some() {
                             record.job.link_batch = Some(LinkBatch {
@@ -874,7 +897,7 @@ impl State {
                     self.pending.push_back(id);
                     let _ = reply.send(Ok(()));
                     self.emit(id);
-                } else if self.records.contains_key(&id) {
+                } else if self.records.contains_key(&id) || self.completed.contains_key(&id) {
                     let _ = reply.send(Err(QueueError::NotRetryable));
                 } else {
                     let _ = reply.send(Err(QueueError::NotFound));
@@ -882,13 +905,16 @@ impl State {
                 Control::Continue
             }
             Command::State { id, reply } => {
-                let snapshot = self.records.get(&id).map(JobRecord::snapshot);
-                let _ = reply.send(snapshot);
+                let _ = reply.send(self.snapshot(id));
                 Control::Continue
             }
             Command::List { reply } => {
-                let mut snapshots: Vec<UploadSnapshot> =
-                    self.records.values().map(JobRecord::snapshot).collect();
+                let mut snapshots: Vec<UploadSnapshot> = self
+                    .records
+                    .values()
+                    .map(JobRecord::snapshot)
+                    .chain(self.completed.values().cloned())
+                    .collect();
                 snapshots.sort_by_key(|snapshot| snapshot.id);
                 let _ = reply.send(snapshots);
                 Control::Continue
@@ -974,7 +1000,7 @@ fn run_job(
         let snapshot = record.snapshot();
         let control = JobUploadControl {
             cancelled: Arc::clone(&cancelled),
-            progress: Arc::clone(&progress),
+            progress,
             listener: state.listener.clone(),
             snapshot,
         };
@@ -982,7 +1008,7 @@ fn run_job(
         let result = thread::scope(|scope| {
             let attempt = match thread::Builder::new()
                 .name("snapline-upload-transfer".to_owned())
-                .spawn_scoped(scope, || {
+                .spawn_scoped(scope, move || {
                     uploader.upload_controlled(&file, secrets, &control)
                 }) {
                 Ok(attempt) => attempt,
@@ -1014,20 +1040,7 @@ fn run_job(
         };
         match result {
             Ok(uploaded) => {
-                if let Some(record) = state.records.get_mut(&id) {
-                    record.status = Status::Done;
-                    if let Ok(mut progress) = record.progress.lock() {
-                        progress.sent = progress.total;
-                    }
-                    if matches!(&record.job.file.body, UploadBody::Bytes(_)) {
-                        record.job.file.body = UploadBody::Bytes(Arc::new(Vec::new()));
-                    }
-                    record.link = Some(uploaded.link);
-                    record.page_link = uploaded.page_link;
-                    record.deletion_link = uploaded.deletion_link.map(|link| link.url);
-                    record.error = None;
-                }
-                state.emit(id);
+                state.complete(id, uploaded);
                 return true;
             }
             Err(error) => {
@@ -1286,6 +1299,64 @@ mod tests {
             handle.state(third).expect("state").expect("third").status,
             Status::Done
         );
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn successful_upload_releases_transfer_resources_before_emitting_done() {
+        let uploaded = Uploaded::new("https://example.test/shot.png")
+            .with_page_link("https://example.test/shot")
+            .with_deletion_link(DeletionLink::new(
+                "test",
+                "https://example.test/delete/shot",
+            ));
+        let uploader = FakeUploader::new(vec![Ok(uploaded)]);
+        let uploader_ref = Arc::downgrade(&uploader);
+        let job = job(uploader, "shot.png").with_capture_id(42);
+        let UploadBody::Bytes(payload) = &job.file.body else {
+            panic!("expected an in-memory upload");
+        };
+        let payload_ref = Arc::downgrade(payload);
+        let (done, completion) = mpsc::channel();
+        let queue =
+            Queue::start_with_sink(Arc::new(TestSecrets), RetryPolicy::new(0), move |event| {
+                if event.0.status == Status::Done {
+                    let _ = done.send((
+                        event.0,
+                        uploader_ref.upgrade().is_none(),
+                        payload_ref.upgrade().is_none(),
+                    ));
+                }
+            })
+            .expect("queue");
+        let handle = queue.handle();
+        let id = handle.enqueue(job).expect("enqueue");
+        let (snapshot, uploader_released, payload_released) = completion
+            .recv_timeout(Duration::from_secs(5))
+            .expect("completion");
+        assert!(uploader_released);
+        assert!(payload_released);
+        assert_eq!(snapshot.id, id);
+        assert_eq!(snapshot.capture_id, Some(42));
+        assert_eq!(snapshot.sent, 3);
+        assert_eq!(snapshot.total, 3);
+        assert!(!snapshot.cancellable);
+        assert_eq!(
+            snapshot.link.as_deref(),
+            Some("https://example.test/shot.png")
+        );
+        assert_eq!(
+            snapshot.page_link.as_deref(),
+            Some("https://example.test/shot")
+        );
+        assert_eq!(
+            snapshot.deletion_link.as_deref(),
+            Some("https://example.test/delete/shot")
+        );
+        assert_eq!(handle.state(id).expect("state"), Some(snapshot.clone()));
+        assert_eq!(handle.list().expect("list"), vec![snapshot]);
+        assert_eq!(handle.cancel(id), Err(QueueError::NotCancellable));
+        assert_eq!(handle.retry(id), Err(QueueError::NotRetryable));
         queue.join().expect("join");
     }
 

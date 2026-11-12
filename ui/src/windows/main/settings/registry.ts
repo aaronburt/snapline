@@ -12,7 +12,7 @@ export const settingRegistry: SettingEntry[] = [
     pageLabel: 'General',
     route: '/settings/general',
     title: 'Open capture on tray click',
-    description: 'When off, clicking the tray icon opens the menu',
+    description: 'When off, clicking the tray icon opens the Quick Panel',
   },
   {
     page: 'settings-general',

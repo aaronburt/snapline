@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { onEvent } from '../../../lib/events';
   import EmptyState from '../../../components/EmptyState.svelte';
   import Icon from '../../../components/Icon.svelte';
@@ -12,6 +12,7 @@
     historyConfirmDelete,
     historyCopyImage,
     historyDelete,
+    historyDeleteMany,
     historyOpenFile,
     historyPage,
     historySearch,
@@ -33,6 +34,7 @@
     groupCaptures,
     historyFilters,
   } from './data';
+  import { readMarquee, startMarquee, type Marquee } from './marquee';
   import { searchQuery } from './search';
 
   let filterLabel = $state('All');
@@ -43,7 +45,12 @@
   let loading = $state(false);
   let loaded = $state(false);
   let errorMessage = $state('');
-  let selectedId = $state<number | null>(null);
+  let selectedIds = $state.raw<ReadonlySet<number>>(new Set());
+  let anchorId = $state<number | null>(null);
+  let focusId = $state<number | null>(null);
+  let deleting = $state(false);
+  let deleteError = $state('');
+  let marquee = $state.raw<ReturnType<typeof readMarquee> | null>(null);
   let scroller = $state<HTMLDivElement | undefined>(undefined);
   let scrollTop = $state(0);
   let viewportHeight = $state(600);
@@ -52,11 +59,17 @@
   let uploadsById = $state<Record<number, UploadState>>({});
   let stats = $state<HistoryStats>({ count: 0, bytes: 0, uploadedThisWeek: 0 });
   let token = 0;
+  let drag: Marquee | null = null;
+  let dragFrame = 0;
+  let suppressClick = false;
 
   const filter = $derived(filterValue(filterLabel));
   const searching = $derived($searchQuery.trim() !== '');
   const groups = $derived(groupCaptures(items));
-  const selected = $derived(items.find((capture) => capture.id === selectedId) ?? null);
+  const selected = $derived(
+    selectedIds.size === 1 ? (items.find((capture) => selectedIds.has(capture.id)) ?? null) : null,
+  );
+  const highlighted = $derived(marquee?.ids ?? selectedIds);
   const activeUploads = $derived.by(() => {
     const byCapture: Record<number, UploadState> = {};
     for (const upload of Object.values(uploadsById)) {
@@ -105,8 +118,16 @@
         return;
       }
       if (reset) {
+        if (drag && items.some((item, index) => item.id !== page.items[index]?.id)) {
+          stopDrag();
+        }
         items = page.items;
-        selectedId = page.items.some((item) => item.id === selectedId) ? selectedId : null;
+        if (selectedIds.size || focusId !== null || anchorId !== null) {
+          const available = new Set(items.map((item) => item.id));
+          selectedIds = new Set([...selectedIds].filter((id) => available.has(id)));
+          if (focusId !== null && !available.has(focusId)) focusId = null;
+          if (anchorId !== null && !available.has(anchorId)) anchorId = null;
+        }
       } else {
         const known = new Set(items.map((capture) => capture.id));
         items = [...items, ...page.items.filter((capture) => !known.has(capture.id))];
@@ -136,8 +157,10 @@
   }
 
   function reload(): void {
+    stopDrag();
     items = [];
-    selectedId = null;
+    clearSelection();
+    deleteError = '';
     next = null;
     loaded = false;
     scrollTop = 0;
@@ -218,6 +241,7 @@
     return () => {
       disposed = true;
       unlisten?.();
+      stopDrag();
     };
   });
 
@@ -226,6 +250,7 @@
     scrollTop = element.scrollTop;
     viewportHeight = element.clientHeight || viewportHeight;
     viewportWidth = element.clientWidth || viewportWidth;
+    if (drag?.active) scheduleMarquee();
     if (next && !loading) {
       const nearBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 480;
       if (nearBottom) {
@@ -234,13 +259,35 @@
     }
   }
 
-  function select(id: number): void {
-    selectedId = id;
+  function clearSelection(): void {
+    selectedIds = new Set();
+    anchorId = null;
+    focusId = null;
+  }
+
+  function select(id: number, event: MouseEvent | KeyboardEvent): void {
+    const additive = event.ctrlKey || event.metaKey;
+    const ids = additive ? new Set(selectedIds) : new Set<number>();
+    if (event.shiftKey && anchorId !== null) {
+      const from = items.findIndex((item) => item.id === anchorId);
+      const to = items.findIndex((item) => item.id === id);
+      if (from >= 0 && to >= 0) {
+        for (const item of items.slice(Math.min(from, to), Math.max(from, to) + 1)) {
+          ids.add(item.id);
+        }
+      }
+    } else {
+      anchorId = id;
+      if (ids.has(id)) ids.delete(id);
+      else ids.add(id);
+    }
+    selectedIds = ids;
+    focusId = id;
   }
 
   function closeDetails(): void {
-    const row = scroller?.querySelector<HTMLElement>(`[data-capture-id="${selectedId}"]`);
-    selectedId = null;
+    const row = scroller?.querySelector<HTMLElement>(`[data-capture-id="${selected?.id}"]`);
+    clearSelection();
     row?.focus({ preventScroll: true });
   }
 
@@ -249,24 +296,104 @@
     if (
       target instanceof Element &&
       target.closest('main.page') &&
-      !target.closest('[data-capture-id], button, a, input, select, textarea')
+      !target.closest('[data-capture-id], .selection-bar, button, a, input, select, textarea')
     ) {
-      selectedId = null;
+      clearSelection();
     }
   }
 
-  function move(delta: number): void {
+  function move(delta: number, event: KeyboardEvent): void {
     if (items.length === 0) {
       return;
     }
-    const index = items.findIndex((capture) => capture.id === selectedId);
-    if (index === -1) {
-      selectedId = items[0].id;
+    const index = items.findIndex((capture) => capture.id === (focusId ?? anchorId));
+    const target = index < 0 ? 0 : Math.min(items.length - 1, Math.max(0, index + delta));
+    const id = items[target].id;
+    select(id, event);
+    void tick().then(() => {
+      scroller
+        ?.querySelector<HTMLElement>(`[data-capture-id="${id}"]`)
+        ?.focus({ preventScroll: true });
+    });
+  }
+
+  function beginDrag(event: PointerEvent): void {
+    if (event.button !== 0 || event.pointerType !== 'mouse') return;
+    suppressClick = false;
+    if (
+      !scroller ||
+      !items.length ||
+      !(event.target instanceof Element) ||
+      event.target.closest('button:not([data-capture-id]), a, input, select, textarea, th')
+    ) {
       return;
     }
-    const step = view === 'grid' ? delta * columns : delta;
-    const target = Math.min(items.length - 1, Math.max(0, index + step));
-    selectedId = items[target].id;
+    const base = event.ctrlKey || event.metaKey || event.shiftKey ? selectedIds : new Set<number>();
+    drag = startMarquee(scroller, event, base);
+  }
+
+  function scheduleMarquee(): void {
+    if (!dragFrame) dragFrame = requestAnimationFrame(paintMarquee);
+  }
+
+  function paintMarquee(): void {
+    dragFrame = 0;
+    if (!scroller || !drag?.active) return;
+    marquee = readMarquee(scroller, drag);
+    if (marquee.scroll) {
+      const before = scroller.scrollTop;
+      scroller.scrollTop += marquee.scroll;
+      if (scroller.scrollTop !== before) scheduleMarquee();
+    }
+  }
+
+  function moveDrag(event: PointerEvent): void {
+    if (!scroller || !drag || event.pointerId !== drag.pointerId) return;
+    drag.x = event.clientX;
+    drag.y = event.clientY;
+    if (!drag.active) {
+      if (Math.hypot(drag.x - drag.startX, drag.y - drag.startY) < 5) return;
+      drag.active = true;
+      suppressClick = true;
+      scroller.setPointerCapture?.(drag.pointerId);
+    }
+    scheduleMarquee();
+  }
+
+  function finishDrag(event: PointerEvent): void {
+    if (!scroller || !drag || event.pointerId !== drag.pointerId) return;
+    if (drag.active) {
+      drag.x = event.clientX;
+      drag.y = event.clientY;
+      const { ids } = readMarquee(scroller, drag);
+      selectedIds = ids;
+      anchorId = items.find((item) => ids.has(item.id))?.id ?? null;
+      focusId = null;
+    }
+    stopDrag();
+  }
+
+  function stopDrag(): void {
+    const pointerId = drag?.pointerId;
+    drag = null;
+    if (dragFrame) cancelAnimationFrame(dragFrame);
+    dragFrame = 0;
+    marquee = null;
+    if (pointerId !== undefined && scroller?.hasPointerCapture?.(pointerId)) {
+      scroller.releasePointerCapture(pointerId);
+    }
+  }
+
+  function cancelDrag(event: PointerEvent): void {
+    if (event.pointerId === drag?.pointerId) stopDrag();
+  }
+
+  function suppressDragClick(event: MouseEvent): void {
+    if (suppressClick && event.detail > 0) {
+      suppressClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+    }
   }
 
   function copyImage(id: number): void {
@@ -328,32 +455,35 @@
     });
   }
 
-  async function askDelete(id: number): Promise<void> {
+  async function askDelete(ids: number[]): Promise<void> {
+    if (deleting || !ids.length) return;
+    deleting = true;
+    deleteError = '';
     try {
-      const confirmed = await historyConfirmDelete(id);
-      if (!confirmed) {
-        return;
+      let removed = ids;
+      if (ids.length === 1) {
+        if (!(await historyConfirmDelete(ids[0]))) return;
+        await historyDelete(ids[0]);
+      } else {
+        const result = await historyDeleteMany(ids);
+        removed = result.removed;
+        if (result.failed) {
+          const noun = result.failed === 1 ? 'item' : 'items';
+          deleteError = `Could not delete ${result.failed} ${noun}. Try again.`;
+        }
       }
-      await historyDelete(id);
-      items = items.filter((capture) => capture.id !== id);
-      if (selectedId === id) {
-        selectedId = null;
+      if (removed.length) {
+        const deleted = new Set(removed);
+        items = items.filter((capture) => !deleted.has(capture.id));
+        selectedIds = new Set([...selectedIds].filter((id) => !deleted.has(id)));
+        if (focusId !== null && deleted.has(focusId)) focusId = null;
+        if (anchorId !== null && deleted.has(anchorId)) anchorId = null;
+        void refreshStats();
       }
-      void refreshStats();
     } catch (error) {
-      errorMessage = describe(error);
-    }
-  }
-
-  function openSelected(): void {
-    if (selectedId !== null) {
-      openFile(selectedId);
-    }
-  }
-
-  function copySelected(): void {
-    if (selectedId !== null) {
-      copyImage(selectedId);
+      deleteError = describe(error);
+    } finally {
+      deleting = false;
     }
   }
 
@@ -365,6 +495,14 @@
     if (target && ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) {
       return;
     }
+    if (
+      target instanceof Element &&
+      target !== document.body &&
+      target !== document.documentElement &&
+      !target.closest('.scroll, .selection-bar')
+    ) {
+      return;
+    }
     const focusable =
       target && typeof target.closest === 'function'
         ? target.closest('button, a, [tabindex]')
@@ -372,34 +510,43 @@
     if (focusable && (event.key === 'Enter' || event.key === ' ')) {
       return;
     }
-    if (event.key === 'ArrowRight') {
+    if (event.key === 'Escape' && (drag || selectedIds.size)) {
       event.preventDefault();
-      move(1);
+      if (drag) stopDrag();
+      else clearSelection();
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      move(1, event);
     } else if (event.key === 'ArrowLeft') {
       event.preventDefault();
-      move(-1);
+      move(-1, event);
     } else if (event.key === 'ArrowDown') {
       event.preventDefault();
-      move(1);
+      move(view === 'grid' ? columns : 1, event);
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
-      move(-1);
+      move(view === 'grid' ? -columns : -1, event);
     } else if (event.key === 'Enter') {
       event.preventDefault();
-      openSelected();
+      if (selected) openFile(selected.id);
     } else if (event.key === 'Delete') {
       event.preventDefault();
-      if (selectedId !== null) {
-        void askDelete(selectedId);
-      }
+      void askDelete([...selectedIds]);
     } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') {
       event.preventDefault();
-      copySelected();
+      if (selected) copyImage(selected.id);
     }
   }
 </script>
 
-<svelte:window {onkeydown} onclick={deselectBackground} />
+<svelte:window
+  {onkeydown}
+  onclick={deselectBackground}
+  onpointermove={moveDrag}
+  onpointerup={finishDrag}
+  onpointercancel={cancelDrag}
+  onblur={stopDrag}
+/>
 
 <div class="history-layout">
   <main class="page">
@@ -452,78 +599,125 @@
       </div>
     </div>
 
-    {#if errorMessage}
-      <p class="error" role="status">{errorMessage}</p>
+    {#if deleteError || errorMessage}
+      <p class="error" role="status">{deleteError || errorMessage}</p>
     {/if}
 
-    <div
-      class="scroll"
-      bind:this={scroller}
-      bind:clientWidth={viewportWidth}
-      bind:clientHeight={viewportHeight}
-      {onscroll}
-    >
-      {#if loaded && !loading && !errorMessage && items.length === 0}
-        <div class="empty">
-          {#if searching || filter !== 'all'}
-            <EmptyState
-              title="No matching items"
-              text="Clear the search or change the filter to see more of your history."
-            />
-            <div class="empty-actions">
-              {#if searching}
-                <button type="button" class="upload-file hv" onclick={() => searchQuery.set('')}
-                  >Clear search</button
-                >
-              {/if}
-              {#if filter !== 'all'}
-                <button type="button" class="upload-file hv" onclick={() => (filterLabel = 'All')}
-                  >Reset filters</button
-                >
-              {/if}
-            </div>
-          {:else}
-            <EmptyState title="No captures yet" text="Press PrtSc to capture a region." />
-            <button type="button" class="upload-file primary hv" onclick={() => void uploadFiles()}
-              >Upload file…</button
-            >
-          {/if}
-        </div>
-      {:else if view === 'grid'}
-        <CaptureGrid
-          {groups}
-          {activeUploads}
-          {selectedId}
-          {columns}
-          {viewportHeight}
-          bind:scrollTop
-          {scroller}
-          onselect={select}
-          onopen={openFile}
-        />
-      {:else}
-        <CaptureList
-          {items}
-          {activeUploads}
-          {selectedId}
-          {viewportHeight}
-          {viewportWidth}
-          bind:scrollTop
-          {scroller}
-          onselect={select}
-          onopen={openFile}
-          oncancel={cancelRowUpload}
-        />
-      {/if}
-      {#if loading}
-        <div class="loading" role="status"><span class="sr-only">Loading captures</span></div>
+    {#if selectedIds.size > 1}
+      <div class="selection-bar">
+        <span role="status">{selectedIds.size} selected</span>
+        <button
+          type="button"
+          class="upload-file hv delete-selected"
+          disabled={deleting}
+          onclick={() => void askDelete([...selectedIds])}
+        >
+          <Icon name="trash" size={14} />
+          Delete selected
+        </button>
+        <button type="button" class="upload-file hv" onclick={clearSelection}
+          >Clear selection</button
+        >
+      </div>
+    {/if}
+
+    <div class="scroll-frame">
+      <div
+        class="scroll"
+        role="region"
+        aria-label="Capture results"
+        bind:this={scroller}
+        bind:clientWidth={viewportWidth}
+        bind:clientHeight={viewportHeight}
+        {onscroll}
+        onpointerdown={beginDrag}
+        onlostpointercapture={cancelDrag}
+        ondragstart={(event) => event.preventDefault()}
+        onclickcapture={suppressDragClick}
+      >
+        {#if loaded && !loading && !errorMessage && items.length === 0}
+          <div class="empty">
+            {#if searching || filter !== 'all'}
+              <EmptyState
+                title="No matching items"
+                text="Clear the search or change the filter to see more of your history."
+              />
+              <div class="empty-actions">
+                {#if searching}
+                  <button type="button" class="upload-file hv" onclick={() => searchQuery.set('')}
+                    >Clear search</button
+                  >
+                {/if}
+                {#if filter !== 'all'}
+                  <button type="button" class="upload-file hv" onclick={() => (filterLabel = 'All')}
+                    >Reset filters</button
+                  >
+                {/if}
+              </div>
+            {:else}
+              <EmptyState title="No captures yet" text="Press PrtSc to capture a region." />
+              <button
+                type="button"
+                class="upload-file primary hv"
+                onclick={() => void uploadFiles()}>Upload file…</button
+              >
+            {/if}
+          </div>
+        {:else if view === 'grid'}
+          <CaptureGrid
+            {groups}
+            {activeUploads}
+            selectedIds={highlighted}
+            {focusId}
+            {columns}
+            {viewportHeight}
+            bind:scrollTop
+            {scroller}
+            onselect={select}
+            onopen={openFile}
+          />
+        {:else}
+          <CaptureList
+            {items}
+            {activeUploads}
+            selectedIds={highlighted}
+            {focusId}
+            {viewportHeight}
+            {viewportWidth}
+            bind:scrollTop
+            {scroller}
+            onselect={select}
+            onopen={openFile}
+            oncancel={cancelRowUpload}
+          />
+        {/if}
+        {#if loading}
+          <div class="loading" role="status"><span class="sr-only">Loading captures</span></div>
+        {/if}
+      </div>
+      {#if marquee}
+        <div
+          class="marquee"
+          aria-hidden="true"
+          style:left="{marquee.left}px"
+          style:top="{marquee.top}px"
+          style:width="{marquee.width}px"
+          style:height="{marquee.height}px"
+        ></div>
       {/if}
     </div>
   </main>
 
   {#if selected}
     <div class="detail-divider">
-      <ResizeDivider label="Resize capture details" value={detailWidth} min={280} max={480} direction={-1} onresize={(width) => (detailWidth = width)} />
+      <ResizeDivider
+        label="Resize capture details"
+        value={detailWidth}
+        min={280}
+        max={480}
+        direction={-1}
+        onresize={(width) => (detailWidth = width)}
+      />
     </div>
     <DetailPane
       width={detailWidth}
@@ -537,7 +731,7 @@
       onpin={pin}
       onclose={closeDetails}
       ondelete={(id) => {
-        void askDelete(id);
+        void askDelete([id]);
       }}
     />
   {/if}
@@ -551,10 +745,14 @@
     min-height: 0;
   }
 
-  .detail-divider { display: flex; }
+  .detail-divider {
+    display: flex;
+  }
 
   @media (max-width: 1050px) {
-    .detail-divider { display: none; }
+    .detail-divider {
+      display: none;
+    }
     .history-layout {
       flex-direction: column;
     }
@@ -650,11 +848,58 @@
     color: var(--text);
   }
 
+  .selection-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid var(--stroke);
+    border-radius: 6px;
+    background: var(--card);
+    font-size: 12px;
+  }
+
+  .selection-bar span {
+    flex: 1 0 auto;
+  }
+
+  .delete-selected {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--err);
+  }
+
+  .delete-selected:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  .scroll-frame {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    position: relative;
+  }
+
   .scroll {
     flex: 1;
     min-height: 0;
+    min-width: 0;
     overflow-y: auto;
     padding-bottom: 32px;
+    user-select: none;
+  }
+
+  .marquee {
+    position: absolute;
+    z-index: 2;
+    box-sizing: border-box;
+    pointer-events: none;
+    border: 1px solid var(--accent);
+    background: var(--accentSoft);
   }
 
   .empty {

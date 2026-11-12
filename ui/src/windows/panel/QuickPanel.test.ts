@@ -96,11 +96,7 @@ describe('QuickPanel', () => {
       'Window (Alt+PrtSc)',
       'Screen (Ctrl+PrtSc)',
     ]);
-    expect(tiles.map((tile) => tile.textContent?.trim())).toEqual([
-      'Region',
-      'Window',
-      'Screen',
-    ]);
+    expect(tiles.map((tile) => tile.textContent?.trim())).toEqual(['Region', 'Window', 'Screen']);
   });
 
   it('renders the three newest captures in the order the service returned them', async () => {
@@ -165,6 +161,27 @@ describe('QuickPanel', () => {
     expect(screen.getByText('files.example.com/very/long/link.png')).not.toBeNull();
     const copy = screen.getByRole('button', { name: 'Copy' }) as HTMLButtonElement;
     expect(copy.disabled).toBe(false);
+  });
+
+  it('reloads the last link and recent captures when history changes', async () => {
+    core.call.mockResolvedValue({
+      kind: 'lastLink',
+      data: { link: 'https://files.example.com/a.png' },
+    });
+    ipc.panelRecent.mockResolvedValue([recent(1)]);
+    render(QuickPanel);
+    await flush();
+    expect(screen.getByText('files.example.com/a.png')).not.toBeNull();
+    core.call.mockResolvedValue({ kind: 'lastLink', data: { link: null } });
+    ipc.panelRecent.mockResolvedValue([]);
+    handlers.forEach((handler) =>
+      handler({ area: 'history', event: { kind: 'removedMany', data: { ids: [1] } } }),
+    );
+    await flush();
+    expect(screen.getByText('None yet')).not.toBeNull();
+    expect(screen.getByText('No captures yet')).not.toBeNull();
+    const copy = screen.getByRole('button', { name: 'Copy' }) as HTMLButtonElement;
+    expect(copy.disabled).toBe(true);
   });
 
   it('shows the empty state when there are no captures', async () => {

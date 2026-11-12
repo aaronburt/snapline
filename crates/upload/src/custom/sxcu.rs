@@ -564,7 +564,10 @@ mod tests {
     fn imports_utf8_byte_order_mark() {
         let mut bytes = vec![0xef, 0xbb, 0xbf];
         bytes.extend_from_slice(EXAMPLE.as_bytes());
-        assert_eq!(import(&bytes).expect("BOM import").config, imported().config);
+        assert_eq!(
+            import(&bytes).expect("BOM import").config,
+            imported().config
+        );
     }
 
     #[test]

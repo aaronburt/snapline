@@ -19,6 +19,7 @@ pub mod overlay;
 pub mod ports;
 pub mod presets;
 pub mod qr;
+pub mod record_place;
 pub mod recording;
 pub mod ruler;
 pub mod secret;

@@ -6,12 +6,12 @@ use crate::overlay::Rgb;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Tool {
+    #[default]
     Move,
     Rect,
     Ellipse,
     Arrow,
     Pen,
-    #[default]
     Highlighter,
     Text,
     Step,
@@ -79,6 +79,7 @@ pub enum Input {
     Press(Point),
     Release(Point),
     RightClick,
+    MiddleClick,
     Escape,
     Tab,
     Arrow {
@@ -141,6 +142,7 @@ impl Overlay {
             Input::Press(point) => self.on_press(point, &mut effects),
             Input::Release(point) => self.on_release(point, &mut effects),
             Input::RightClick => self.on_right_click(&mut effects),
+            Input::MiddleClick => self.on_middle_click(&mut effects),
             Input::Escape | Input::Cancel => self.cancel(&mut effects),
             Input::Tab => self.on_tab(&mut effects),
             Input::Arrow {
@@ -398,6 +400,18 @@ impl Overlay {
         }
     }
 
+    fn on_middle_click(&mut self, effects: &mut Vec<Effect>) {
+        if matches!(
+            &self.state,
+            State::Annotating {
+                tool: Tool::Move,
+                ..
+            }
+        ) {
+            self.on_commit(effects);
+        }
+    }
+
     fn on_commit(&mut self, effects: &mut Vec<Effect>) {
         let selected = match &self.state {
             State::Annotating { rect, .. } => Some(*rect),
@@ -485,7 +499,7 @@ mod tests {
         Overlay {
             state: State::Annotating {
                 rect,
-                tool: Tool::Highlighter,
+                tool: Tool::Move,
             },
             ..Overlay::with_annotate(true)
         }
@@ -504,8 +518,8 @@ mod tests {
         assert_eq!(overlay.pointer, None);
         assert_eq!(overlay.selection(), None);
         assert_eq!(overlay.active_grip, Grip::SouthEast);
-        assert_eq!(overlay.tool, Tool::Highlighter);
-        assert_eq!(overlay.tool.id(), "highlight");
+        assert_eq!(overlay.tool, Tool::Move);
+        assert_eq!(overlay.tool.id(), "move");
     }
 
     #[test]
@@ -641,7 +655,7 @@ mod tests {
             overlay.state,
             State::Annotating {
                 rect: rect(10, 10, 50, 70),
-                tool: Tool::Highlighter
+                tool: Tool::Move
             }
         );
         assert!(effects
@@ -850,6 +864,22 @@ mod tests {
             let (_, effects) = Overlay::new().on(input);
             assert!(effects.is_empty());
         }
+    }
+
+    #[test]
+    fn middle_click_only_finishes_with_the_move_tool() {
+        let (_, effects) = Overlay::new().on(Input::MiddleClick);
+        assert!(effects.is_empty());
+        let (overlay, effects) = annotating(rect(5, 6, 70, 80)).on(Input::MiddleClick);
+        let [Effect::Finish(selection)] = effects.as_slice() else {
+            panic!()
+        };
+        assert_eq!(selection.rect, rect(5, 6, 70, 80));
+        assert!(matches!(&overlay.state, State::Hovering { .. }));
+        let (overlay, _) = annotating(rect(5, 6, 70, 80)).on(Input::SetTool(Tool::Highlighter));
+        let (overlay, effects) = overlay.on(Input::MiddleClick);
+        assert!(effects.is_empty());
+        assert!(matches!(&overlay.state, State::Annotating { .. }));
     }
 
     #[test]

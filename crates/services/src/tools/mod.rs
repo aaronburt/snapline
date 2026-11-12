@@ -152,10 +152,10 @@ fn to_combine(request: CombineRequestDto) -> CombineRequest {
 }
 
 pub fn run(action: &ActionId, services: &Services) -> Result<(), ServiceError> {
-    if action.as_str() == TOOL_EDITOR {
-        EditorService::new(services).open_file().map(|_| ())
-    } else {
-        Err(ServiceError::NotYet)
+    match action.as_str() {
+        TOOL_EDITOR => EditorService::new(services).open_file().map(|_| ()),
+        pin::TOOL_PIN => PinService::new(services).menu().map(|_| ()),
+        _ => Err(ServiceError::NotYet),
     }
 }
 

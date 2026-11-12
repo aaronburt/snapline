@@ -30,7 +30,9 @@ pub(crate) struct KeyboardPill {
 
 pub(crate) fn hint_text(tool: Tool, next_step: u32) -> String {
     match tool {
-        Tool::Move => "Select: click an annotation to move or resize it".to_string(),
+        Tool::Move => {
+            "Select: click an annotation to move or resize it · Middle-click to finish".to_string()
+        }
         Tool::Rect => "Rectangle: drag to draw · Shift for a square".to_string(),
         Tool::Ellipse => "Ellipse: drag to draw · Shift for a circle".to_string(),
         Tool::Arrow => "Arrow: drag from tail to tip · drag the middle to curve it".to_string(),
@@ -132,7 +134,7 @@ mod tests {
     fn tool_hints_match_the_plan() {
         assert_eq!(
             hint_text(Tool::Move, 1),
-            "Select: click an annotation to move or resize it"
+            "Select: click an annotation to move or resize it · Middle-click to finish"
         );
         assert_eq!(
             hint_text(Tool::Rect, 1),

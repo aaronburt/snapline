@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   stats: vi.fn(),
   confirm: vi.fn(),
   remove: vi.fn(),
+  removeMany: vi.fn(),
   copy: vi.fn(),
   show: vi.fn(),
   open: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock('../../../lib/ipc/history', () => ({
   historyStats: mocks.stats,
   historyConfirmDelete: mocks.confirm,
   historyDelete: mocks.remove,
+  historyDeleteMany: mocks.removeMany,
   historyCopyImage: mocks.copy,
   historyShowInFolder: mocks.show,
   historyOpenFile: mocks.open,
@@ -139,6 +141,7 @@ beforeEach(() => {
   mocks.stats.mockReset();
   mocks.confirm.mockReset();
   mocks.remove.mockReset();
+  mocks.removeMany.mockReset();
   mocks.copy.mockReset();
   mocks.show.mockReset();
   mocks.open.mockReset();
@@ -150,6 +153,7 @@ beforeEach(() => {
   mocks.stats.mockResolvedValue({ count: 3, bytes: 3 * 412 * 1024, uploadedThisWeek: 1 });
   mocks.confirm.mockResolvedValue(true);
   mocks.remove.mockResolvedValue(undefined);
+  mocks.removeMany.mockImplementation(async (ids: number[]) => ({ removed: ids, failed: 0 }));
   mocks.copy.mockResolvedValue(undefined);
   mocks.show.mockResolvedValue(undefined);
   mocks.open.mockResolvedValue(undefined);
@@ -321,6 +325,64 @@ describe('History page', () => {
     await flush();
     expect(mocks.remove).not.toHaveBeenCalled();
     expect(container.querySelector('[data-capture-id="1"]')).not.toBeNull();
+  });
+
+  it('toggles and range-selects captures and deletes the selected group', async () => {
+    const { container } = render(HistoryPage);
+    await flush();
+    const [first, second, third] = container.querySelectorAll('[data-capture-id]');
+    await fireEvent.click(first);
+    await fireEvent.click(third, { ctrlKey: true });
+    expect(screen.getByText('2 selected')).toBeTruthy();
+    expect(second.getAttribute('aria-pressed')).toBe('false');
+    await fireEvent.click(third, { ctrlKey: true });
+    expect(third.getAttribute('aria-pressed')).toBe('false');
+    await fireEvent.click(first, { shiftKey: true });
+    expect(screen.getByText('3 selected')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }));
+    expect(mocks.removeMany).toHaveBeenCalledWith([1, 2, 3]);
+    expect(container.querySelectorAll('[data-capture-id]')).toHaveLength(0);
+  });
+
+  it.each(['Grid', 'List'])('drag-selects only the intersected items in %s view', async (view) => {
+    const { container } = render(HistoryPage);
+    await flush();
+    await fireEvent.click(screen.getByRole('button', { name: `${view} view` }));
+    const scroll = container.querySelector('.scroll') as HTMLDivElement;
+    const [first, second, third] = scroll.querySelectorAll<HTMLElement>('[data-capture-id]');
+    Object.defineProperties(scroll, { clientWidth: { value: 400 }, clientHeight: { value: 400 } });
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 400, 400));
+    for (const [index, card] of [first, second, third].entries()) {
+      vi.spyOn(card, 'getBoundingClientRect').mockReturnValue(
+        new DOMRect(10, 20 + index * 80, 200, 72),
+      );
+    }
+    const mouse = { pointerType: 'mouse', pointerId: 1, button: 0 };
+    await fireEvent.pointerDown(first, { ...mouse, clientX: 20, clientY: 30 });
+    await fireEvent.pointerMove(window, { ...mouse, clientX: 120, clientY: 130 });
+    await fireEvent.pointerUp(window, { ...mouse, clientX: 120, clientY: 130 });
+    await fireEvent.click(second, { detail: 1 });
+    expect(first.classList.contains('selected')).toBe(true);
+    expect(second.classList.contains('selected')).toBe(true);
+    expect(third.classList.contains('selected')).toBe(false);
+    expect(screen.getByText('2 selected')).toBeTruthy();
+  });
+
+  it('keeps selection after cancelling bulk delete and retains any failed items', async () => {
+    mocks.removeMany
+      .mockResolvedValueOnce({ removed: [], failed: 0 })
+      .mockResolvedValueOnce({ removed: [1], failed: 1 });
+    const { container } = render(HistoryPage);
+    await flush();
+    const [first, second] = container.querySelectorAll('[data-capture-id]');
+    await fireEvent.click(first);
+    await fireEvent.click(second, { ctrlKey: true });
+    await fireEvent.keyDown(window, { key: 'Delete' });
+    expect(screen.getByText('2 selected')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }));
+    expect(first.isConnected).toBe(false);
+    expect(second.classList.contains('selected')).toBe(true);
+    expect(screen.getByText('Could not delete 1 item. Try again.')).toBeTruthy();
   });
 
   it('switches to the virtual list view', async () => {
