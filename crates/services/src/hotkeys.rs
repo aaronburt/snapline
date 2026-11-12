@@ -181,8 +181,9 @@ impl HotkeysService {
         };
         let failures: Vec<Chord> = external.iter().map(|blocked| blocked.chord).collect();
         let full = plan.with_external(&failures);
-        {
+        let blocked_changed = {
             let mut runtime = self.runtime()?;
+            let changed = runtime.blocked != full.blocked;
             runtime.entries = entries;
             runtime.bindings = if runtime.paused {
                 Vec::new()
@@ -193,8 +194,14 @@ impl HotkeysService {
             runtime.external = failures;
             runtime.labels = labels;
             runtime.applied = true;
-        }
-        if notify && settings.hotkeys.warn_about_clashes && !full.blocked.is_empty() {
+            changed
+        };
+        // Tell the user once per change in what is blocked, not on every settings save.
+        if notify
+            && blocked_changed
+            && settings.hotkeys.warn_about_clashes
+            && !full.blocked.is_empty()
+        {
             let off = full
                 .blocked
                 .iter()

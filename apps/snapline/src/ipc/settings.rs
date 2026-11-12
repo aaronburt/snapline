@@ -29,6 +29,7 @@ pub async fn ipc_settings(
                 .settings_snapshot()
                 .map_err(IpcError::from_service)?;
             let was_launch = before.general.launch_at_signin;
+            let affects_hotkeys = touches_hotkeys(&patch);
             let worker = services.clone();
             let response = tauri::async_runtime::spawn_blocking(move || {
                 worker.settings().handle(SettingsReq::Update { patch })
@@ -45,6 +46,16 @@ pub async fn ipc_settings(
                     };
                     if let Err(error) = result {
                         tracing::error!(%error, "could not update start at sign-in");
+                        // Put the saved setting back so Settings does not claim something untrue.
+                        let revert = serde_json::json!({
+                            "general": { "launch_at_signin": was_launch }
+                        });
+                        if let Err(error) = services.update_settings(&revert) {
+                            tracing::error!(%error, "could not revert start at sign-in");
+                        }
+                        if affects_hotkeys {
+                            let _ = services.hotkeys().on_settings_changed();
+                        }
                         return Err(IpcError {
                             code: "io",
                             message: "Snapline could not update the start-at-sign-in setting."
@@ -53,10 +64,12 @@ pub async fn ipc_settings(
                     }
                 }
             }
-            services
-                .hotkeys()
-                .on_settings_changed()
-                .map_err(IpcError::from_service)?;
+            if affects_hotkeys {
+                services
+                    .hotkeys()
+                    .on_settings_changed()
+                    .map_err(IpcError::from_service)?;
+            }
             Ok(response)
         }
         req => {
@@ -66,5 +79,31 @@ pub async fn ipc_settings(
                 .map_err(IpcError::join)?
                 .map_err(IpcError::from_service)
         }
+    }
+}
+
+/// Hotkeys only need re-registering when the change can alter a binding or a workflow's hotkey.
+fn touches_hotkeys(patch: &serde_json::Value) -> bool {
+    patch
+        .as_object()
+        .is_some_and(|object| object.contains_key("hotkeys") || object.contains_key("workflows"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_hotkey_and_workflow_changes_reregister_hotkeys() {
+        assert!(touches_hotkeys(
+            &serde_json::json!({ "hotkeys": { "bindings": {} } })
+        ));
+        assert!(touches_hotkeys(
+            &serde_json::json!({ "workflows": { "list": [] } })
+        ));
+        assert!(!touches_hotkeys(
+            &serde_json::json!({ "general": { "save_folder": "C:\\x" } })
+        ));
+        assert!(!touches_hotkeys(&serde_json::json!(5)));
     }
 }

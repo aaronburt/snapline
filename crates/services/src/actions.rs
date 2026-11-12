@@ -72,7 +72,7 @@ pub fn dispatch_notifying(action: &ActionId, services: &Services) -> Result<(), 
 }
 
 pub fn notify_failure(error: &ServiceError, services: &Services) {
-    if !should_notify(error) {
+    if !should_notify(error) || crate::recording::was_reported(&error.to_string()) {
         return;
     }
     if let Some(notifier) = services.notifier() {

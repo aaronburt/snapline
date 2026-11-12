@@ -276,6 +276,8 @@ pub enum RecordError {
     Stop(String),
     #[error("{0}")]
     Ffmpeg(String),
+    #[error("{0}")]
+    FfmpegStopped(String),
     #[error("The GIF could not be made. {0}")]
     Convert(String),
     #[error("The recording could not be saved. {0}")]
@@ -299,6 +301,7 @@ impl From<RecordError> for ServiceError {
             | RecordError::FfmpegStart(_)
             | RecordError::Stop(_)
             | RecordError::Ffmpeg(_)
+            | RecordError::FfmpegStopped(_)
             | RecordError::Convert(_)
             | RecordError::Invalid(_) => Self::Invalid(message),
             RecordError::Save(_) => Self::Io(message),
@@ -628,27 +631,16 @@ impl Session {
                     stop,
                     cancel,
                 );
-                if let Err(error) = &outcome {
-                    remove_file(&plan.output);
-                    if let Some(converted) = &plan.converted {
-                        remove_file(converted);
-                    }
-                    if matches!(error, RecordError::Cancelled) {
-                        thread_ports.publisher.cancelled();
-                    } else {
-                        thread_ports.publisher.failed(&error.to_string());
-                    }
-                    if !matches!(error, RecordError::Cancelled) && !machine.state().is_terminal() {
-                        let _ = machine.apply(RecordingEvent::Failed(
-                            outcome
-                                .as_ref()
-                                .err()
-                                .map(ToString::to_string)
-                                .unwrap_or_default(),
-                        ));
-                        publish(&thread_status, &machine, thread_ports.events.as_ref());
-                    }
-                }
+                let outcome = match outcome {
+                    Err(error) => Err(finish_failed_session(
+                        &plan,
+                        &thread_ports,
+                        &mut machine,
+                        &thread_status,
+                        error,
+                    )),
+                    ok => ok,
+                };
                 let _ = results.send(outcome);
             })
             .map_err(|error| RecordError::Invalid(error.to_string()))?;
@@ -725,6 +717,65 @@ impl Drop for SessionResources {
             let _ = ffmpeg.kill();
         }
     }
+}
+
+/// Cleans up after a session that did not finish. The part of a recording FFmpeg managed to
+/// write before it died is kept (and its location reported); every other failure discards it.
+fn finish_failed_session(
+    plan: &SessionPlan,
+    ports: &RecordingPorts,
+    machine: &mut RecordingMachine,
+    status: &Arc<Mutex<RecordStatus>>,
+    error: RecordError,
+) -> RecordError {
+    let keep_partial = matches!(error, RecordError::FfmpegStopped(_))
+        && plan.mode == SessionMode::Save
+        && std::fs::metadata(&plan.output).is_ok_and(|meta| meta.len() > 0);
+    let error = if keep_partial {
+        RecordError::FfmpegStopped(format!(
+            "{error} The part recorded so far was kept at {}.",
+            plan.output.display()
+        ))
+    } else {
+        remove_file(&plan.output);
+        error
+    };
+    if let Some(converted) = &plan.converted {
+        remove_file(converted);
+    }
+    if matches!(error, RecordError::Cancelled) {
+        ports.publisher.cancelled();
+    } else {
+        let message = error.to_string();
+        ports.publisher.failed(&message);
+        mark_reported(&message);
+        if !machine.state().is_terminal() {
+            let _ = machine.apply(RecordingEvent::Failed(message));
+            publish(status, machine, ports.events.as_ref());
+        }
+    }
+    error
+}
+
+static LAST_REPORTED: Mutex<Option<(String, Instant)>> = Mutex::new(None);
+const REPORTED_FOR: Duration = Duration::from_secs(10);
+
+fn mark_reported(message: &str) {
+    let mut last = LAST_REPORTED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *last = Some((message.to_owned(), Instant::now()));
+}
+
+/// True when a recording failure with this text was just shown to the user, so callers further up
+/// (the action dispatcher, the workflow runner) do not show a second notification for it.
+pub fn was_reported(text: &str) -> bool {
+    let last = LAST_REPORTED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    last.as_ref().is_some_and(|(message, at)| {
+        at.elapsed() < REPORTED_FOR && !message.is_empty() && text.contains(message.as_str())
+    })
 }
 
 fn run_session(
@@ -987,7 +1038,7 @@ fn record_until_stop(
                             .ok()
                             .map(|exit| ffmpeg_reason(&exit.message))
                             .unwrap_or_default();
-                        return Err(RecordError::Ffmpeg(format!(
+                        return Err(RecordError::FfmpegStopped(format!(
                             "FFmpeg stopped before the recording was stopped. {detail}"
                         )));
                     }
@@ -2477,6 +2528,54 @@ mod tests {
         let failures = fixture.publisher.failures.lock().expect("failures");
         assert_eq!(failures.len(), 1);
         assert!(failures[0].contains("single screen"));
+    }
+
+    fn failed_session(
+        fixture: &Fixture,
+        mode: SessionMode,
+        error: RecordError,
+    ) -> (PathBuf, RecordError) {
+        let plan = fixture.plan(RecordedKind::Video, mode, true, false);
+        let output = plan.output.clone();
+        std::fs::write(&output, b"partial take").expect("partial recording");
+        let status = Arc::new(Mutex::new(RecordStatus::default()));
+        let mut machine = RecordingMachine::new();
+        let error = finish_failed_session(&plan, &fixture.ports(), &mut machine, &status, error);
+        (output, error)
+    }
+
+    #[test]
+    fn a_recording_cut_short_by_ffmpeg_keeps_the_part_that_was_written() {
+        let fixture = Fixture::new(Ok(target()), false, false);
+        let (output, error) = failed_session(
+            &fixture,
+            SessionMode::Save,
+            RecordError::FfmpegStopped(
+                "FFmpeg stopped before the recording was stopped.".to_owned(),
+            ),
+        );
+        assert!(output.exists());
+        assert!(error.to_string().contains("kept at"));
+        let failures = fixture.publisher.failures.lock().expect("failures");
+        assert_eq!(failures.len(), 1);
+        assert!(was_reported(&error.to_string()));
+    }
+
+    #[test]
+    fn other_failures_and_temporary_sessions_discard_the_file() {
+        let fixture = Fixture::new(Ok(target()), false, false);
+        let (output, _) = failed_session(
+            &fixture,
+            SessionMode::Save,
+            RecordError::Audio("no device".to_owned()),
+        );
+        assert!(!output.exists());
+        let (output, _) = failed_session(
+            &fixture,
+            SessionMode::Temporary,
+            RecordError::FfmpegStopped("stopped".to_owned()),
+        );
+        assert!(!output.exists());
     }
 
     #[test]

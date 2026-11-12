@@ -25,7 +25,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 
-use ::windows::Win32::Foundation::{HWND, RECT};
+use ::windows::Win32::Foundation::HWND;
 use ::windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
 use ::windows::Win32::System::Ole::CF_HDROP;
 use ::windows::Win32::System::Threading::CREATE_NO_WINDOW;
@@ -74,7 +74,7 @@ use tauri::{Manager, RunEvent};
 use windows::WindowManager;
 
 use ::windows::Win32::Foundation::POINT;
-use ::windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect};
+use ::windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 struct InputPort(InputHandle);
 
