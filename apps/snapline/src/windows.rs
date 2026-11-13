@@ -62,7 +62,17 @@ impl WindowManager {
     pub fn open_main(&self, app: &AppHandle, route: &str) -> tauri::Result<()> {
         if !slint_ui::web_ui_requested() {
             if let Some(ui) = self.slint_ui(app) {
-                ui.open(route);
+                let fallback_app = app.clone();
+                ui.open(
+                    route,
+                    std::sync::Arc::new(move |route: &str| {
+                        tracing::warn!("the Slint window could not open; using the web window");
+                        let manager = fallback_app.state::<WindowManager>();
+                        if let Err(error) = manager.open(&fallback_app, WindowKind::Main, route) {
+                            tracing::error!(%error, "the web window could not open either");
+                        }
+                    }),
+                );
                 return Ok(());
             }
         }

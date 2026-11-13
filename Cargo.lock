@@ -6306,6 +6306,7 @@ dependencies = [
  "snapline-store",
  "snapline-upload",
  "time",
+ "tracing",
 ]
 
 [[package]]

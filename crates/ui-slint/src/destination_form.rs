@@ -83,7 +83,7 @@ pub fn wire(app: &SnaplineWindow, backend: RcBackend) {
                         }
                         refresh(&w2, &ui_bg);
                     }
-                    Ok(other) => eprintln!("unexpected add response: {other:?}"),
+                    Ok(other) => tracing::warn!("unexpected add response: {other:?}"),
                     Err(error) => report(&w2, &format!("{error:#}")),
                 }
             },
@@ -129,7 +129,7 @@ pub fn wire(app: &SnaplineWindow, backend: RcBackend) {
                         }
                         refresh(&w2, &ui_bg);
                     }
-                    Ok(other) => eprintln!("unexpected import response: {other:?}"),
+                    Ok(other) => tracing::warn!("unexpected import response: {other:?}"),
                     Err(error) => report(&w2, &format!("{error:#}")),
                 }
             },
@@ -209,7 +209,7 @@ pub fn wire(app: &SnaplineWindow, backend: RcBackend) {
                         }
                         refresh(&w2, &ui_bg);
                     }
-                    Ok(other) => eprintln!("unexpected save response: {other:?}"),
+                    Ok(other) => tracing::warn!("unexpected save response: {other:?}"),
                     Err(error) => {
                         if lock_form(&f2).seq == seq {
                             g.set_error(format!("{error:#}").into());
@@ -290,7 +290,7 @@ pub fn wire(app: &SnaplineWindow, backend: RcBackend) {
                         );
                     }
                     Ok(other) => {
-                        eprintln!("unexpected test response: {other:?}");
+                        tracing::warn!("unexpected test response: {other:?}");
                         g.set_test_state("idle".into());
                     }
                     Err(error) => {
@@ -387,7 +387,7 @@ pub fn wire(app: &SnaplineWindow, backend: RcBackend) {
                         g.set_notice(format!("Exported to {path}").into())
                     }
                     Ok(DestinationResp::Exported { path: None }) => {}
-                    Ok(other) => eprintln!("unexpected export response: {other:?}"),
+                    Ok(other) => tracing::warn!("unexpected export response: {other:?}"),
                     Err(error) => g.set_error(format!("{error:#}").into()),
                 }
             },
@@ -423,7 +423,7 @@ pub fn wire(app: &SnaplineWindow, backend: RcBackend) {
     if let Ok(id) = crate::dev_var("SNAPLINE_OPEN_DESTINATION") {
         match find(&backend, &id) {
             Some(view) => open(&weak, &form, &view),
-            None => eprintln!("no destination with id {id}"),
+            None => tracing::warn!("no destination with id {id}"),
         }
     }
     match crate::dev_var("SNAPLINE_FORM_ACTION").as_deref() {
@@ -811,7 +811,7 @@ fn seed(backend: &Backend) {
         let result = destination_kind(kind)
             .and_then(|kind| backend.destination_request(DestinationReq::Add { kind }));
         if let Err(error) = result {
-            eprintln!("seed failed: {error:#}");
+            tracing::warn!("seed failed: {error:#}");
         }
     }
 }
@@ -826,12 +826,12 @@ fn find(backend: &Backend, id: &str) -> Option<DestinationViewDto> {
 
 fn refresh(w: &Weak<SnaplineWindow>, backend: &Backend) {
     if let Err(error) = crate::reload(w, backend) {
-        eprintln!("reload failed: {error:#}");
+        tracing::warn!("reload failed: {error:#}");
     }
 }
 
 fn report(w: &Weak<SnaplineWindow>, message: &str) {
-    eprintln!("{message}");
+    tracing::warn!("{message}");
     if let Some(app) = w.upgrade() {
         app.global::<UploadsState>()
             .set_destination_error(message.into());

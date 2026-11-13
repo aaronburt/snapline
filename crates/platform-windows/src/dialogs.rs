@@ -131,6 +131,22 @@ pub fn pick_sxcu() -> Result<Option<PathBuf>, DialogError> {
     // SAFETY: the interface is live and options is a valid FILEOPENDIALOGOPTIONS value.
     unsafe { dialog.SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST) }
         .map_err(DialogError::FilesOpen)?;
+    let sxcu_name = HSTRING::from("ShareX custom uploader (*.sxcu)");
+    let sxcu_spec = HSTRING::from("*.sxcu");
+    let all_name = HSTRING::from("All files (*.*)");
+    let all_spec = HSTRING::from("*.*");
+    let filters = [
+        COMDLG_FILTERSPEC {
+            pszName: PCWSTR(sxcu_name.as_ptr()),
+            pszSpec: PCWSTR(sxcu_spec.as_ptr()),
+        },
+        COMDLG_FILTERSPEC {
+            pszName: PCWSTR(all_name.as_ptr()),
+            pszSpec: PCWSTR(all_spec.as_ptr()),
+        },
+    ];
+    // SAFETY: `filters` and the four backing HSTRINGs outlive the call on the live interface.
+    unsafe { dialog.SetFileTypes(&filters) }.map_err(DialogError::FilesOpen)?;
     // SAFETY: the title string outlives the call and the interface is live.
     unsafe { dialog.SetTitle(&HSTRING::from("Choose a ShareX .sxcu file")) }
         .map_err(DialogError::FilesOpen)?;

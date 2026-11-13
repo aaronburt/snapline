@@ -199,11 +199,10 @@ export component UploadsPage inherits VerticalLayout {
                         border-radius: 6px;
                         border-width: 1px;
                         border-color: Tokens.stroke-hi;
-                        height: 6 * 34px + 5 * 2px + 16px;
+                        height: 5 * 34px + 4 * 2px + 16px;
                         VerticalLayout {
                             padding: 8px;
                             spacing: 2px;
-                            AddMenuItem { label: "Imgur"; icon: Icons.image; clicked => { add-popup.close(); UploadsState.add-destination("imgur"); } }
                             AddMenuItem { label: "Amazon S3"; icon: Icons.bucket; clicked => { add-popup.close(); UploadsState.add-destination("s3"); } }
                             AddMenuItem { label: "GitHub Gist"; icon: Icons.code; clicked => { add-popup.close(); UploadsState.add-destination("gist"); } }
                             AddMenuItem { label: "SFTP"; icon: Icons.server; clicked => { add-popup.close(); UploadsState.add-destination("sftp"); } }

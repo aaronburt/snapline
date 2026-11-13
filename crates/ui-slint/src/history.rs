@@ -25,7 +25,7 @@ pub struct CachedThumb(SharedPixelBuffer<Rgba8Pixel>);
 
 #[derive(Default)]
 pub struct ThumbCache {
-    entries: Mutex<HashMap<i64, Option<CachedThumb>>>,
+    entries: Mutex<HashMap<i64, CachedThumb>>,
 }
 
 impl ThumbCache {
@@ -36,7 +36,7 @@ impl ThumbCache {
             .unwrap_or_else(|poison| poison.into_inner())
             .get(&id)
         {
-            return cached.clone();
+            return Some(cached.clone());
         }
         let decoded = backend
             .thumbnail(id)
@@ -46,12 +46,19 @@ impl ThumbCache {
                 CachedThumb(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
                     &rgba, width, height,
                 ))
-            });
+            })?;
         self.entries
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .insert(id, decoded.clone());
-        decoded
+        Some(decoded)
+    }
+
+    pub fn retain(&self, ids: &HashSet<i64>) {
+        self.entries
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .retain(|id, _| ids.contains(id));
     }
 
     pub fn get_cached(&self, id: i64) -> Option<slint::Image> {
@@ -60,8 +67,7 @@ impl ThumbCache {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .get(&id)
-            .cloned()
-            .flatten()?;
+            .cloned()?;
         Some(slint::Image::from_rgba8(cached.0))
     }
 
@@ -603,6 +609,15 @@ struct LoadedPage {
     page: Result<HistoryPage>,
 }
 
+impl crate::backend::FromPanic for LoadedPage {
+    fn from_panic(message: String) -> Self {
+        Self {
+            stats: Err(anyhow::anyhow!(message.clone())),
+            page: Err(anyhow::anyhow!(message)),
+        }
+    }
+}
+
 struct HistoryController {
     app: Weak<SnaplineWindow>,
     cache: Arc<ThumbCache>,
@@ -1046,6 +1061,7 @@ impl HistoryHandle {
                             ctrl.items = page.items;
                             let available: HashSet<i64> =
                                 ctrl.items.iter().map(|item| item.id).collect();
+                            ctrl.cache.retain(&available);
                             ctrl.selected_ids.retain(|id| available.contains(id));
                             if ctrl.focus_id.is_some_and(|id| !available.contains(&id)) {
                                 ctrl.focus_id = None;
@@ -2007,6 +2023,24 @@ pub fn wire(app: &SnaplineWindow, backend: Rc<Backend>, cache: Arc<ThumbCache>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thumb_cache_retain_drops_ids_that_are_no_longer_listed() {
+        let cache = ThumbCache::default();
+        {
+            let mut entries = cache
+                .entries
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            for id in [1, 2, 3] {
+                entries.insert(id, CachedThumb(SharedPixelBuffer::<Rgba8Pixel>::new(1, 1)));
+            }
+        }
+        cache.retain(&HashSet::from([2]));
+        assert!(cache.get_cached(1).is_none());
+        assert!(cache.get_cached(2).is_some());
+        assert!(cache.get_cached(3).is_none());
+    }
 
     fn sample_capture(
         id: i64,

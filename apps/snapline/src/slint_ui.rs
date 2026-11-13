@@ -221,6 +221,12 @@ impl Host for WindowsHost {
         }
     }
 
+    fn report_error(&self, title: &str, message: &str) {
+        if let Some(notifier) = self.services.notifier() {
+            notifier.toast(Notice::new(title, message));
+        }
+    }
+
     fn is_light(&self) -> bool {
         snapline_win::theme::is_light()
     }

@@ -50,6 +50,8 @@ pub trait Host: Send + Sync {
         Err("This tool is not available here.".to_owned())
     }
 
+    fn report_error(&self, _title: &str, _message: &str) {}
+
     fn is_light(&self) -> bool {
         false
     }

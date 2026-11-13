@@ -49,7 +49,7 @@ pub fn start(services: Services, host: Arc<dyn Host>) -> Result<UiHandle, String
             let _ = ready.send(selected.map_err(|error| error.to_string()));
             if !failed {
                 if let Err(error) = slint::run_event_loop_until_quit() {
-                    tracing_free_log(&format!("the Snapline window loop stopped: {error}"));
+                    tracing::error!(%error, "the Snapline window loop stopped");
                 }
             }
         })
@@ -58,16 +58,25 @@ pub fn start(services: Services, host: Arc<dyn Host>) -> Result<UiHandle, String
     Ok(UiHandle { services, host })
 }
 
-fn tracing_free_log(message: &str) {
-    eprintln!("{message}");
-}
+/// Called with the route when the Slint window cannot be shown, so the caller can fall back.
+pub type OpenFailed = Arc<dyn Fn(&str) + Send + Sync>;
 
 impl UiHandle {
-    pub fn open(&self, route: &str) {
+    pub fn open(&self, route: &str, on_failure: OpenFailed) {
         let services = self.services.clone();
         let host = self.host.clone();
         let route = route.to_owned();
-        let _ = slint::invoke_from_event_loop(move || open_here(services, host, &route));
+        let retry_route = route.clone();
+        let failure = on_failure.clone();
+        let queued = slint::invoke_from_event_loop(move || {
+            if !open_here(services, host, &route) {
+                failure(&route);
+            }
+        });
+        if let Err(error) = queued {
+            tracing::error!(%error, "the Snapline window loop is no longer running");
+            on_failure(&retry_route);
+        }
     }
 
     pub fn set_light_theme(&self, light: bool) {
@@ -237,7 +246,7 @@ fn raise(window: &SnaplineWindow, host: &dyn Host) {
     });
 }
 
-fn open_here(services: Services, host: Arc<dyn Host>, route: &str) {
+fn open_here(services: Services, host: Arc<dyn Host>, route: &str) -> bool {
     let reused = WINDOW.with(|slot| {
         let slot = slot.borrow();
         let Some(window) = slot.as_ref() else {
@@ -261,7 +270,7 @@ fn open_here(services: Services, host: Arc<dyn Host>, route: &str) {
         true
     });
     if reused {
-        return;
+        return true;
     }
     let backend = Rc::new(Backend::new(services, host.clone()));
     let cache = Arc::new(ThumbCache::default());
@@ -269,8 +278,8 @@ fn open_here(services: Services, host: Arc<dyn Host>, route: &str) {
         match crate::create_window_with_cache(backend.clone(), cache.clone(), false) {
             Ok(created) => created,
             Err(error) => {
-                eprintln!("the Snapline window could not be created: {error:#}");
-                return;
+                tracing::error!("the Snapline window could not be created: {error:#}");
+                return false;
             }
         };
     let configured = Rc::new(Cell::new(false));
@@ -308,6 +317,7 @@ fn open_here(services: Services, host: Arc<dyn Host>, route: &str) {
     BACKEND.with(|slot| *slot.borrow_mut() = Some(backend));
     CACHE.with(|slot| *slot.borrow_mut() = Some(cache));
     HISTORY.with(|slot| *slot.borrow_mut() = Some(history_handle));
+    true
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ use snapline_core::ports::{CodecError, ImageCodec, SecretStore};
 use snapline_services::destinations::Registry;
 use snapline_services::dto::app::{AppReq, AppResp};
 use snapline_services::dto::history::{
-    Cursor, HistoryFilter, HistoryPage, HistoryReq, HistoryResp,
+    CaptureDto, Cursor, HistoryFilter, HistoryPage, HistoryReq, HistoryResp,
 };
 use snapline_services::dto::hotkeys::{HotkeysReq, HotkeysResp};
 use snapline_services::dto::settings::{SettingsDto, SettingsReq, SettingsResp};
@@ -163,9 +163,61 @@ impl Backend {
     }
 }
 
+pub(crate) fn report_failure(backend: &Backend, what: &str, error: &anyhow::Error) {
+    let detail = format!("{error:#}");
+    tracing::error!(%what, error = %detail, "a Snapline window action failed");
+    backend.host().report_error(what, &detail);
+}
+
+/// What a background job reports when it panics, so the page that started it can clear its busy state.
+pub(crate) trait FromPanic {
+    fn from_panic(message: String) -> Self;
+}
+
+impl<X> FromPanic for anyhow::Result<X> {
+    fn from_panic(message: String) -> Self {
+        Err(anyhow::anyhow!(message))
+    }
+}
+
+impl<X: FromPanic> FromPanic for Option<X> {
+    fn from_panic(message: String) -> Self {
+        Some(X::from_panic(message))
+    }
+}
+
+impl<A: FromPanic, B: Default> FromPanic for (A, B) {
+    fn from_panic(message: String) -> Self {
+        (A::from_panic(message), B::default())
+    }
+}
+
+impl FromPanic for (Vec<CaptureDto>, Vec<CaptureDto>) {
+    fn from_panic(_: String) -> Self {
+        (Vec::new(), Vec::new())
+    }
+}
+
+impl FromPanic for (Option<Vec<DestinationViewDto>>, Option<String>) {
+    fn from_panic(_: String) -> Self {
+        (None, None)
+    }
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    let detail = payload
+        .downcast_ref::<&str>()
+        .map(|text| (*text).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned());
+    match detail {
+        Some(detail) => format!("Something went wrong in Snapline: {detail}"),
+        None => "Something went wrong in Snapline.".to_owned(),
+    }
+}
+
 pub(crate) fn spawn_bg<T, W, A>(backend: &Backend, work: W, apply: A)
 where
-    T: Send + 'static,
+    T: FromPanic + Send + 'static,
     W: FnOnce(Backend) -> T + Send + 'static,
     A: FnOnce(Backend, T) + Send + 'static,
 {
@@ -173,7 +225,12 @@ where
     let host = backend.host.clone();
     std::thread::spawn(move || {
         let bg = Backend::new(services.clone(), host.clone());
-        let result = work(bg);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(bg)))
+            .unwrap_or_else(|payload| {
+                let message = panic_message(payload.as_ref());
+                tracing::error!(%message, "a background job in the Snapline window panicked");
+                T::from_panic(message)
+            });
         let _ = slint::invoke_from_event_loop(move || {
             let ui_backend = Backend::new(services, host);
             apply(ui_backend, result);
@@ -470,6 +527,36 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panic_results_become_errors_the_page_can_show() {
+        let result: anyhow::Result<()> = FromPanic::from_panic("boom".to_owned());
+        assert!(matches!(result, Err(error) if error.to_string() == "boom"));
+        let picked: Option<anyhow::Result<()>> = FromPanic::from_panic("boom".to_owned());
+        assert!(matches!(picked, Some(Err(_))));
+        let pair: (anyhow::Result<()>, bool) = FromPanic::from_panic("boom".to_owned());
+        assert!(pair.0.is_err());
+        assert!(!pair.1);
+    }
+
+    #[test]
+    fn panic_message_reads_str_and_string_payloads() {
+        let text: Box<dyn std::any::Any + Send> = Box::new("bad state");
+        assert_eq!(
+            panic_message(text.as_ref()),
+            "Something went wrong in Snapline: bad state"
+        );
+        let owned: Box<dyn std::any::Any + Send> = Box::new(String::from("worse"));
+        assert_eq!(
+            panic_message(owned.as_ref()),
+            "Something went wrong in Snapline: worse"
+        );
+        let other: Box<dyn std::any::Any + Send> = Box::new(7_u8);
+        assert_eq!(
+            panic_message(other.as_ref()),
+            "Something went wrong in Snapline."
+        );
+    }
 
     #[test]
     fn patch_nests_dotted_paths() {

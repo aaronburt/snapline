@@ -16,6 +16,7 @@ path = "src/bin/spike.rs"
 slint = { version = "1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-software", "compat-1-2", "accessibility", "unstable-winit-030"] }
 anyhow.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
 time.workspace = true
 snapline-services = { path = "../services" }
 snapline-store = { path = "../store" }

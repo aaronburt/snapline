@@ -15,15 +15,16 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel, Weak};
 
 pub use backend::Backend;
-use backend::{patch, spawn_bg};
+use backend::{patch, report_failure, spawn_bg};
 pub use host::{Host, MonitorInfo, QrScanResult};
-pub use runner::UiHandle;
+pub use runner::{OpenFailed, UiHandle};
 use snapline_core::chord::{Chord, ChordError, Key, Modifiers};
 use snapline_services::dto::hotkeys::HotkeysResp;
 use snapline_services::dto::settings::SettingsDto;
@@ -711,9 +712,56 @@ fn camel(key: &str) -> String {
     out
 }
 
+const SETTINGS_DEBOUNCE: Duration = Duration::from_millis(500);
+
+/// Text boxes and sliders report every change, so they are saved once the user pauses.
+#[derive(Clone)]
+struct SettingsDebounce {
+    inner: Rc<DebounceInner>,
+}
+
+struct DebounceInner {
+    backend: Rc<Backend>,
+    app: Weak<SnaplineWindow>,
+    pending: RefCell<Vec<(String, Value)>>,
+    timer: slint::Timer,
+}
+
+impl SettingsDebounce {
+    fn new(backend: &Rc<Backend>, app: &Weak<SnaplineWindow>) -> Self {
+        Self {
+            inner: Rc::new(DebounceInner {
+                backend: backend.clone(),
+                app: app.clone(),
+                pending: RefCell::new(Vec::new()),
+                timer: slint::Timer::default(),
+            }),
+        }
+    }
+
+    fn queue(&self, path: String, value: Value) {
+        {
+            let mut pending = self.inner.pending.borrow_mut();
+            pending.retain(|(queued, _)| *queued != path);
+            pending.push((path, value));
+        }
+        let weak = Rc::downgrade(&self.inner);
+        self.inner
+            .timer
+            .start(slint::TimerMode::SingleShot, SETTINGS_DEBOUNCE, move || {
+                if let Some(inner) = weak.upgrade() {
+                    let queued = std::mem::take(&mut *inner.pending.borrow_mut());
+                    for (path, value) in queued {
+                        send(&inner.app, &inner.backend, patch(&path, value));
+                    }
+                }
+            });
+    }
+}
+
 fn send(app: &Weak<SnaplineWindow>, backend: &Backend, value: Value) {
     if let Err(error) = backend.update(value).and_then(|_| reload(app, backend)) {
-        eprintln!("settings update failed: {error:#}");
+        report_failure(backend, "Settings could not be saved", &error);
     }
 }
 
@@ -798,9 +846,9 @@ pub(crate) fn create_window_with_cache(
         spawn_bg(
             &b,
             move |bg| bg.run_action("capture_region"),
-            move |_, result| {
+            move |ui_bg, result| {
                 if let Err(error) = result {
-                    eprintln!("capture failed: {error:#}");
+                    report_failure(&ui_bg, "Capture failed", &error);
                 }
             },
         );
@@ -824,9 +872,10 @@ pub(crate) fn create_window_with_cache(
         }
     });
 
-    let (b, w) = (backend.clone(), weak.clone());
+    let pending = SettingsDebounce::new(&backend, &weak);
+    let queue = pending.clone();
     s.on_update_text(move |path, value| {
-        send(&w, &b, patch(&path, json!(value.as_str())));
+        queue.queue(path.to_string(), json!(value.as_str()));
     });
 
     let (b, w) = (backend.clone(), weak.clone());
@@ -837,12 +886,12 @@ pub(crate) fn create_window_with_cache(
                 persist_default(&w, &b, read_rows(&w));
             }
         }
-        Err(error) => eprintln!("{error:#}"),
+        Err(error) => tracing::warn!("{error:#}"),
     });
 
-    let (b, w) = (backend.clone(), weak.clone());
+    let queue = pending.clone();
     s.on_update_number(move |path, value| {
-        send(&w, &b, patch(&path, json!(value)));
+        queue.queue(path.to_string(), json!(value));
     });
 
     let (b, w) = (backend.clone(), weak.clone());
@@ -870,7 +919,7 @@ pub(crate) fn create_window_with_cache(
                     app.global::<SettingsState>().set_preview_name(name.into());
                 }
             }
-            Err(error) => eprintln!("preview failed: {error:#}"),
+            Err(error) => tracing::warn!("the file name preview failed: {error:#}"),
         }
     });
 
@@ -893,10 +942,12 @@ pub(crate) fn create_window_with_cache(
                     match result {
                         Ok(_) => {
                             if let Err(error) = reload(&w2, &ui_bg) {
-                                eprintln!("reload failed: {error:#}");
+                                tracing::error!("reload failed: {error:#}");
                             }
                         }
-                        Err(error) => eprintln!("settings update failed: {error:#}"),
+                        Err(error) => {
+                            report_failure(&ui_bg, "The save folder could not be changed", &error);
+                        }
                     }
                 }
             },
@@ -910,7 +961,7 @@ pub(crate) fn create_window_with_cache(
             move |bg| bg.pick_ffmpeg(),
             move |ui_bg, result| {
                 if let Err(error) = result.and_then(|_| reload(&w2, &ui_bg)) {
-                    eprintln!("FFmpeg path failed: {error:#}");
+                    report_failure(&ui_bg, "The FFmpeg path could not be changed", &error);
                 }
             },
         );
@@ -923,7 +974,7 @@ pub(crate) fn create_window_with_cache(
             move |bg| bg.reset_ffmpeg(),
             move |ui_bg, result| {
                 if let Err(error) = result.and_then(|_| reload(&w2, &ui_bg)) {
-                    eprintln!("FFmpeg reset failed: {error:#}");
+                    report_failure(&ui_bg, "The FFmpeg path could not be reset", &error);
                 }
             },
         );
