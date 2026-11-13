@@ -69,7 +69,7 @@ fn read_config(root: &Path) -> Result<Config> {
 fn read_toml(path: &Path) -> Result<toml::Value> {
     let text =
         fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
-    text.parse::<toml::Value>()
+    toml::from_str::<toml::Value>(&text)
         .with_context(|| format!("{} is not valid TOML", path.display()))
 }
 
