@@ -24,7 +24,7 @@ export component GeneralPage inherits VerticalLayout {
     spacing: 28px;
     vertical-stretch: 0;
 
-    property <bool> version-visible: SettingsState.text-matches("Snapline", "Version 0.1.0", root.filter);
+    property <bool> version-visible: SettingsState.text-matches("Snapline", "Version " + SettingsState.app-version, root.filter);
     property <bool> launch-visible: SettingsState.text-matches("Launch at sign-in", "Start Snapline in the tray when you sign in to Windows", root.filter);
     property <bool> minimise-visible: SettingsState.text-matches("Start minimised to tray", "Don't open the main window on launch", root.filter);
     property <bool> tray-click-visible: SettingsState.text-matches("Open capture on tray click", "When off, clicking the tray icon opens the Quick Panel", root.filter);
@@ -59,7 +59,7 @@ export component GeneralPage inherits VerticalLayout {
                 alignment: center;
                 spacing: 2px;
                 Text { text: "Snapline"; color: Tokens.text; font-size: 16px; font-weight: 600; }
-                Text { text: "Version 0.1.0"; color: Tokens.text3; font-size: 12px; }
+                Text { text: "Version " + SettingsState.app-version; color: Tokens.text3; font-size: 12px; }
             }
         }
     }
