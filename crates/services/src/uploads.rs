@@ -12,7 +12,6 @@ use snapline_store::history::{UploadState as HistoryUploadState, UploadUpdate};
 use snapline_store::settings::uploads::Retry;
 use snapline_store::settings::uploads::{DestinationRef, Uploads};
 use snapline_upload::queue;
-use ts_rs::TS;
 
 use crate::destinations::DestinationOperations;
 use crate::dto::upload::{
@@ -21,8 +20,7 @@ use crate::dto::upload::{
 };
 use crate::{AppEvent, ServiceError, Services};
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(rename = "UploadAreaEvent")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum Event {
     Ping,

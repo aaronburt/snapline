@@ -15,6 +15,8 @@ use snapline_services::{AppEvent, Services};
 use crate::backend::Backend;
 use crate::history::{HistoryHandle, ThumbCache};
 use crate::host::Host;
+use crate::panel_logic::TrayRect;
+use crate::quick_panel;
 use crate::{tools, SnaplineWindow, Tokens, ToolsState, WorkflowsState};
 
 const TRIM_DELAY: Duration = Duration::from_secs(1);
@@ -81,9 +83,32 @@ impl UiHandle {
         }
     }
 
+    pub fn toggle_panel(&self, anchor: TrayRect) {
+        let services = self.services.clone();
+        let host = self.host.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            let open_services = services.clone();
+            let open_host = host.clone();
+            let open_main: quick_panel::OpenMain = Rc::new(move |route: &str| {
+                if !open_here(open_services.clone(), open_host.clone(), route) {
+                    tracing::error!("the Snapline window could not open from the quick panel");
+                }
+            });
+            quick_panel::show(
+                quick_panel::PanelContext {
+                    services,
+                    host,
+                    open_main,
+                },
+                anchor,
+            );
+        });
+    }
+
     pub fn set_light_theme(&self, light: bool) {
         let host = self.host.clone();
         let _ = slint::invoke_from_event_loop(move || {
+            quick_panel::set_light(light);
             WINDOW.with(|slot| {
                 let slot = slot.borrow();
                 let Some(window) = slot.as_ref() else {

@@ -18,9 +18,8 @@ edition = "2021"
 license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
-tauri = { version = "=2.12.5", features = ["tray-icon", "image-ico"] }
-tauri-build = "=2.7.4"
-tauri-plugin-single-instance = "=2.5.5"
+tray-icon = "=0.25.1"
+embed-resource = "=3.0.12"
 windows = { version = "=0.62.2", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
@@ -39,6 +38,7 @@ windows = { version = "=0.62.2", features = [
     "Win32_Media_Multimedia",
     "Win32_Security",
     "Win32_Security_Credentials",
+    "Win32_Storage_EnhancedStorage",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
@@ -61,6 +61,7 @@ windows = { version = "=0.62.2", features = [
     "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
     "Foundation",
@@ -76,12 +77,10 @@ windows = { version = "=0.62.2", features = [
     "Data_Xml_Dom",
     "UI_Notifications",
 ] }
-webview2-com = "=0.39.1"
 rusqlite = { version = "=0.41.1", features = ["bundled"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 toml = "=1.2.1"
-ts-rs = "=12.0.1"
 serde_json_path = "=0.7.2"
 ureq = { version = "=3.5.1", features = ["rustls", "platform-verifier"] }
 hmac = "=0.13.0"

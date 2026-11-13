@@ -8,7 +8,6 @@ use snapline_core::ports::ImageCodec;
 use snapline_store::io::Paths;
 use snapline_store::settings::{self as store_settings, LoadNotice, Settings};
 use thiserror::Error;
-use ts_rs::TS;
 
 pub mod actions;
 pub mod app;
@@ -524,26 +523,4 @@ fn json_to_toml(value: &serde_json::Value) -> Result<toml::Value, ServiceError> 
             "A settings value cannot be empty.".to_owned(),
         )),
     }
-}
-
-pub fn export_bindings(dir: &Path) -> Result<(), ts_rs::ExportError> {
-    let config = ts_rs::Config::new().with_out_dir(dir);
-    dto::app::AppReq::export_all(&config)?;
-    dto::app::AppResp::export_all(&config)?;
-    dto::settings::SettingsReq::export_all(&config)?;
-    dto::settings::SettingsResp::export_all(&config)?;
-    dto::hotkeys::HotkeysReq::export_all(&config)?;
-    dto::hotkeys::HotkeysResp::export_all(&config)?;
-    dto::history::HistoryReq::export_all(&config)?;
-    dto::history::HistoryResp::export_all(&config)?;
-    dto::upload::UploadReq::export_all(&config)?;
-    dto::upload::UploadResp::export_all(&config)?;
-    dto::workflow::WorkflowReq::export_all(&config)?;
-    dto::workflow::WorkflowResp::export_all(&config)?;
-    dto::record::RecordReq::export_all(&config)?;
-    dto::record::RecordResp::export_all(&config)?;
-    dto::tool::ToolReq::export_all(&config)?;
-    dto::tool::ToolResp::export_all(&config)?;
-    AppEvent::export_all(&config)?;
-    Ok(())
 }

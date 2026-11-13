@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::app;
 use crate::history;
@@ -10,7 +9,7 @@ use crate::tools;
 use crate::uploads;
 use crate::workflows;
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "area", content = "event", rename_all = "camelCase")]
 pub enum AppEvent {
     App(app::Event),

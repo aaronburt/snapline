@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [build-dependencies]
-tauri-build.workspace = true
+embed-resource.workspace = true
 
 [dependencies]
 snapline-core = { path = "../../crates/core" }
@@ -15,9 +15,8 @@ snapline-win = { path = "../../crates/platform-windows" }
 snapline-overlay = { path = "../../crates/overlay-windows" }
 snapline-services = { path = "../../crates/services" }
 snapline-ui = { path = "../../crates/ui-slint" }
-tauri.workspace = true
-tauri-plugin-single-instance.workspace = true
-webview2-com.workspace = true
+tray-icon.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
 windows.workspace = true
 serde.workspace = true
 serde_json.workspace = true

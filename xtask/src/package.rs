@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{anyhow, bail, Context, Result};
-use serde::Deserialize;
 
-const APP_DIR: &str = "apps/snapline";
-const CONFIG: &str = "apps/snapline/tauri.conf.json";
+const APP_MANIFEST: &str = "apps/snapline/Cargo.toml";
+const WORKSPACE_MANIFEST: &str = "Cargo.toml";
+const SCRIPT: &str = "apps/snapline/installer/snapline.nsi";
+const PRODUCT: &str = "Snapline";
 const EXE: &str = "snapline.exe";
 const RELEASE_EXE: &str = "target/release/snapline.exe";
 const NSIS_DIR: &str = "target/release/bundle/nsis";
@@ -23,8 +24,7 @@ const RESOURCES: [(&str, &str); 6] = [
     ("assets/sounds/done.wav", "assets/sounds/done.wav"),
 ];
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug)]
 struct Config {
     product_name: String,
     version: String,
@@ -32,9 +32,9 @@ struct Config {
 
 pub fn run(root: &Path) -> Result<()> {
     check_sources(root)?;
-    crate::ui(root)?;
-    build_installer(root)?;
     let config = read_config(root)?;
+    build_release(root)?;
+    build_installer(root, &config)?;
     let installer = installer_path(root, &config)?;
     println!("package: installer {}", installer.display());
     let zip = portable_zip(root, &config)?;
@@ -43,11 +43,34 @@ pub fn run(root: &Path) -> Result<()> {
 }
 
 fn read_config(root: &Path) -> Result<Config> {
-    let path = root.join(CONFIG);
+    let app = read_toml(&root.join(APP_MANIFEST))?;
+    let version = match app
+        .get("package")
+        .and_then(|package| package.get("version"))
+    {
+        Some(toml::Value::String(version)) => version.clone(),
+        _ => {
+            let workspace = read_toml(&root.join(WORKSPACE_MANIFEST))?;
+            workspace
+                .get("workspace")
+                .and_then(|table| table.get("package"))
+                .and_then(|package| package.get("version"))
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned)
+                .context("package: the workspace manifest has no package version")?
+        }
+    };
+    Ok(Config {
+        product_name: PRODUCT.to_owned(),
+        version,
+    })
+}
+
+fn read_toml(path: &Path) -> Result<toml::Value> {
     let text =
-        fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
-    serde_json::from_str(&text)
-        .with_context(|| format!("{} is not a usable Tauri config", path.display()))
+        fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+    toml::from_str::<toml::Value>(&text)
+        .with_context(|| format!("{} is not valid TOML", path.display()))
 }
 
 fn check_sources(root: &Path) -> Result<()> {
@@ -67,52 +90,91 @@ fn check_sources(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn build_installer(root: &Path) -> Result<()> {
-    let directory = root.join(APP_DIR);
-    let local_bin = root.join("ui/node_modules/.bin");
-    if !local_bin.join("tauri").is_file() && !local_bin.join("tauri.cmd").is_file() {
-        bail!(
-            "package: the Tauri CLI is missing from {}; run `cargo xtask ui` first",
-            local_bin.display()
-        );
-    }
-    let program = if cfg!(windows) {
-        local_bin.join("tauri.cmd")
-    } else {
-        local_bin.join("tauri")
-    };
-    println!("> {} build --bundles nsis", program.display());
-    let mut command = Command::new(&program);
-    command.args(["build", "--bundles", "nsis"]);
-    command.env("PATH", cli_path(&local_bin)?);
-    let status = command
-        .current_dir(&directory)
+fn build_release(root: &Path) -> Result<()> {
+    println!("> cargo build --release -p snapline");
+    let status = Command::new("cargo")
+        .args(["build", "--release", "-p", "snapline"])
+        .current_dir(root)
         .status()
-        .with_context(|| format!("could not start the Tauri CLI in {}", directory.display()))?;
+        .context("could not start cargo")?;
     if !status.success() {
-        bail!("package: the Tauri CLI failed with {status}");
+        bail!("package: the release build failed with {status}");
     }
     Ok(())
 }
 
-fn cli_path(local_bin: &Path) -> Result<OsString> {
-    let current = env::var_os("PATH").unwrap_or_default();
-    let paths = std::iter::once(local_bin.to_path_buf()).chain(env::split_paths(&current));
-    env::join_paths(paths).context("cannot add ui/node_modules/.bin to PATH")
+fn makensis_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = env::var_os("PATH") {
+        for directory in env::split_paths(&path) {
+            candidates.push(directory.join("makensis.exe"));
+            candidates.push(directory.join("makensis"));
+        }
+    }
+    if let Some(base) = env::var_os("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(base).join("tauri/NSIS/makensis.exe"));
+    }
+    for variable in ["ProgramFiles(x86)", "ProgramFiles"] {
+        if let Some(base) = env::var_os(variable) {
+            candidates.push(PathBuf::from(base).join("NSIS/makensis.exe"));
+        }
+    }
+    candidates
+}
+
+fn find_makensis() -> Result<PathBuf> {
+    makensis_candidates()
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| {
+            anyhow!(
+                "package: makensis was not found; install NSIS with `winget install NSIS.NSIS` and run the build again"
+            )
+        })
+}
+
+fn nsis_arguments(root: &Path, config: &Config, output: &Path) -> Vec<OsString> {
+    vec![
+        OsString::from("/V2"),
+        OsString::from(format!("/DROOT={}", root.display())),
+        OsString::from(format!("/DOUTFILE={}", output.display())),
+        OsString::from(format!("/DVERSION={}", config.version)),
+        root.join(SCRIPT).into_os_string(),
+    ]
+}
+
+fn build_installer(root: &Path, config: &Config) -> Result<()> {
+    let directory = root.join(NSIS_DIR);
+    fs::create_dir_all(&directory)
+        .with_context(|| format!("cannot create {}", directory.display()))?;
+    let output = directory.join(installer_name(config));
+    let makensis = find_makensis()?;
+    let arguments = nsis_arguments(root, config, &output);
+    println!("> {} {}", makensis.display(), SCRIPT);
+    let status = Command::new(&makensis)
+        .args(&arguments)
+        .current_dir(root)
+        .status()
+        .with_context(|| format!("could not start {}", makensis.display()))?;
+    if !status.success() {
+        bail!("package: makensis failed with {status}");
+    }
+    Ok(())
+}
+
+fn installer_name(config: &Config) -> String {
+    format!("{}_{}_x64-setup.exe", config.product_name, config.version)
 }
 
 fn installer_path(root: &Path, config: &Config) -> Result<PathBuf> {
     let directory = root.join(NSIS_DIR);
     if !directory.is_dir() {
         bail!(
-            "package: the NSIS bundle directory {} is missing; `tauri build --bundles nsis` did not produce it",
+            "package: the NSIS bundle directory {} is missing; makensis did not produce it",
             directory.display()
         );
     }
-    let expected = directory.join(format!(
-        "{}_{}_x64-setup.exe",
-        config.product_name, config.version
-    ));
+    let expected = directory.join(installer_name(config));
     if expected.is_file() {
         return Ok(expected);
     }
@@ -233,16 +295,13 @@ fn tar_path() -> Result<PathBuf> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use std::collections::BTreeMap;
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use serde_json::Value;
-
     use super::{
-        check_sources, installer_path, stage_portable, Config, EXE, MARKER, NSIS_DIR, RELEASE_EXE,
-        RESOURCES,
+        check_sources, installer_path, nsis_arguments, read_config, stage_portable, Config, EXE,
+        MARKER, NSIS_DIR, RELEASE_EXE, RESOURCES, SCRIPT,
     };
 
     fn root() -> PathBuf {
@@ -256,44 +315,36 @@ mod tests {
         ))
     }
 
-    fn config() -> Value {
-        let path = root().join("apps/snapline/tauri.conf.json");
-        let text = fs::read_to_string(path).unwrap();
-        serde_json::from_str(&text).unwrap()
+    fn script() -> String {
+        fs::read_to_string(root().join(SCRIPT)).unwrap()
     }
 
     #[test]
-    fn bundle_config_is_a_current_user_nsis_installer() {
-        let config = config();
-        assert_eq!(config["productName"].as_str(), Some("Snapline"));
-        assert_eq!(
-            config["identifier"].as_str(),
-            Some("io.github.aaronburt.snapline")
-        );
-        assert_eq!(config["bundle"]["active"].as_bool(), Some(true));
-        assert_eq!(config["bundle"]["targets"], serde_json::json!(["nsis"]));
-        let windows = &config["bundle"]["windows"];
-        assert_eq!(
-            windows["webviewInstallMode"]["type"].as_str(),
-            Some("embedBootstrapper")
-        );
-        assert_eq!(windows["nsis"]["installMode"].as_str(), Some("currentUser"));
-        assert_eq!(
-            windows["nsis"]["installerHooks"].as_str(),
-            Some("installer/hooks.nsh")
-        );
+    fn the_installer_script_is_a_current_user_install_to_the_programs_folder() {
+        let script = script();
+        assert!(script.contains("RequestExecutionLevel user"));
+        assert!(script.contains("InstallDir \"$LOCALAPPDATA\\Programs\\${PRODUCT}\""));
+        assert!(script.contains("!define APP_ID \"io.github.aaronburt.snapline\""));
+        assert!(script.contains("!define MUI_FINISHPAGE_RUN_TEXT \"Launch Snapline\""));
     }
 
     #[test]
-    fn bundle_resources_match_the_packaged_files() {
-        let config = config();
-        let resources: BTreeMap<String, String> =
-            serde_json::from_value(config["bundle"]["resources"].clone()).unwrap();
-        let expected: BTreeMap<String, String> = RESOURCES
-            .iter()
-            .map(|(source, target)| (format!("../../{source}"), (*target).to_string()))
-            .collect();
-        assert_eq!(resources, expected);
+    fn the_installer_script_installs_every_packaged_resource() {
+        let script = script();
+        for (source, target) in RESOURCES {
+            let source = source.replace('/', "\\");
+            assert!(script.contains(&source), "{source} is not installed");
+            let file = target.rsplit('/').next().unwrap();
+            assert!(script.contains(file), "{file} is not installed");
+        }
+        assert!(script.contains("${ROOT}\\target\\release\\${EXE}"));
+    }
+
+    #[test]
+    fn the_app_version_comes_from_the_manifests() {
+        let config = read_config(&root()).unwrap();
+        assert_eq!(config.product_name, "Snapline");
+        assert!(!config.version.is_empty());
     }
 
     #[test]
@@ -333,25 +384,37 @@ mod tests {
         assert!(marker.is_file());
         assert_eq!(fs::metadata(&marker).unwrap().len(), 0);
         assert!(!staging.join("data").exists());
-        assert!(!staging.join("WebView2").exists());
         assert!(!staging.join("settings.toml").exists());
         fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
-    fn preuninstall_hook_runs_cleanup_without_blocking_the_uninstall() {
-        let path = root().join("apps/snapline/installer/hooks.nsh");
-        let hooks = fs::read_to_string(path).unwrap();
-        assert!(hooks.contains("!macro NSIS_HOOK_PREUNINSTALL"));
-        assert!(hooks.contains("!macroend"));
-        assert!(hooks.contains("$UpdateMode <> 1"));
-        assert!(hooks.contains("CheckIfAppIsRunning \"$INSTDIR\\snapline.exe\""));
-        assert!(hooks.contains("\"$INSTDIR\\snapline.exe\" --uninstall-cleanup"));
-        assert!(hooks.contains("ExecWait"));
-        assert!(!hooks.contains("Abort"));
-        assert!(hooks.contains("!define MUI_FINISHPAGE_RUN_TEXT \"Launch Snapline\""));
-        assert!(hooks.contains("SetLnkAppUserModelId"));
-        assert!(hooks.contains("$LOCALAPPDATA\\Programs\\${PRODUCTNAME}"));
+    fn the_uninstaller_runs_cleanup_without_blocking_the_uninstall() {
+        let script = script();
+        assert!(script.contains("Section \"Uninstall\""));
+        assert!(script.contains("--uninstall-cleanup"));
+        assert!(script.contains("ExecWait"));
+        assert!(script.contains("--set-shortcut-app-id"));
+    }
+
+    #[test]
+    fn makensis_gets_the_script_and_the_package_names() {
+        let config = Config {
+            product_name: "Snapline".to_string(),
+            version: "0.1.0".to_string(),
+        };
+        let output = Path::new("out/Snapline_0.1.0_x64-setup.exe");
+        let arguments = nsis_arguments(Path::new("repo"), &config, output);
+        let text: Vec<String> = arguments
+            .iter()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect();
+        assert!(text.contains(&"/DVERSION=0.1.0".to_owned()));
+        assert!(text
+            .iter()
+            .any(|argument| argument.starts_with("/DOUTFILE=")
+                && argument.ends_with("x64-setup.exe")));
+        assert!(text.last().unwrap().ends_with("snapline.nsi"));
     }
 
     #[test]

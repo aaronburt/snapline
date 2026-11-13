@@ -9,9 +9,6 @@ struct TokenFile {
     dark: Theme,
     light: Theme,
     annotation: Annotation,
-    #[serde(rename = "type")]
-    typography: Typography,
-    radius: Radius,
 }
 
 #[derive(Deserialize)]
@@ -59,46 +56,6 @@ struct Annotation {
     hint_text: String,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Typography {
-    sans: String,
-    sans_fallback: String,
-    mono: String,
-    mono_fallback: String,
-    base_size: String,
-}
-
-#[derive(Deserialize)]
-struct Radius {
-    sm: String,
-    md: String,
-    lg: String,
-}
-
-const THEME_CSS: [&str; 20] = [
-    "bg",
-    "mica",
-    "layer",
-    "card",
-    "cardAlt",
-    "stroke",
-    "strokeHi",
-    "text",
-    "text2",
-    "text3",
-    "accent",
-    "onAccent",
-    "accentSoft",
-    "subtle",
-    "ok",
-    "okSoft",
-    "err",
-    "errSoft",
-    "shadow",
-    "menuLayer",
-];
-
 const THEME_RUST: [&str; 20] = [
     "bg",
     "mica",
@@ -120,24 +77,6 @@ const THEME_RUST: [&str; 20] = [
     "err_soft",
     "shadow",
     "menu_layer",
-];
-
-const ANNOTATION_CSS: [&str; 15] = [
-    "red",
-    "orange",
-    "yellow",
-    "green",
-    "blue",
-    "white",
-    "redHighlight",
-    "orangeHighlight",
-    "yellowHighlight",
-    "greenHighlight",
-    "blueHighlight",
-    "whiteHighlight",
-    "dim",
-    "hintPill",
-    "hintText",
 ];
 
 const ANNOTATION_RUST: [&str; 15] = [
@@ -208,58 +147,6 @@ fn load(root: &Path) -> Result<TokenFile> {
     let source =
         fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
     toml::from_str(&source).with_context(|| format!("cannot parse {}", path.display()))
-}
-
-fn sans_stack(typography: &Typography) -> String {
-    format!(
-        "'{}', '{}', system-ui, sans-serif",
-        typography.sans, typography.sans_fallback
-    )
-}
-
-fn sans_fallback(typography: &Typography) -> String {
-    format!("'{}', system-ui, sans-serif", typography.sans_fallback)
-}
-
-fn mono_stack(typography: &Typography) -> String {
-    format!(
-        "'{}', 'Cascadia Code', Consolas, ui-monospace, monospace",
-        typography.mono
-    )
-}
-
-fn mono_fallback(typography: &Typography) -> String {
-    format!("{}, ui-monospace, monospace", typography.mono_fallback)
-}
-
-fn css(tokens: &TokenFile) -> String {
-    let mut out = String::from(":root {\n  color-scheme: dark;\n");
-    for (name, value) in THEME_CSS.iter().zip(theme_values(&tokens.dark)) {
-        out.push_str(&format!("  --{name}: {value};\n"));
-    }
-    for (name, value) in ANNOTATION_CSS
-        .iter()
-        .zip(annotation_values(&tokens.annotation))
-    {
-        out.push_str(&format!("  --{name}: {value};\n"));
-    }
-    out.push_str(&format!(
-        "  --type-sans: {};\n  --type-sans-fallback: {};\n  --type-mono: {};\n  --type-mono-fallback: {};\n  --type-base-size: {};\n  --radius-sm: {};\n  --radius-md: {};\n  --radius-lg: {};\n}}\n",
-        sans_stack(&tokens.typography),
-        sans_fallback(&tokens.typography),
-        mono_stack(&tokens.typography),
-        mono_fallback(&tokens.typography),
-        tokens.typography.base_size,
-        tokens.radius.sm,
-        tokens.radius.md,
-        tokens.radius.lg
-    ));
-    out.push_str("@media (prefers-color-scheme: light) {\n  :root {\n    color-scheme: light;\n");
-    for (name, value) in THEME_CSS.iter().zip(theme_values(&tokens.light)) {
-        out.push_str(&format!("    --{name}: {value};\n"));
-    }
-    out.push_str("  }\n}\n");
-    out
 }
 
 fn colour(literal: &str) -> Result<[f32; 4]> {
@@ -344,10 +231,6 @@ fn rust(tokens: &TokenFile) -> Result<String> {
     Ok(out.trim_end().to_owned() + "\n")
 }
 
-fn css_path(root: &Path) -> std::path::PathBuf {
-    root.join("ui/src/styles/tokens.css")
-}
-
 fn rust_path(root: &Path) -> std::path::PathBuf {
     root.join("crates/overlay-windows/src/tokens.rs")
 }
@@ -362,36 +245,21 @@ fn compare(path: &Path, expected: &str) -> Result<bool> {
 
 pub fn generate(root: &Path) -> Result<()> {
     let tokens = load(root)?;
-    let css_target = css_path(root);
     let rust_target = rust_path(root);
-    if let Some(parent) = css_target.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("cannot create {}", parent.display()))?;
-    }
     if let Some(parent) = rust_target.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("cannot create {}", parent.display()))?;
     }
-    fs::write(&css_target, css(&tokens))
-        .with_context(|| format!("cannot write {}", css_target.display()))?;
     fs::write(&rust_target, rust(&tokens)?)
         .with_context(|| format!("cannot write {}", rust_target.display()))?;
-    println!(
-        "tokens: wrote {} and {}",
-        css_target.display(),
-        rust_target.display()
-    );
+    println!("tokens: wrote {}", rust_target.display());
     Ok(())
 }
 
 pub fn check(root: &Path) -> Result<()> {
     let tokens = load(root)?;
-    let css_target = css_path(root);
     let rust_target = rust_path(root);
     let mut stale = Vec::new();
-    if !compare(&css_target, &css(&tokens))? {
-        stale.push(css_target);
-    }
     if !compare(&rust_target, &rust(&tokens)?)? {
         stale.push(rust_target);
     }

@@ -15,18 +15,12 @@ Snapline is a screenshot and screen recording tool for Windows, built as a lean 
 
 - Windows 10 or 11 (x64). Snapline is Windows only.
 - The Rust toolchain pinned in `rust-toolchain.toml` (rustup installs it on first use).
-- Node.js and npm for the web frontend in `ui`.
-- The WebView2 runtime, which ships with current Windows.
 - FFmpeg, which `cargo xtask fetch-ffmpeg` downloads into `third_party/ffmpeg`.
-- NSIS, which Tauri fetches on the first installer build.
+- NSIS to build the installer (`winget install NSIS.NSIS`). Only `cargo xtask package` needs it.
 
 ## Build and run
 
 ```
-cd ui
-npm ci
-npm run build
-cd ..
 cargo xtask fetch-ffmpeg
 cargo build -p snapline
 target\debug\snapline.exe
@@ -38,7 +32,7 @@ Build the installer and portable zip with:
 cargo xtask package
 ```
 
-The unsigned installer is written to `target/release/bundle/nsis` and the portable zip to `target/portable`.
+`cargo xtask package` builds the release exe, then the unsigned NSIS installer into `target/release/bundle/nsis` and the portable zip into `target/portable`.
 
 ## GitHub releases
 
@@ -53,25 +47,22 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo deny check
 cargo xtask no-comments
-cd ui
-npm test
-npm run check
 ```
 
 `crash::tests::panic_child_process` is a helper for the crash report test and can fail when run as part of the whole workspace. Skip it with `cargo test --workspace -- --skip crash::tests::panic_child_process`.
 
-For coverage, install `cargo-llvm-cov` and run `cargo llvm-cov --workspace --html`, or run `npm run coverage` in `ui`.
+For coverage, install `cargo-llvm-cov` and run `cargo llvm-cov --workspace --html`.
 
 ## Project layout
 
-- `apps/snapline`: the Tauri app, tray, windows and IPC.
+- `apps/snapline`: the app shell: tray, single instance, hotkeys, the installer script and the Windows adapters.
+- `crates/ui-slint`: every window of the app, drawn with Slint: the main window and the Quick Panel.
 - `crates/core`: shared types, actions, geometry and ports.
 - `crates/overlay-windows`: native Direct2D overlays, toolbar, pin, ruler and recording border.
 - `crates/platform-windows`: Windows capture, hotkeys, shell and input.
 - `crates/services`: application services, workflows, recording and uploads.
 - `crates/store`: settings and the history database.
 - `crates/upload`: upload destinations.
-- `ui`: the Svelte frontend.
 - `xtask`: build, packaging and check tasks.
 - `docs/adr` and `docs/plans`: design decisions and plans.
 

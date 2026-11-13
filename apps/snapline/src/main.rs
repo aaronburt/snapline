@@ -3,20 +3,17 @@
 
 mod cli;
 mod crash;
-mod events;
 mod history_host;
-mod ipc;
 mod logging;
-mod native_panel;
-mod panel;
-mod protocol;
-mod protocol_combine;
+mod main_loop;
+mod settings_update;
+mod shell;
+mod shortcut;
+mod single_instance;
 mod slint_ui;
 mod theme;
 mod tray;
 mod upload_files;
-mod webview_tuning;
-mod windows;
 
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::c_void;
@@ -32,6 +29,7 @@ use ::windows::Win32::System::Ole::CF_HDROP;
 use ::windows::Win32::System::Threading::CREATE_NO_WINDOW;
 use ::windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 use cli::{Args, BudgetWindow};
+use shell::Shell;
 use snapline_core::chord::Chord;
 use snapline_core::ffmpeg_args::{fallback_encoder, FfmpegCommand, VideoEncoder, VideoFormat};
 use snapline_core::geometry::{Point, Px};
@@ -71,8 +69,6 @@ use snapline_win::input::{InputEvent, InputHandle};
 use snapline_win::known_hosts::{HostKeyStatus, Store};
 use snapline_win::ports_impls::{SoundPlayer, ToastNotifier};
 use snapline_win::wic::WicCodec;
-use tauri::{Manager, RunEvent};
-use windows::WindowManager;
 
 use ::windows::Win32::Foundation::POINT;
 use ::windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
@@ -114,8 +110,6 @@ impl PrtscRegistry for PrtscPort {
         snapline_win::prtsc::restore(previous).map_err(|error| ServiceError::Io(error.to_string()))
     }
 }
-
-struct InputState(InputHandle);
 
 struct CombineHostImpl {
     worker: worker::Handle,
@@ -881,7 +875,7 @@ impl MediaPort for RecordingMediaImpl {
 }
 
 struct RecordingEventsImpl {
-    app: tauri::AppHandle,
+    shell: Shell,
 }
 
 impl EventSink for RecordingEventsImpl {
@@ -889,13 +883,13 @@ impl EventSink for RecordingEventsImpl {
         if let AppEvent::Record(recording::Event::State(status)) = &event {
             let elapsed =
                 (status.state == RecordStateDto::Recording).then_some(status.elapsed_ms / 1_000);
-            crate::tray::set_recording(&self.app, elapsed);
+            crate::tray::set_recording(elapsed);
         }
-        crate::events::emit(&self.app, &event);
+        self.shell.emit(&event);
     }
 }
 
-fn recording_ports(app: tauri::AppHandle) -> RecordingPorts {
+fn recording_ports(shell: Shell, worker: worker::Handle) -> RecordingPorts {
     RecordingPorts {
         picker: Arc::new(RecordingPickerImpl),
         border: Arc::new(RecordingBorderImpl),
@@ -903,12 +897,8 @@ fn recording_ports(app: tauri::AppHandle) -> RecordingPorts {
         ffmpeg: Arc::new(RecordingFfmpegImpl),
         audio: Arc::new(RecordingAudioImpl),
         media: Arc::new(RecordingMediaImpl),
-        store: Arc::new(WorkerRecordingStore::new(
-            app.state::<snapline_services::worker::Handle>()
-                .inner()
-                .clone(),
-        )),
-        events: Arc::new(RecordingEventsImpl { app }),
+        store: Arc::new(WorkerRecordingStore::new(worker)),
+        events: Arc::new(RecordingEventsImpl { shell }),
         publisher: Arc::new(recording::RunnerPublisher),
     }
 }
@@ -980,10 +970,12 @@ impl snapline_services::clipboard_upload::ConfirmHost for ClipboardConfirm {
     }
 }
 
-fn forward_input(app: &tauri::AppHandle, event: InputEvent) {
+fn forward_input(shell: &Shell, event: InputEvent) {
     match event {
         InputEvent::Action(action) => {
-            let services = app.state::<Services>().inner().clone();
+            let Some(services) = shell.services() else {
+                return;
+            };
             let background = action.as_str().starts_with("workflow:");
             let run = move || {
                 if let Err(error) =
@@ -995,24 +987,19 @@ fn forward_input(app: &tauri::AppHandle, event: InputEvent) {
                 }
             };
             if background {
-                tauri::async_runtime::spawn_blocking(run);
+                std::thread::spawn(run);
             } else {
                 run();
             }
         }
         InputEvent::Resumed => {
-            if let Err(error) = app.state::<Services>().hotkeys().on_resume() {
-                tracing::warn!(%error, "hotkeys could not be restored after sleep");
-            }
-        }
-        InputEvent::ThemeChanged => {
-            theme::refresh_open_windows(app);
-            if let Some(manager) = app.try_state::<WindowManager>() {
-                if let Some(ui) = manager.slint_if_open() {
-                    ui.set_light_theme(theme::is_light());
+            if let Some(services) = shell.services() {
+                if let Err(error) = services.hotkeys().on_resume() {
+                    tracing::warn!(%error, "hotkeys could not be restored after sleep");
                 }
             }
         }
+        InputEvent::ThemeChanged => shell.theme_changed(),
     }
 }
 
@@ -1022,8 +1009,21 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(cli::run_uninstall_cleanup());
     }
 
+    if let Some(shortcut) = &startup_args.shortcut_app_id {
+        let _ = snapline_win::apartment::init_ui_thread();
+        let result = shortcut::set_app_user_model_id(
+            std::path::Path::new(shortcut),
+            snapline_win::notify::APP_USER_MODEL_ID,
+        );
+        std::process::exit(i32::from(result.is_err()));
+    }
+
     crash::install();
     logging::init();
+    let instance = match single_instance::acquire(&std::env::args().collect::<Vec<_>>()) {
+        single_instance::Outcome::First(guard) => guard,
+        single_instance::Outcome::HandedOff => return Ok(()),
+    };
     let apartment = snapline_win::apartment::init_ui_thread();
     if apartment != snapline_win::apartment::UiApartment::Ready {
         tracing::warn!(
@@ -1065,7 +1065,6 @@ fn main() -> anyhow::Result<()> {
         ))))
         .with_upload_runtime(uploader.runtime());
     let startup_services = services.clone();
-    let thumb_services = services.clone();
     let capture_settings = services.settings_snapshot()?;
     snapline_services::capture::install(CaptureService::new(
         Arc::new(CaptureBackend::new(CaptureOptions {
@@ -1138,170 +1137,140 @@ fn main() -> anyhow::Result<()> {
         snapline_services::workflows::WorkflowRunner::new(&services, runner_ports),
     )?;
 
-    let app = tauri::Builder::default()
-        .manage(WindowManager::new())
-        .manage(worker_handle)
-        .register_uri_scheme_protocol("thumb", move |_context, request| {
-            protocol::handle(&thumb_services, request)
-        })
-        .register_uri_scheme_protocol("combine", |_context, request| {
-            protocol_combine::handle(request)
-        })
-        .invoke_handler(tauri::generate_handler![
-            ipc::app::ipc_app,
-            ipc::app::ipc_monitors,
-            ipc::settings::ipc_settings,
-            ipc::hotkeys::ipc_hotkeys,
-            ipc::history::ipc_history,
-            ipc::upload::ipc_upload,
-            ipc::workflow::ipc_workflow,
-            ipc::record::ipc_record,
-            ipc::tool::ipc_tool
-        ])
-        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            tracing::info!(?argv, ?cwd, "second instance started");
+    let shell = Shell::new();
+    main_loop::init({
+        let shell = shell.clone();
+        move |argv| {
+            tracing::info!(?argv, "second instance started");
             let forwarded = Args::parse_forwarded(&argv);
             if let Some(window) = forwarded.budget_open {
-                open_budget_window(app, window);
+                open_budget_window(&shell, window);
                 return;
             }
-            tray::handle_second_instance(app, &argv);
-        }))
-        .setup(move |app| {
-            if let Err(error) = snapline_win::notify::register_app_name() {
-                tracing::warn!(%error, "the notification identity could not be registered");
-            }
-            if let Err(error) =
-                snapline_services::uploads::maintain_history(&startup_services, true)
-            {
-                tracing::warn!(%error, "upload history could not be maintained");
-            }
-            let activation_services = startup_services.clone();
-            snapline_win::notify::set_activation_handler(move |activation| match activation {
-                snapline_win::notify::ToastActivation::OpenCapture(id) => {
-                    let Ok(id) = i64::try_from(id) else {
-                        return;
-                    };
-                    if let Err(error) = activation_services.history().open_from_notification(id) {
-                        tracing::warn!(%error, "the notified capture could not be opened");
-                    }
-                }
-                snapline_win::notify::ToastActivation::CopyImage(id) => {
-                    let services = activation_services.clone();
-                    tauri::async_runtime::spawn_blocking(move || {
-                        if let Err(error) = services
-                            .history()
-                            .handle(snapline_services::dto::history::HistoryReq::CopyImage { id })
-                        {
-                            snapline_services::actions::notify_failure(&error, &services);
-                        }
-                    });
-                }
-            });
-            let maintenance_services = startup_services.clone();
-            let _ = std::thread::Builder::new()
-                .name("snapline-history-maintenance".to_owned())
-                .spawn(move || loop {
-                    std::thread::sleep(std::time::Duration::from_secs(3600));
-                    if let Err(error) =
-                        snapline_services::uploads::maintain_history(&maintenance_services, false)
-                    {
-                        tracing::warn!(%error, "upload history could not be expired");
-                    }
-                });
-            let app_handle = app.handle().clone();
-            let input =
-                snapline_win::input::spawn_with(move |event| forward_input(&app_handle, event))?;
-            let services = startup_services
-                .clone()
-                .with_hotkey_input(Arc::new(InputPort(input.clone())))
-                .with_prtsc_registry(Arc::new(PrtscPort))
-                .with_notifier(Arc::new(ToastNotifier));
-            app.manage(services.clone());
-            snapline_services::recording::install_ports(recording_ports(app.handle().clone()))?;
-            services.hotkeys().on_settings_changed()?;
-            app.manage(InputState(input));
-            let event_app = app.handle().clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = worker_events.recv() {
-                    events::emit(&event_app, &event);
-                }
-            });
-            if let Some(upload_events) = upload_events {
-                let upload_app = app.handle().clone();
-                let persist_services = services.clone();
-                std::thread::spawn(move || {
-                    let mut batches = IntakeLinkBatches::default();
-                    let mut gate = snapline_services::uploads::PersistGate::default();
-                    while let Ok(event) = upload_events.recv() {
-                        if let snapline_services::AppEvent::Upload(
-                            snapline_services::uploads::Event::StateChanged(state),
-                        ) = &event
-                        {
-                            if gate.should_persist(state) {
-                                snapline_services::uploads::persist(&persist_services, state);
-                            }
-                            if state.status == snapline_services::dto::upload::UploadStatus::Done {
-                                if let Some(link) = &state.link {
-                                    if let Ok(runner) =
-                                        snapline_services::workflows::installed_runner()
-                                    {
-                                        let id = state.id;
-                                        let link = link.clone();
-                                        let page_link = state.page_link.clone();
-                                        tauri::async_runtime::spawn_blocking(move || {
-                                            let _ = runner.resume_upload(id, link, page_link, None);
-                                        });
-                                    }
-                                }
-                            }
-                            batches.handle(&persist_services, state);
-                        }
-                        events::emit(&upload_app, &event);
-                    }
-                });
-            }
-            tray::init(app.handle())?;
-            tracing::info!(
-                budget_run = startup_args.budget_run,
-                budget_open = ?startup_args.budget_open,
-                action = ?startup_args.action,
-                autostart = startup_args.autostart,
-                uninstall_cleanup = startup_args.uninstall_cleanup,
-                "command-line arguments"
-            );
-            if !startup_args.budget_run {
-                if let Some(window) = startup_args.budget_open {
-                    open_budget_window(app.handle(), window);
-                }
-            }
-            if startup_args.autostart {
-                let start_minimised = startup_services
-                    .settings_snapshot()
-                    .map(|settings| settings.general.start_minimised)
-                    .unwrap_or(true);
-                if !start_minimised {
-                    let manager = app.state::<WindowManager>();
-                    if let Err(error) = manager.open_main(app.handle(), "/history") {
-                        tracing::error!(%error, "could not open the main window after autostart");
-                    }
-                }
-            }
-            Ok(())
-        })
-        .build(tauri::generate_context!())?;
+            tray::handle_second_instance(&shell, &argv);
+        }
+    })
+    .map_err(|error| anyhow::anyhow!(error))?;
 
-    app.run(|_app, event| {
-        if let RunEvent::ExitRequested { api, .. } = &event {
-            if !tray::exit_requested() {
-                api.prevent_exit();
+    if let Err(error) = snapline_win::notify::register_app_name() {
+        tracing::warn!(%error, "the notification identity could not be registered");
+    }
+    if let Err(error) = snapline_services::uploads::maintain_history(&startup_services, true) {
+        tracing::warn!(%error, "upload history could not be maintained");
+    }
+    let activation_services = startup_services.clone();
+    snapline_win::notify::set_activation_handler(move |activation| match activation {
+        snapline_win::notify::ToastActivation::OpenCapture(id) => {
+            let Ok(id) = i64::try_from(id) else {
+                return;
+            };
+            if let Err(error) = activation_services.history().open_from_notification(id) {
+                tracing::warn!(%error, "the notified capture could not be opened");
             }
         }
-        if let RunEvent::Exit = event {
-            _app.state::<InputState>().0.shutdown();
-            let _ = _app.state::<worker::Handle>().shutdown();
+        snapline_win::notify::ToastActivation::CopyImage(id) => {
+            let services = activation_services.clone();
+            std::thread::spawn(move || {
+                if let Err(error) = services
+                    .history()
+                    .handle(snapline_services::dto::history::HistoryReq::CopyImage { id })
+                {
+                    snapline_services::actions::notify_failure(&error, &services);
+                }
+            });
         }
     });
+    let maintenance_services = startup_services.clone();
+    let _ = std::thread::Builder::new()
+        .name("snapline-history-maintenance".to_owned())
+        .spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+            if let Err(error) =
+                snapline_services::uploads::maintain_history(&maintenance_services, false)
+            {
+                tracing::warn!(%error, "upload history could not be expired");
+            }
+        });
+    let input_shell = shell.clone();
+    let input = snapline_win::input::spawn_with(move |event| forward_input(&input_shell, event))?;
+    let services = startup_services
+        .clone()
+        .with_hotkey_input(Arc::new(InputPort(input.clone())))
+        .with_prtsc_registry(Arc::new(PrtscPort))
+        .with_notifier(Arc::new(ToastNotifier));
+    shell.set_services(services.clone());
+    snapline_services::recording::install_ports(recording_ports(
+        shell.clone(),
+        worker_handle.clone(),
+    ))?;
+    services.hotkeys().on_settings_changed()?;
+    let event_shell = shell.clone();
+    std::thread::spawn(move || {
+        while let Ok(event) = worker_events.recv() {
+            event_shell.emit(&event);
+        }
+    });
+    if let Some(upload_events) = upload_events {
+        let upload_shell = shell.clone();
+        let persist_services = services.clone();
+        std::thread::spawn(move || {
+            let mut batches = IntakeLinkBatches::default();
+            let mut gate = snapline_services::uploads::PersistGate::default();
+            while let Ok(event) = upload_events.recv() {
+                if let snapline_services::AppEvent::Upload(
+                    snapline_services::uploads::Event::StateChanged(state),
+                ) = &event
+                {
+                    if gate.should_persist(state) {
+                        snapline_services::uploads::persist(&persist_services, state);
+                    }
+                    if state.status == snapline_services::dto::upload::UploadStatus::Done {
+                        if let Some(link) = &state.link {
+                            if let Ok(runner) = snapline_services::workflows::installed_runner() {
+                                let id = state.id;
+                                let link = link.clone();
+                                let page_link = state.page_link.clone();
+                                std::thread::spawn(move || {
+                                    let _ = runner.resume_upload(id, link, page_link, None);
+                                });
+                            }
+                        }
+                    }
+                    batches.handle(&persist_services, state);
+                }
+                upload_shell.emit(&event);
+            }
+        });
+    }
+    tray::init(&shell).map_err(|error| anyhow::anyhow!(error))?;
+    tracing::info!(
+        budget_run = startup_args.budget_run,
+        budget_open = ?startup_args.budget_open,
+        action = ?startup_args.action,
+        autostart = startup_args.autostart,
+        uninstall_cleanup = startup_args.uninstall_cleanup,
+        "command-line arguments"
+    );
+    if !startup_args.budget_run {
+        if let Some(window) = startup_args.budget_open {
+            open_budget_window(&shell, window);
+        }
+    }
+    if startup_args.autostart {
+        let start_minimised = startup_services
+            .settings_snapshot()
+            .map(|settings| settings.general.start_minimised)
+            .unwrap_or(true);
+        if !start_minimised {
+            shell.open_main("/history");
+        }
+    }
+
+    main_loop::run();
+
+    input.shutdown();
+    let _ = worker_handle.shutdown();
+    drop(instance);
     Ok(())
 }
 
@@ -1393,30 +1362,22 @@ fn codec_factory() -> Arc<CodecFactory> {
     })
 }
 
-fn open_budget_window(app: &tauri::AppHandle, window: BudgetWindow) {
+fn open_budget_window(shell: &Shell, window: BudgetWindow) {
     match window {
-        BudgetWindow::Panel => {
-            let (x, y, width, height) = budget_tray_rect(app);
-            panel::show(app, x, y, width, height);
-        }
-        BudgetWindow::Main => {
-            let manager = app.state::<WindowManager>();
-            if let Err(error) = manager.open_main(app, "/history") {
-                tracing::error!(%error, "could not open the main window for the budget check");
-            }
-        }
+        BudgetWindow::Panel => shell.show_panel(budget_tray_rect()),
+        BudgetWindow::Main => shell.open_main("/history"),
     }
 }
 
-fn budget_tray_rect(app: &tauri::AppHandle) -> (f64, f64, f64, f64) {
-    match app.primary_monitor() {
-        Ok(Some(monitor)) => {
-            let work = monitor.work_area();
-            let right = f64::from(work.position.x) + f64::from(work.size.width);
-            let bottom = f64::from(work.position.y) + f64::from(work.size.height);
-            (right - 36.0, bottom - 36.0, 24.0, 24.0)
+fn budget_tray_rect() -> snapline_ui::TrayRect {
+    match snapline_win::monitors::primary() {
+        Some(monitor) => {
+            let work = monitor.work_area;
+            let right = f64::from(work.x.0) + f64::from(work.width.0);
+            let bottom = f64::from(work.y.0) + f64::from(work.height.0);
+            snapline_ui::TrayRect::new(right - 36.0, bottom - 36.0, 24.0, 24.0)
         }
-        _ => (0.0, 0.0, 24.0, 24.0),
+        None => snapline_ui::TrayRect::new(0.0, 0.0, 24.0, 24.0),
     }
 }
 

@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum UploadStatus {
     Queued,
@@ -12,12 +11,10 @@ pub enum UploadStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadState {
-    #[ts(as = "u32")]
     pub id: u64,
-    #[ts(as = "Option<u32>")]
     pub capture_id: Option<i64>,
     pub file_name: String,
     pub dest: String,
@@ -25,9 +22,7 @@ pub struct UploadState {
     pub status: UploadStatus,
     pub cancellable: bool,
     pub progress_available: bool,
-    #[ts(as = "u32")]
     pub sent: u64,
-    #[ts(as = "u32")]
     pub total: u64,
     pub link_batch: Option<UploadLinkBatch>,
     pub attempts: u32,
@@ -35,80 +30,48 @@ pub struct UploadState {
     pub page_link: Option<String>,
     pub deletion_link: Option<String>,
     pub error: Option<String>,
-    #[ts(as = "Option<u32>")]
     pub retry_in_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadLinkBatch {
     pub id: String,
-    #[ts(as = "u32")]
     pub index: u32,
-    #[ts(as = "u32")]
     pub size: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum UploadReq {
     Ping,
-    State {
-        #[ts(as = "u32")]
-        id: u64,
-    },
-    Cancel {
-        #[ts(as = "u32")]
-        id: u64,
-    },
-    Retry {
-        #[ts(as = "u32")]
-        id: u64,
-    },
+    State { id: u64 },
+    Cancel { id: u64 },
+    Retry { id: u64 },
     List,
     LastLink,
     PickAndUpload,
-    CopyLink {
-        link: String,
-    },
-    UploadElsewhere {
-        #[ts(as = "i32")]
-        capture_id: i64,
-        dest: String,
-    },
+    CopyLink { link: String },
+    UploadElsewhere { capture_id: i64, dest: String },
     Destination(DestinationReq),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum UploadResp {
     Pong,
     State(UploadState),
     States(Vec<UploadState>),
-    LastLink {
-        link: Option<String>,
-    },
+    LastLink { link: Option<String> },
     LinkCopied,
-    Accepted {
-        #[ts(as = "u32")]
-        id: u64,
-    },
-    AcceptedMany {
-        #[ts(as = "Vec<u32>")]
-        ids: Vec<u64>,
-    },
-    Cancelled {
-        #[ts(as = "u32")]
-        id: u64,
-    },
-    Retried {
-        #[ts(as = "u32")]
-        id: u64,
-    },
+    Accepted { id: u64 },
+    AcceptedMany { ids: Vec<u64> },
+    Cancelled { id: u64 },
+    Retried { id: u64 },
     Destination(DestinationResp),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DestinationKindDto {
     Imgur,
@@ -118,14 +81,14 @@ pub enum DestinationKindDto {
     Custom,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DestinationStatusDto {
     Configured,
     NotSetUp,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DestinationActionDto {
     Configure,
@@ -133,14 +96,14 @@ pub enum DestinationActionDto {
     Edit,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DestinationHeaderDto {
     pub name: String,
     pub saved: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DestinationViewDto {
     pub id: String,
@@ -180,14 +143,14 @@ pub struct DestinationViewDto {
     pub warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DestinationHeaderInput {
     pub name: String,
     pub value: Option<String>,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DestinationInput {
     pub id: Option<String>,
@@ -273,7 +236,7 @@ impl std::fmt::Debug for DestinationInput {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DestinationTestStatusDto {
     NotTested,
@@ -281,7 +244,7 @@ pub enum DestinationTestStatusDto {
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DestinationTestOutcomeDto {
     pub status: DestinationTestStatusDto,
@@ -289,7 +252,7 @@ pub struct DestinationTestOutcomeDto {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum DestinationReq {
     List,
@@ -312,7 +275,7 @@ pub enum DestinationReq {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum DestinationResp {
     Destinations(Vec<DestinationViewDto>),

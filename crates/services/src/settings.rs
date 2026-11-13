@@ -1,12 +1,10 @@
 use serde::{Deserialize, Serialize};
 use snapline_core::actions::ActionId;
-use ts_rs::TS;
 
 use crate::dto::settings::{SettingsDto, SettingsReq, SettingsResp};
 use crate::{ServiceError, Services};
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(rename = "SettingsAreaEvent")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum Event {
     Ping,

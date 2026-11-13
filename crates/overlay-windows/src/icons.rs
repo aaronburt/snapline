@@ -29,13 +29,6 @@ pub(crate) enum Icon {
     Record,
     Gif,
     Cancel,
-    PanelRegion,
-    PanelWindow,
-    PanelScreen,
-    PanelOpen,
-    PanelGear,
-    PanelLink,
-    PanelMarks,
 }
 
 impl Icon {
@@ -61,13 +54,6 @@ impl Icon {
             Self::Record => "M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM12 12h.01",
             Self::Gif => "M4 5h16v14H4zM10 9l5 3-5 3z",
             Self::Cancel => "M6 6l12 12M18 6L6 18",
-            Self::PanelRegion => "M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M9 9h6v6H9z",
-            Self::PanelWindow => "M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM3 9h18",
-            Self::PanelScreen => "M3 5h18v11H3zM8 20h8M12 16v4",
-            Self::PanelOpen => "M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
-            Self::PanelGear => "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
-            Self::PanelLink => "M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1",
-            Self::PanelMarks => "M6.75 9.75v-3h3M14.25 6.75h3v3M17.25 14.25v3h-3M9.75 17.25h-3v-3",
         }
     }
 
@@ -75,14 +61,7 @@ impl Icon {
         match self {
             Self::Upload => 1.9,
             Self::Cancel => 1.8,
-            Self::PanelMarks => 1.65,
-            Self::PanelRegion
-            | Self::PanelWindow
-            | Self::PanelScreen
-            | Self::PanelOpen
-            | Self::PanelGear
-            | Self::PanelLink
-            | Self::Copy => 1.6,
+            Self::Copy => 1.6,
             _ => 1.7,
         }
     }

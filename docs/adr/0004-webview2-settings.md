@@ -1,5 +1,7 @@
 # ADR 0004: WebView2 settings
 
+> Superseded by [0007](0007-slint-only.md): there is no WebView2 any more.
+
 Status: Accepted
 
 ## Context

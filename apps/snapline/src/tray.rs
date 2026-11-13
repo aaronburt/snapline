@@ -1,17 +1,24 @@
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use snapline_core::actions::ActionId;
 use snapline_services::actions::dispatch_notifying;
-use snapline_services::{ServiceError, Services};
-use tauri::image::Image;
-use tauri::menu::{IconMenuItem, Menu};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, Wry};
+use snapline_services::ServiceError;
+use snapline_ui::TrayRect;
+use tray_icon::menu::{IconMenuItem, Menu, MenuEvent};
+use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-use crate::windows::WindowManager;
+use crate::main_loop;
+use crate::shell::Shell;
 
-static EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+static STATE: Mutex<TrayState> = Mutex::new(TrayState {
+    recording_seconds: None,
+});
+
+thread_local! {
+    static TRAY: RefCell<Option<TrayIcon>> = const { RefCell::new(None) };
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IconState {
@@ -34,17 +41,10 @@ impl TrayState {
     }
 }
 
-pub struct TrayHandle {
-    tray: TrayIcon<Wry>,
-    state: Mutex<TrayState>,
-}
-
-impl TrayHandle {
-    fn state(&self) -> std::sync::MutexGuard<'_, TrayState> {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
+fn state() -> TrayState {
+    *STATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,167 +64,173 @@ fn left_click(capture_on_click: bool, recording: bool, follows_double_click: boo
     }
 }
 
-fn capture_on_click(app: &AppHandle) -> bool {
-    app.try_state::<Services>()
+fn capture_on_click(shell: &Shell) -> bool {
+    shell
+        .services()
         .and_then(|services| services.settings_snapshot().ok())
         .is_some_and(|settings| settings.general.tray_click_capture)
 }
 
-fn is_recording(app: &AppHandle) -> bool {
-    app.try_state::<TrayHandle>()
-        .is_some_and(|handle| handle.state().recording_seconds.is_some())
+fn is_recording() -> bool {
+    state().recording_seconds.is_some()
 }
 
-pub fn init(app: &AppHandle) -> tauri::Result<()> {
-    let state = TrayState::default();
-    let menu = build_menu(app)?;
-    let icon = icon_for_state(state.icon_state())?;
+fn rect_of(rect: tray_icon::Rect) -> TrayRect {
+    TrayRect::new(
+        rect.position.x,
+        rect.position.y,
+        f64::from(rect.size.width),
+        f64::from(rect.size.height),
+    )
+}
+
+pub fn init(shell: &Shell) -> Result<(), String> {
+    let current = state();
+    let exit = IconMenuItem::with_id(EXIT_ID, "Exit", true, menu_icon(), None);
+    let menu = Menu::new();
+    menu.append(&exit).map_err(|error| error.to_string())?;
+    let tray = TrayIconBuilder::new()
+        .with_id("main")
+        .with_icon(icon_for_state(current.icon_state())?)
+        .with_tooltip(tooltip(current))
+        .with_menu(Box::new(menu))
+        .with_menu_on_left_click(false)
+        .build()
+        .map_err(|error| error.to_string())?;
+    TRAY.with(|slot| *slot.borrow_mut() = Some(tray));
+
+    let exit_shell = shell.clone();
+    MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+        if event.id.as_ref() == EXIT_ID {
+            request_exit(&exit_shell);
+        }
+    }));
+
+    let shell = shell.clone();
     let capture_click = Arc::new(AtomicU64::new(0));
     let double_click = AtomicBool::new(false);
-    let tray = TrayIconBuilder::with_id("main")
-        .icon(icon)
-        .tooltip(tooltip(state))
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| {
-            if event.id().as_ref() == EXIT_ID {
-                request_exit(app);
-            }
-        })
-        .on_tray_icon_event(move |tray, event| match event {
-            TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Down,
-                ..
-            } => double_click.store(false, Ordering::SeqCst),
-            TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                rect,
-                ..
-            } => {
-                let follows_double_click = double_click.swap(false, Ordering::SeqCst);
-                let app = tray.app_handle();
-                let capture = capture_on_click(app);
-                let recording = is_recording(app);
-                let decision = left_click(capture, recording, follows_double_click);
-                tracing::info!(
-                    capture,
-                    recording,
-                    follows_double_click,
-                    ?decision,
-                    "tray click"
-                );
-                match decision {
-                    LeftClick::Panel => {
-                        let rect = crate::panel::TrayRect::from_tauri(rect);
-                        crate::panel::show(app, rect.x, rect.y, rect.width, rect.height);
-                        return;
-                    }
-                    LeftClick::Ignore => return,
-                    LeftClick::Capture => {}
+    TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| match event {
+        TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Down,
+            ..
+        } => double_click.store(false, Ordering::SeqCst),
+        TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            rect,
+            ..
+        } => {
+            let follows_double_click = double_click.swap(false, Ordering::SeqCst);
+            let capture = capture_on_click(&shell);
+            let recording = is_recording();
+            let decision = left_click(capture, recording, follows_double_click);
+            tracing::info!(
+                capture,
+                recording,
+                follows_double_click,
+                ?decision,
+                "tray click"
+            );
+            match decision {
+                LeftClick::Panel => {
+                    shell.show_panel(rect_of(rect));
+                    return;
                 }
-                let ticket = capture_click.fetch_add(1, Ordering::SeqCst) + 1;
-                let capture_click = Arc::clone(&capture_click);
-                let app = app.clone();
-                tauri::async_runtime::spawn_blocking(move || {
-                    std::thread::sleep(snapline_win::input::double_click_interval());
-                    let current = capture_click.load(Ordering::SeqCst) == ticket;
-                    let still = left_click(capture_on_click(&app), is_recording(&app), false)
-                        == LeftClick::Capture;
-                    tracing::info!(current, still, "tray click capture check");
-                    if current && still {
-                        run_action(&app, "capture_region");
-                    }
-                });
+                LeftClick::Ignore => return,
+                LeftClick::Capture => {}
             }
-            TrayIconEvent::DoubleClick {
-                button: MouseButton::Left,
-                ..
-            } => {
-                capture_click.fetch_add(1, Ordering::SeqCst);
-                double_click.store(true, Ordering::SeqCst);
-                let app = tray.app_handle();
-                let manager = app.state::<WindowManager>();
-                if let Err(error) = manager.open_main(app, "/history") {
-                    tracing::error!(%error, "could not open the main window");
+            let ticket = capture_click.fetch_add(1, Ordering::SeqCst) + 1;
+            let capture_click = Arc::clone(&capture_click);
+            let shell = shell.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(snapline_win::input::double_click_interval());
+                let current = capture_click.load(Ordering::SeqCst) == ticket;
+                let still = left_click(capture_on_click(&shell), is_recording(), false)
+                    == LeftClick::Capture;
+                tracing::info!(current, still, "tray click capture check");
+                if current && still {
+                    run_action(&shell, "capture_region");
                 }
-            }
-            _ => {}
-        })
-        .build(app)?;
-    app.manage(TrayHandle {
-        tray,
-        state: Mutex::new(state),
-    });
+            });
+        }
+        TrayIconEvent::DoubleClick {
+            button: MouseButton::Left,
+            ..
+        } => {
+            capture_click.fetch_add(1, Ordering::SeqCst);
+            double_click.store(true, Ordering::SeqCst);
+            shell.open_main("/history");
+        }
+        _ => {}
+    }));
     Ok(())
 }
 
-pub fn exit_requested() -> bool {
-    EXIT_REQUESTED.load(Ordering::SeqCst)
-}
-
-pub fn handle_second_instance(app: &AppHandle, argv: &[String]) {
+pub fn handle_second_instance(shell: &Shell, argv: &[String]) {
     if let Some(position) = argv.iter().position(|argument| argument == "--action") {
         if let Some(action) = argv.get(position + 1) {
-            run_action(app, action);
+            run_action(shell, action);
             return;
         }
     }
-    open_main(app, "/history");
+    shell.open_main("/history");
 }
 
-pub fn set_recording(app: &AppHandle, elapsed_seconds: Option<u64>) {
-    let handle = app.state::<TrayHandle>();
-    let state = {
-        let mut state = handle.state();
-        state.recording_seconds = elapsed_seconds;
-        *state
+pub fn set_recording(elapsed_seconds: Option<u64>) {
+    let current = {
+        let mut guard = STATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.recording_seconds = elapsed_seconds;
+        *guard
     };
-    let icon = match icon_for_state(state.icon_state()) {
-        Ok(icon) => icon,
-        Err(error) => {
-            tracing::error!(%error, "could not update the tray icon");
-            return;
-        }
-    };
-    if let Err(error) = handle.tray.set_icon(Some(icon)) {
-        tracing::error!(%error, "could not update the tray icon");
-    }
-    if let Err(error) = handle.tray.set_tooltip(Some(tooltip(state))) {
-        tracing::error!(%error, "could not update the tray tooltip");
-    }
+    main_loop::post(move || {
+        let icon = match icon_for_state(current.icon_state()) {
+            Ok(icon) => icon,
+            Err(error) => {
+                tracing::error!(%error, "could not update the tray icon");
+                return;
+            }
+        };
+        TRAY.with(|slot| {
+            let slot = slot.borrow();
+            let Some(tray) = slot.as_ref() else {
+                return;
+            };
+            if let Err(error) = tray.set_icon(Some(icon)) {
+                tracing::error!(%error, "could not update the tray icon");
+            }
+            if let Err(error) = tray.set_tooltip(Some(tooltip(current))) {
+                tracing::error!(%error, "could not update the tray tooltip");
+            }
+        });
+    });
 }
 
 const EXIT_ID: &str = "app_exit";
 
-fn request_exit(app: &AppHandle) {
-    EXIT_REQUESTED.store(true, Ordering::SeqCst);
-    app.exit(0);
+pub fn request_exit(_shell: &Shell) {
+    main_loop::quit();
 }
 
-fn open_main(app: &AppHandle, route: &str) {
-    let manager = app.state::<WindowManager>();
-    if let Err(error) = manager.open_main(app, route) {
-        tracing::error!(%error, "could not open the main window");
-    }
-}
-
-fn run_action(app: &AppHandle, action: &str) {
+pub fn run_action(shell: &Shell, action: &str) {
     if action == EXIT_ID {
-        request_exit(app);
+        request_exit(shell);
         return;
     }
     if action == "app_open" {
-        open_main(app, "/history");
+        shell.open_main("/history");
         return;
     }
     if action == "app_settings" {
-        open_main(app, "/settings/general");
+        shell.open_main("/settings/general");
         return;
     }
-    let services = app.state::<Services>();
-    match dispatch_notifying(&ActionId::new(action), services.inner()) {
+    let Some(services) = shell.services() else {
+        return;
+    };
+    match dispatch_notifying(&ActionId::new(action), &services) {
         Ok(()) => {}
         Err(ServiceError::NotYet) => {
             tracing::info!(%action, "action is not available yet");
@@ -235,20 +241,22 @@ fn run_action(app: &AppHandle, action: &str) {
     }
 }
 
-fn menu_icon() -> Option<Image<'static>> {
+fn rgba(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+    let image = image::load_from_memory(bytes)
+        .map_err(|error| error.to_string())?
+        .to_rgba8();
+    let (width, height) = image.dimensions();
+    Ok((image.into_raw(), width, height))
+}
+
+fn menu_icon() -> Option<tray_icon::menu::Icon> {
     let bytes: &'static [u8] = if crate::theme::is_light() {
         include_bytes!("../icons/menu/power-16-light.png")
     } else {
         include_bytes!("../icons/menu/power-16-dark.png")
     };
-    Image::from_bytes(bytes).ok()
-}
-
-fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
-    let exit = IconMenuItem::with_id(app, EXIT_ID, "Exit", true, menu_icon(), None::<&str>)?;
-    let menu = Menu::new(app)?;
-    menu.append(&exit)?;
-    Ok(menu)
+    let (pixels, width, height) = rgba(bytes).ok()?;
+    tray_icon::menu::Icon::from_rgba(pixels, width, height).ok()
 }
 
 fn tooltip(state: TrayState) -> String {
@@ -262,15 +270,13 @@ fn format_elapsed(seconds: u64) -> String {
     format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
-fn icon_for_state(state: IconState) -> tauri::Result<Image<'static>> {
-    match state {
-        IconState::Normal => {
-            Image::from_bytes(include_bytes!("../../../assets/icons/tray-normal-32.png"))
-        }
-        IconState::Recording => Image::from_bytes(include_bytes!(
-            "../../../assets/icons/tray-recording-32.png"
-        )),
-    }
+fn icon_for_state(state: IconState) -> Result<Icon, String> {
+    let bytes: &[u8] = match state {
+        IconState::Normal => include_bytes!("../../../assets/icons/tray-normal-32.png"),
+        IconState::Recording => include_bytes!("../../../assets/icons/tray-recording-32.png"),
+    };
+    let (pixels, width, height) = rgba(bytes)?;
+    Icon::from_rgba(pixels, width, height).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

@@ -8,7 +8,6 @@ use snapline_core::hotkey_plan::{self, BlockReason, Blocked, Owner, Preview as C
 use snapline_core::ports::{Notice, Notifier};
 use snapline_store::settings::workflows::Workflow;
 use snapline_store::settings::{self as store_settings, Workflows};
-use ts_rs::TS;
 
 use crate::dto::hotkeys::{
     BindingDto, BlockedDto, BlockedReasonDto, HotkeysReq, HotkeysResp, PreviewDto,
@@ -27,8 +26,7 @@ pub trait PrtscRegistry: Send + Sync {
     fn restore(&self, previous: Option<u32>) -> Result<(), ServiceError>;
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(rename = "HotkeysAreaEvent")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum Event {
     Ping,

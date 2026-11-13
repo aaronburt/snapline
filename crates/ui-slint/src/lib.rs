@@ -3,6 +3,8 @@ mod destination_form;
 mod history;
 pub mod host;
 mod labels;
+mod panel_logic;
+mod quick_panel;
 pub mod runner;
 pub mod secrets;
 mod tools;
@@ -23,7 +25,8 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel, Weak};
 
 pub use backend::Backend;
 use backend::{patch, report_failure, spawn_bg};
-pub use host::{Host, MonitorInfo, QrScanResult};
+pub use host::{Host, MonitorInfo, PanelMonitor, QrScanResult};
+pub use panel_logic::TrayRect;
 pub use runner::{OpenFailed, UiHandle};
 use snapline_core::chord::{Chord, ChordError, Key, Modifiers};
 use snapline_services::dto::hotkeys::HotkeysResp;

@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RecordKindDto {
     Video,
@@ -9,7 +8,7 @@ pub enum RecordKindDto {
     Window,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RecordStateDto {
     #[default]
@@ -22,24 +21,21 @@ pub enum RecordStateDto {
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordStatusDto {
     pub state: RecordStateDto,
     pub kind: Option<RecordKindDto>,
-    #[ts(as = "i32")]
     pub elapsed_ms: u64,
     pub width: Option<u32>,
     pub height: Option<u32>,
-    #[ts(as = "Option<i32>")]
     pub duration_ms: Option<i64>,
-    #[ts(as = "Option<i32>")]
     pub capture_id: Option<i64>,
     pub path: Option<String>,
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum RecordReq {
     Ping,
@@ -48,7 +44,7 @@ pub enum RecordReq {
     State,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum RecordResp {
     Pong,
