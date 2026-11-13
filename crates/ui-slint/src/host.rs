@@ -58,6 +58,8 @@ pub trait Host: Send + Sync {
 
     fn configure_window(&self, _hwnd: isize, _light: bool) {}
 
+    fn trim_memory(&self) {}
+
     fn monitors(&self) -> Vec<MonitorInfo> {
         Vec::new()
     }

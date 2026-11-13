@@ -227,6 +227,12 @@ impl Host for WindowsHost {
         }
     }
 
+    fn trim_memory(&self) {
+        use windows::Win32::System::ProcessStatus::EmptyWorkingSet;
+        use windows::Win32::System::Threading::GetCurrentProcess;
+        let _ = unsafe { EmptyWorkingSet(GetCurrentProcess()) };
+    }
+
     fn is_light(&self) -> bool {
         snapline_win::theme::is_light()
     }
