@@ -1,6 +1,0 @@
-node_modules
-dist
-coverage
-package-lock.json
-src/lib/ipc/bindings
-src/styles/tokens.css

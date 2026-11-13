@@ -1,9 +1,8 @@
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::dto::history::CaptureKindDto;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RecentStatusDto {
     Local,
@@ -12,22 +11,19 @@ pub enum RecentStatusDto {
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecentCaptureDto {
-    #[ts(as = "i32")]
     pub id: i64,
     pub name: String,
     pub kind: CaptureKindDto,
     pub status: RecentStatusDto,
-    #[ts(as = "i32")]
     pub created_at: i64,
     pub url: Option<String>,
-    #[ts(as = "Option<i32>")]
     pub duration_ms: Option<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     content = "data",
@@ -48,7 +44,7 @@ pub enum AppReq {
     Stats,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     content = "data",
@@ -58,22 +54,15 @@ pub enum AppReq {
 pub enum AppResp {
     Pong,
     Ready,
-    Info {
-        has_mica: bool,
-    },
+    Info { has_mica: bool },
     PanelResize,
     PanelClose,
     PanelAction,
     PanelCopyLink,
     OpenMain,
     OpenCapture,
-    Recent {
-        captures: Vec<RecentCaptureDto>,
-    },
-    Stats {
-        #[ts(as = "i32")]
-        count: i64,
-    },
+    Recent { captures: Vec<RecentCaptureDto> },
+    Stats { count: i64 },
 }
 
 #[cfg(test)]

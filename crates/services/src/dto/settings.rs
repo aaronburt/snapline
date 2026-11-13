@@ -2,29 +2,20 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use snapline_store::settings as store;
-use ts_rs::TS;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum SettingsReq {
     Ping,
     Get,
-    Update {
-        #[ts(type = "Record<string, unknown>")]
-        patch: serde_json::Value,
-    },
-    PreviewName {
-        pattern: String,
-        format: String,
-    },
+    Update { patch: serde_json::Value },
+    PreviewName { pattern: String, format: String },
     PickFfmpeg,
     ResetFfmpegPath,
-    BrowseFolder {
-        current: Option<String>,
-    },
+    BrowseFolder { current: Option<String> },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum SettingsResp {
     Pong,
@@ -34,7 +25,7 @@ pub enum SettingsResp {
     BrowseFolder { path: Option<String> },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsDto {
     pub version: u32,
@@ -46,7 +37,7 @@ pub struct SettingsDto {
     pub window: WindowDto,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneralDto {
     pub launch_at_signin: bool,
@@ -63,14 +54,14 @@ pub struct GeneralDto {
     pub copied_link_format: LinkFormatDto,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowStepDto {
     pub kind: WorkflowStepKindDto,
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubfoldersDto {
     ByMonth,
@@ -79,7 +70,7 @@ pub enum SubfoldersDto {
     None,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageFormatDto {
     Png,
@@ -87,7 +78,7 @@ pub enum ImageFormatDto {
     Webp,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LinkFormatDto {
     Direct,
@@ -97,7 +88,7 @@ pub enum LinkFormatDto {
     Page,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowStepKindDto {
     CopyImage,
@@ -108,7 +99,7 @@ pub enum WorkflowStepKindDto {
     PlaySound,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureDto {
     pub include_cursor: bool,
@@ -135,7 +126,7 @@ pub struct CaptureDto {
     pub gif_optimise_palette: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CaptureDelayDto {
     #[serde(rename = "off")]
     Off,
@@ -147,7 +138,7 @@ pub enum CaptureDelayDto {
     FiveSeconds,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MagnifierZoomDto {
     #[serde(rename = "2x")]
     X2,
@@ -157,7 +148,7 @@ pub enum MagnifierZoomDto {
     X8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FullscreenCaptureDto {
     AllMonitors,
@@ -165,7 +156,7 @@ pub enum FullscreenCaptureDto {
     PrimaryMonitor,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VideoFormatDto {
     Mp4H264,
@@ -174,7 +165,7 @@ pub enum VideoFormatDto {
     MkvH264,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameRateDto {
     Fps24,
@@ -182,7 +173,7 @@ pub enum FrameRateDto {
     Fps60,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VideoQualityDto {
     High,
@@ -191,7 +182,7 @@ pub enum VideoQualityDto {
     Lossless,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GifFrameRateDto {
     Fps10,
@@ -200,7 +191,7 @@ pub enum GifFrameRateDto {
     Fps30,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GifMaxWidthDto {
     Original,
@@ -209,7 +200,7 @@ pub enum GifMaxWidthDto {
     Px480,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HotkeysDto {
     pub bindings: BTreeMap<String, String>,
@@ -218,13 +209,13 @@ pub struct HotkeysDto {
     pub restore: RestoreDto,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RestoreDto {
     pub print_screen_key_for_snipping_enabled: Option<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadsDto {
     pub images: String,
@@ -242,11 +233,11 @@ pub struct UploadsDto {
     pub proxy_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DestinationDto {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RetryDto {
     Never,
@@ -255,7 +246,7 @@ pub enum RetryDto {
     FiveTimes,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TimeoutDto {
     #[serde(rename = "30s")]
     Secs30,
@@ -265,7 +256,7 @@ pub enum TimeoutDto {
     Secs120,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KeepHistoryDto {
     Forever,
@@ -274,7 +265,7 @@ pub enum KeepHistoryDto {
     Days30,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyDto {
     System,
@@ -282,23 +273,23 @@ pub enum ProxyDto {
     Custom,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowsDto {
     pub list: Vec<WorkflowDto>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkflowDto {}
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowDto {
     pub main: MainWindowDto,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MainWindowDto {
     pub x: Option<i32>,

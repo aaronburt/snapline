@@ -23,7 +23,6 @@ use snapline_store::settings::capture::{
 };
 use snapline_store::settings::Settings;
 use thiserror::Error;
-use ts_rs::TS;
 
 use crate::dto::record::{RecordKindDto, RecordReq, RecordResp, RecordStateDto, RecordStatusDto};
 use crate::{AppEvent, ServiceError, Services};
@@ -48,8 +47,7 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 static PORTS: OnceLock<Mutex<Option<RecordingPorts>>> = OnceLock::new();
 static CURRENT: OnceLock<Mutex<Option<SessionControl>>> = OnceLock::new();
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(rename = "RecordAreaEvent")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum Event {
     Ping,

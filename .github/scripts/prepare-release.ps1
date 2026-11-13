@@ -56,11 +56,6 @@ $newerRelease = $releases | Where-Object {
 }
 $markLatest = if ($newerRelease) { 'false' } else { 'true' }
 
-$tauriConfig = 'apps/snapline/tauri.conf.json'
-$config = Get-Content -LiteralPath $tauriConfig -Raw | ConvertFrom-Json
-$config.version = $packageVersion
-$config | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $tauriConfig -Encoding utf8
-
 $appManifest = 'apps/snapline/Cargo.toml'
 $manifest = Get-Content -LiteralPath $appManifest -Raw
 if ($manifest -notmatch '(?m)^version\.workspace = true\r?$') {

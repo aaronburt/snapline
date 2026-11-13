@@ -1,5 +1,7 @@
 # ADR 0006: Svelte frontend and the IPC contract
 
+> Superseded by [0007](0007-slint-only.md): the Svelte frontend is gone and every window is Slint.
+
 Status: Accepted
 
 ## Context

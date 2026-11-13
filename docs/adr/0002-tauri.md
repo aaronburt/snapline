@@ -1,5 +1,7 @@
 # ADR 0002: Tauri with on-demand webviews and a native overlay
 
+> Superseded by [0007](0007-slint-only.md): Snapline no longer uses Tauri or a webview.
+
 Status: Accepted
 
 ## Context

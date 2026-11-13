@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     content = "data",
@@ -14,7 +13,6 @@ pub enum ToolReq {
         text: String,
     },
     QrScan {
-        #[ts(as = "Option<i32>")]
         capture_id: Option<i64>,
     },
     QrCopyText {
@@ -35,15 +33,12 @@ pub enum ToolReq {
         format: ConvertFormatDto,
     },
     ConvertProgress {
-        #[ts(as = "u32")]
         job_id: u64,
     },
     ConvertCancel {
-        #[ts(as = "u32")]
         job_id: u64,
     },
     ConvertResult {
-        #[ts(as = "u32")]
         job_id: u64,
     },
     CombinePickFiles,
@@ -54,13 +49,11 @@ pub enum ToolReq {
         request: CombineRequestDto,
     },
     EditorOpenHistory {
-        #[ts(as = "i32")]
         capture_id: i64,
     },
     EditorOpenFile,
     EditorOpenClipboard,
     PinHistory {
-        #[ts(as = "i32")]
         capture_id: i64,
     },
     PinFile,
@@ -71,7 +64,7 @@ pub enum ToolReq {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum EditorActionDto {
     Copy,
@@ -80,24 +73,23 @@ pub enum EditorActionDto {
     Upload,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PinSourceDto {
     File,
     Clipboard,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EditorOutcomeDto {
     pub action: Option<EditorActionDto>,
-    #[ts(as = "Option<i32>")]
     pub capture_id: Option<i64>,
     pub path: Option<String>,
     pub cancelled: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     content = "data",
@@ -105,24 +97,18 @@ pub struct EditorOutcomeDto {
     rename_all_fields = "camelCase"
 )]
 pub enum CombineSourceDto {
-    History {
-        #[ts(as = "i32")]
-        id: i64,
-    },
-    Picked {
-        #[ts(as = "u32")]
-        id: u32,
-    },
+    History { id: i64 },
+    Picked { id: u32 },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CombineLayoutDto {
     SideBySide,
     Stacked,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CombineAlignDto {
     Start,
@@ -130,7 +116,7 @@ pub enum CombineAlignDto {
     End,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "camelCase")]
 pub enum CombineBackgroundDto {
     Transparent,
@@ -139,7 +125,7 @@ pub enum CombineBackgroundDto {
     Custom(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CombineOptionsDto {
     pub layout: CombineLayoutDto,
@@ -148,22 +134,21 @@ pub struct CombineOptionsDto {
     pub background: CombineBackgroundDto,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CombineRequestDto {
     pub sources: Vec<CombineSourceDto>,
     pub options: CombineOptionsDto,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CombinePickedDto {
-    #[ts(as = "u32")]
     pub id: u32,
     pub name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     content = "data",
@@ -171,16 +156,11 @@ pub struct CombinePickedDto {
     rename_all_fields = "camelCase"
 )]
 pub enum ConvertSource {
-    Capture {
-        #[ts(as = "i32")]
-        capture_id: i64,
-    },
-    File {
-        path: String,
-    },
+    Capture { capture_id: i64 },
+    File { path: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ConvertFormatDto {
     Gif,
@@ -188,7 +168,7 @@ pub enum ConvertFormatDto {
     Mp4Small,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ConvertPhaseDto {
     Converting,
@@ -198,28 +178,26 @@ pub enum ConvertPhaseDto {
     Cancelled,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvertProgressDto {
     pub phase: ConvertPhaseDto,
     pub percent: Option<f64>,
-    #[ts(as = "Option<i32>")]
     pub out_time_ms: Option<u64>,
     pub speed: Option<f64>,
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvertedDto {
-    #[ts(as = "i32")]
     pub capture_id: i64,
     pub path: String,
     pub name: String,
     pub format: ConvertFormatDto,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     content = "data",
@@ -246,16 +224,13 @@ pub enum ToolResp {
         path: Option<String>,
     },
     ConvertStarted {
-        #[ts(as = "u32")]
         job_id: u64,
     },
     ConvertProgressed {
-        #[ts(as = "u32")]
         job_id: u64,
         progress: ConvertProgressDto,
     },
     ConvertCancelled {
-        #[ts(as = "u32")]
         job_id: u64,
     },
     Converted {
@@ -265,11 +240,9 @@ pub enum ToolResp {
         files: Vec<CombinePickedDto>,
     },
     CombinePreviewed {
-        #[ts(as = "u32")]
         job: u32,
     },
     CombineSaved {
-        #[ts(as = "i32")]
         capture_id: i64,
     },
     EditorOpened {

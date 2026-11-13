@@ -3,11 +3,10 @@ use snapline_core::chord::Chord;
 use snapline_core::ids::{DestId, WorkflowId};
 use snapline_core::link_format::LinkFormat;
 use snapline_core::workflow::{CaptureKind, RecordKind, Step, Violation, Workflow};
-use ts_rs::TS;
 
 use crate::dto::settings::LinkFormatDto;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum WorkflowReq {
     Ping,
@@ -34,7 +33,7 @@ pub enum WorkflowReq {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum WorkflowResp {
     Pong,
@@ -53,7 +52,7 @@ pub enum WorkflowResp {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowInput {
     pub name: String,
@@ -62,7 +61,7 @@ pub struct WorkflowInput {
     pub steps: Vec<StepDto>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowInfo {
     pub id: String,
@@ -73,21 +72,21 @@ pub struct WorkflowInfo {
     pub is_default: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DestinationOption {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ViolationDto {
     pub step: Option<usize>,
     pub message: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureStepKindDto {
     Region,
@@ -96,7 +95,7 @@ pub enum CaptureStepKindDto {
     LastRegion,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordStepKindDto {
     Video,
@@ -104,7 +103,7 @@ pub enum RecordStepKindDto {
     Window,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "step", rename_all = "snake_case")]
 pub enum StepDto {
     Capture {

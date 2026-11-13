@@ -478,56 +478,43 @@ fn png(size: usize, pixels: &[u8]) -> Vec<u8> {
 }
 
 fn read_icons(root: &Path) -> Result<Vec<(String, String)>> {
-    let path = root.join("ui/src/lib/icons.ts");
+    let path = root.join("crates/ui-slint/ui/icons.slint");
     let source =
         fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
-    let start = source
-        .find("export const icons = {")
-        .context("ui/src/lib/icons.ts has no icons record")?;
-    let rest = &source[start..];
-    let end = rest
-        .find("\n} as const;")
-        .context("icons record is not closed")?;
-    let record = &rest[..end];
-    let bytes = record.as_bytes();
     let mut icons = Vec::new();
-    let mut index = 0;
-    while index < bytes.len() {
-        let start = index;
-        while index < bytes.len() && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
-        {
-            index += 1;
-        }
-        if index == start {
-            index += 1;
+    for line in source.lines() {
+        let Some(rest) = line.trim().strip_prefix("out property <string> ") else {
             continue;
-        }
-        let name = &record[start..index];
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
-        if bytes.get(index) != Some(&b':') {
+        };
+        let Some((name, value)) = rest.split_once(':') else {
             continue;
-        }
-        index += 1;
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
-        if bytes.get(index) != Some(&b'\'') {
+        };
+        let value = value.trim().trim_end_matches(';').trim();
+        let Some(path_data) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
             continue;
-        }
-        index += 1;
-        let path_start = index;
-        while index < bytes.len() && bytes[index] != b'\'' {
-            index += 1;
-        }
-        if index >= bytes.len() {
-            break;
-        }
-        icons.push((name.to_owned(), record[path_start..index].to_owned()));
-        index += 1;
+        };
+        icons.push((camel(name.trim()), path_data.to_owned()));
+    }
+    if icons.is_empty() {
+        anyhow::bail!("crates/ui-slint/ui/icons.slint has no icons");
     }
     Ok(icons)
+}
+
+fn camel(name: &str) -> String {
+    let mut out = String::new();
+    let mut upper = false;
+    for character in name.chars() {
+        if character == '-' {
+            upper = true;
+        } else if upper {
+            out.extend(character.to_uppercase());
+            upper = false;
+        } else {
+            out.push(character);
+        }
+    }
+    out
 }
 
 fn find_icon(icons: &[(String, String)], name: &str) -> Result<String> {
@@ -535,7 +522,7 @@ fn find_icon(icons: &[(String, String)], name: &str) -> Result<String> {
         .iter()
         .find(|(candidate, _)| candidate == name)
         .map(|(_, path)| path.clone())
-        .with_context(|| format!("ui/src/lib/icons.ts has no {name} icon"))
+        .with_context(|| format!("crates/ui-slint/ui/icons.slint has no {name} icon"))
 }
 
 fn colours() -> [(&'static str, [u8; 3]); 2] {

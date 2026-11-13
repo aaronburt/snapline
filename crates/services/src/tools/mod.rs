@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use snapline_core::actions::ActionId;
 use snapline_core::combine::{Align, Background, CombineOptions, Layout};
-use ts_rs::TS;
 
 use crate::dto::tool::{
     CombineAlignDto, CombineBackgroundDto, CombineLayoutDto, CombineRequestDto, CombineSourceDto,
@@ -20,8 +19,7 @@ pub mod pin;
 pub mod qr;
 pub mod ruler;
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(rename = "ToolAreaEvent")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum Event {
     Ping,

@@ -32,6 +32,7 @@ pub struct Args {
     pub action: Option<String>,
     pub autostart: bool,
     pub uninstall_cleanup: bool,
+    pub shortcut_app_id: Option<String>,
 }
 
 impl Args {
@@ -69,6 +70,10 @@ impl Args {
                 }
                 "--autostart" => args.autostart = true,
                 "--uninstall-cleanup" => args.uninstall_cleanup = true,
+                "--set-shortcut-app-id" => {
+                    index += 1;
+                    args.shortcut_app_id = values.get(index).cloned();
+                }
                 _ => {}
             }
             index += 1;

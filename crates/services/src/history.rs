@@ -11,7 +11,6 @@ use snapline_store::history::{
     HistoryPage as StorePage, HistoryRepo, UploadState,
 };
 use snapline_store::io::Paths;
-use ts_rs::TS;
 
 use crate::dto::history::{
     CaptureDto, CaptureKindDto, Cursor, HistoryFilter, HistoryPage, HistoryReq, HistoryResp,
@@ -19,23 +18,13 @@ use crate::dto::history::{
 };
 use crate::{ServiceError, Services};
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(rename = "HistoryAreaEvent")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum Event {
     Ping,
-    Added {
-        #[ts(as = "i32")]
-        id: i64,
-    },
-    Removed {
-        #[ts(as = "i32")]
-        id: i64,
-    },
-    RemovedMany {
-        #[ts(as = "Vec<i32>")]
-        ids: Vec<i64>,
-    },
+    Added { id: i64 },
+    Removed { id: i64 },
+    RemovedMany { ids: Vec<i64> },
 }
 
 #[derive(Debug, Clone)]

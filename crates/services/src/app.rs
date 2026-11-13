@@ -3,14 +3,12 @@ use snapline_core::actions::ActionId;
 use snapline_store::history::{
     Capture, CaptureKind, HistoryError, HistoryFilter as StoreFilter, HistoryRepo, UploadState,
 };
-use ts_rs::TS;
 
 use crate::dto::app::{AppReq, AppResp, RecentCaptureDto, RecentStatusDto};
 use crate::dto::history::CaptureKindDto;
 use crate::{ServiceError, Services};
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(rename = "AppAreaEvent")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum Event {
     Ping,

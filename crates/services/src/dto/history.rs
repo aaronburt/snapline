@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum HistoryFilter {
     All,
@@ -13,7 +12,7 @@ pub enum HistoryFilter {
     LocalOnly,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CaptureKindDto {
     Image,
@@ -23,7 +22,7 @@ pub enum CaptureKindDto {
     File,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum UploadStateDto {
     Queued,
@@ -33,77 +32,61 @@ pub enum UploadStateDto {
     Cancelled,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadDto {
     pub dest_id: String,
     pub state: UploadStateDto,
-    #[ts(as = "i32")]
     pub sent: i64,
-    #[ts(as = "i32")]
     pub total: i64,
     pub url: Option<String>,
     pub deletion_url: Option<String>,
     pub error: Option<String>,
-    #[ts(as = "i32")]
     pub attempts: i64,
-    #[ts(as = "i32")]
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[ts(rename = "HistoryCaptureDto")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureDto {
-    #[ts(as = "i32")]
     pub id: i64,
     pub kind: CaptureKindDto,
     pub owned: bool,
     pub missing: bool,
     pub name: String,
-    #[ts(as = "i32")]
     pub bytes: i64,
-    #[ts(as = "Option<i32>")]
     pub width: Option<i64>,
-    #[ts(as = "Option<i32>")]
     pub height: Option<i64>,
-    #[ts(as = "Option<i32>")]
     pub duration_ms: Option<i64>,
     pub source_app: Option<String>,
-    #[ts(as = "i32")]
     pub created_at: i64,
     pub folder: String,
     pub upload: Option<UploadDto>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Cursor {
-    #[ts(as = "i32")]
     pub created_at: i64,
-    #[ts(as = "i32")]
     pub id: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryPage {
     pub items: Vec<CaptureDto>,
     pub next: Option<Cursor>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryStats {
-    #[ts(as = "i32")]
     pub count: i64,
-    #[ts(as = "i32")]
     pub bytes: i64,
-    #[ts(as = "i32")]
     pub uploaded_this_week: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     content = "data",
@@ -122,41 +105,33 @@ pub enum HistoryReq {
         cursor: Option<Cursor>,
     },
     Get {
-        #[ts(as = "i32")]
         id: i64,
     },
     Stats,
     ConfirmDelete {
-        #[ts(as = "i32")]
         id: i64,
     },
     Delete {
-        #[ts(as = "i32")]
         id: i64,
     },
     DeleteMany {
-        #[ts(as = "Vec<i32>")]
         ids: Vec<i64>,
     },
     CopyImage {
-        #[ts(as = "i32")]
         id: i64,
     },
     ShowInFolder {
-        #[ts(as = "i32")]
         id: i64,
     },
     OpenFile {
-        #[ts(as = "i32")]
         id: i64,
     },
     OpenUrl {
-        #[ts(as = "i32")]
         id: i64,
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     content = "data",
@@ -165,30 +140,13 @@ pub enum HistoryReq {
 )]
 pub enum HistoryResp {
     Pong,
-    Page {
-        page: HistoryPage,
-    },
-    Search {
-        page: HistoryPage,
-    },
-    Get {
-        capture: CaptureDto,
-    },
-    Stats {
-        stats: HistoryStats,
-    },
-    ConfirmDelete {
-        confirmed: bool,
-    },
-    Delete {
-        #[ts(as = "i32")]
-        id: i64,
-    },
-    DeleteMany {
-        #[ts(as = "Vec<i32>")]
-        removed: Vec<i64>,
-        failed: usize,
-    },
+    Page { page: HistoryPage },
+    Search { page: HistoryPage },
+    Get { capture: CaptureDto },
+    Stats { stats: HistoryStats },
+    ConfirmDelete { confirmed: bool },
+    Delete { id: i64 },
+    DeleteMany { removed: Vec<i64>, failed: usize },
     CopyImage,
     ShowInFolder,
     OpenFile,

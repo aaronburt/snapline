@@ -5,7 +5,6 @@ use snapline_core::workflow::{
     CaptureKind, Step, ValidationError, Violation, Workflow, DEFAULT_WORKFLOW_ID, NAME_MAX_CHARS,
 };
 use snapline_store::settings::Settings;
-use ts_rs::TS;
 
 use crate::dto::workflow::{
     DestinationOption, ViolationDto, WorkflowInfo, WorkflowReq, WorkflowResp,
@@ -18,8 +17,7 @@ pub use crate::workflow_runner::{
     WorkerSavePort, WorkflowGate, WorkflowRunner, WorkflowUploadHandOff,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(rename = "WorkflowAreaEvent")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum Event {
     Ping,
