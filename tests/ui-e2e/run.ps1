@@ -205,12 +205,6 @@ function ExerciseToggles($page) {
     }
 }
 foreach ($page in "General", "Capture", "Hotkeys", "Upload destinations") { ExerciseToggles $page }
-Press "General" "zoom-start" | Out-Null
-foreach ($z in "50%", "150%") { Press $z "zoom-$z" | Out-Null }
-# Ctrl+0 resets the zoom, so later steps find their controls in the usual place
-try { [Win]::SetForegroundWindow([IntPtr]$script:win.Current.NativeWindowHandle) | Out-Null; [Windows.Forms.SendKeys]::SendWait("^0"); Start-Sleep -Milliseconds 800 } catch { Log "zoom reset failed: $_" }
-Shot "zoom-reset"
-
 # --- Upload destinations: open the add menu and every form, then cancel out ---
 Press "Upload destinations" "uploads-again" | Out-Null
 if (Press "Add destination" "add-menu-open") {
@@ -231,6 +225,23 @@ if (Press "New workflow") { if (Find "Cancel" 3) { Press "Cancel" "workflow-edit
 # --- Tools page ---
 Press "Tools" "tools-again" | Out-Null
 Shot "tools-final"
+
+# --- Zoom (last, so a stuck zoom can't affect the other steps) ---
+Press "General" "zoom-start" | Out-Null
+foreach ($z in "50%", "150%") { Press $z "zoom-$z" | Out-Null }
+# Ctrl+0 resets the zoom, so later steps find their controls in the usual place
+try { [Win]::SetForegroundWindow([IntPtr]$script:win.Current.NativeWindowHandle) | Out-Null; [Windows.Forms.SendKeys]::SendWait("^0"); Start-Sleep -Milliseconds 800 } catch { Log "zoom reset failed: $_" }
+Shot "zoom-reset"
+
+# Diagnostics for switches: what UI Automation reports for them
+Press "General" "switch-diagnostics" | Out-Null
+foreach ($e in $script:win.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)) {
+    $c = $e.Current
+    if ($c.ControlType -ne [Windows.Automation.ControlType]::Text -and $c.Name -notmatch '%') {
+        $pats = ($e.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName -replace 'Identifiers.Pattern','' }) -join ','
+        Log ("  element {0} '{1}' patterns=[{2}]" -f $c.ControlType.ProgrammaticName, $c.Name, $pats)
+    }
+}
 
 # --- end: app must still be running ---
 if (Alive) {
