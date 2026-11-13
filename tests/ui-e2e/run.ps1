@@ -184,26 +184,32 @@ function ExerciseToggles($page) {
     if (-not (Alive)) { return }
     Press $page "toggles-$page-start" | Out-Null
     $cond = New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::IsTogglePatternAvailableProperty), $true
-    $items = @($script:win.FindAll([Windows.Automation.TreeScope]::Descendants, $cond))
-    Log ("{0}: {1} switch-like controls" -f $page, $items.Count)
-    $n = 0
-    foreach ($e in $items) {
-        if ($n -ge 30 -or -not (Alive)) { break }
-        $n++
+    $count = @($script:win.FindAll([Windows.Automation.TreeScope]::Descendants, $cond)).Count
+    Log "${page}: $count switch-like controls"
+    for ($i = 0; $i -lt [Math]::Min($count, 30); $i++) {
+        if (-not (Alive)) { break }
         try {
+            # re-read the list each time: flipping a control can re-lay out the page
+            $items = @($script:win.FindAll([Windows.Automation.TreeScope]::Descendants, $cond))
+            if ($i -ge $items.Count) { break }
+            $e = $items[$i]
+            $name = $e.Current.Name
+            if ($name -match '%') { continue }   # zoom options are exercised separately
             $t = $e.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
             $before = $t.Current.ToggleState
             $t.Toggle(); Start-Sleep -Milliseconds 300
             $after = $t.Current.ToggleState
-            if ($before -eq $after) { Log "note: '$($e.Current.Name)' did not change state" }
-            Shot "toggle-$page-$($e.Current.Name)"
+            Shot "toggle-$page-$name"
             if ($before -ne $after) { $t.Toggle(); Start-Sleep -Milliseconds 300 }
-        } catch { Log "note: toggle on '$($e.Current.Name)' failed: $_" }
+        } catch { Log "note: control $i on ${page} failed: $_" }
     }
 }
 foreach ($page in "General", "Capture", "Hotkeys", "Upload destinations") { ExerciseToggles $page }
 Press "General" "zoom-start" | Out-Null
-foreach ($z in "50%", "200%", "100%") { Press $z "zoom-$z" | Out-Null }
+foreach ($z in "50%", "150%") { Press $z "zoom-$z" | Out-Null }
+# Ctrl+0 resets the zoom, so later steps find their controls in the usual place
+try { [Win]::SetForegroundWindow([IntPtr]$script:win.Current.NativeWindowHandle) | Out-Null; [Windows.Forms.SendKeys]::SendWait("^0"); Start-Sleep -Milliseconds 800 } catch { Log "zoom reset failed: $_" }
+Shot "zoom-reset"
 
 # --- Upload destinations: open the add menu and every form, then cancel out ---
 Press "Upload destinations" "uploads-again" | Out-Null
