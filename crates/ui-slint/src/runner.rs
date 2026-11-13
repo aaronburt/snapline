@@ -17,6 +17,8 @@ use crate::history::{HistoryHandle, ThumbCache};
 use crate::host::Host;
 use crate::{tools, SnaplineWindow, Tokens, ToolsState, WorkflowsState};
 
+const TRIM_DELAY: Duration = Duration::from_secs(1);
+
 thread_local! {
     static WINDOW: RefCell<Option<SnaplineWindow>> = const { RefCell::new(None) };
     static BACKEND: RefCell<Option<Rc<Backend>>> = const { RefCell::new(None) };
@@ -302,12 +304,15 @@ fn open_here(services: Services, host: Arc<dyn Host>, route: &str) -> bool {
             }
             EventResult::Propagate
         });
-    window.window().on_close_requested(|| {
-        slint::Timer::single_shot(Duration::ZERO, || {
+    let close_host = host.clone();
+    window.window().on_close_requested(move || {
+        let trim_host = close_host.clone();
+        slint::Timer::single_shot(Duration::ZERO, move || {
             WINDOW.with(|slot| slot.borrow_mut().take());
             BACKEND.with(|slot| slot.borrow_mut().take());
             CACHE.with(|slot| slot.borrow_mut().take());
             HISTORY.with(|slot| slot.borrow_mut().take());
+            slint::Timer::single_shot(TRIM_DELAY, move || trim_host.trim_memory());
         });
         slint::CloseRequestResponse::HideWindow
     });
