@@ -242,6 +242,7 @@ mod tests {
         assert_eq!(settings.general.subfolders, Subfolders::ByMonth);
         assert_eq!(settings.general.image_format, ImageFormat::Png);
         assert_eq!(settings.general.lossy_quality, 90);
+        assert_eq!(settings.general.zoom, 100);
         assert_eq!(
             settings.general.name_pattern,
             "{app}_{yyyy}-{MM}-{dd}_{HH}-{mm}-{ss}"

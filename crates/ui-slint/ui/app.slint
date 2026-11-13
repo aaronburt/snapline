@@ -92,6 +92,23 @@ export component SnaplineWindow inherits Window {
         root.sync-find-for-page();
     }
 
+    zoom-keys := FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if (event.modifiers.control) {
+                if (event.text == "=" || event.text == "+") {
+                    SettingsState.zoom-step(1);
+                    return accept;
+                } else if (event.text == "-" || event.text == "_") {
+                    SettingsState.zoom-step(-1);
+                    return accept;
+                } else if (event.text == "0") {
+                    SettingsState.zoom-step(0);
+                    return accept;
+                }
+            }
+            reject
+        }
     HorizontalLayout {
         VerticalLayout {
             width: root.nav-width;
@@ -259,5 +276,6 @@ export component SnaplineWindow inherits Window {
                 }
             }
         }
+    }
     }
 }

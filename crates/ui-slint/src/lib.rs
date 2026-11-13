@@ -342,6 +342,10 @@ fn apply_settings(s: &SettingsState, v: &Value, mics: Vec<String>, monitors: &[M
     s.set_image_format_options(model(labels::labels(labels::IMAGE_FORMAT)));
     s.set_image_format(choice_label(labels::IMAGE_FORMAT, &general["imageFormat"], "PNG").into());
     s.set_lossy_quality(general["lossyQuality"].as_i64().unwrap_or(90) as i32);
+    s.set_zoom_options(model(labels::zoom_labels()));
+    s.set_zoom(i32::from(labels::nearest_zoom(
+        general["zoom"].as_i64().unwrap_or(100),
+    )));
     let name_pattern = string_of(&general["namePattern"]);
     if s.get_name_pattern().as_str() != name_pattern {
         s.set_name_pattern(name_pattern.into());
@@ -505,6 +509,26 @@ fn hotkey_rows(
         .collect()
 }
 
+/// Scales the whole window by overriding its scale factor: the OS scale times the zoom.
+pub(crate) fn apply_zoom(app: &SnaplineWindow) {
+    use slint::platform::WindowEvent;
+    use slint::winit_030::WinitWindowAccessor;
+    let zoom = app.global::<SettingsState>().get_zoom() as f32 / 100.0;
+    let Some(os_scale) = app
+        .window()
+        .with_winit_window(|window| window.scale_factor() as f32)
+    else {
+        return;
+    };
+    let wanted = os_scale * zoom;
+    if (app.window().scale_factor() - wanted).abs() > f32::EPSILON {
+        app.window()
+            .dispatch_event(WindowEvent::ScaleFactorChanged {
+                scale_factor: wanted,
+            });
+    }
+}
+
 pub(crate) fn reload(app: &Weak<SnaplineWindow>, backend: &Backend) -> Result<()> {
     let Some(app) = app.upgrade() else {
         return Ok(());
@@ -516,6 +540,7 @@ pub(crate) fn reload(app: &Weak<SnaplineWindow>, backend: &Backend) -> Result<()
     let monitors = backend.host().monitors();
     let s = app.global::<SettingsState>();
     apply_settings(&s, &settings, mics, &monitors);
+    apply_zoom(&app);
     let capture_hotkey = match &hotkeys {
         HotkeysResp::State { bindings, .. } => bindings
             .iter()
@@ -887,6 +912,29 @@ pub(crate) fn create_window_with_cache(
             }
         }
         Err(error) => tracing::warn!("{error:#}"),
+    });
+
+    let (b, w) = (backend.clone(), weak.clone());
+    s.on_update_zoom(move |shown| {
+        if let Ok(percent) = shown.trim_end_matches('%').parse::<i64>() {
+            send(
+                &w,
+                &b,
+                patch("general.zoom", json!(labels::nearest_zoom(percent))),
+            );
+        }
+    });
+
+    let (b, w) = (backend.clone(), weak.clone());
+    s.on_zoom_step(move |delta| {
+        let Some(app) = w.upgrade() else {
+            return;
+        };
+        let current = i64::from(app.global::<SettingsState>().get_zoom());
+        let next = labels::step_zoom(current, delta);
+        if i64::from(next) != current {
+            send(&w, &b, patch("general.zoom", json!(next)));
+        }
     });
 
     let queue = pending.clone();

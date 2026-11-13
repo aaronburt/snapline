@@ -34,6 +34,10 @@ export global SettingsState {
     in-out property <string> subfolders;
     in-out property <string> image-format;
     in-out property <int> lossy-quality: 90;
+    in-out property <int> zoom: 100;
+    in property <[string]> zoom-options;
+    callback update-zoom(string);
+    callback zoom-step(int);
     in-out property <string> name-pattern;
     in-out property <string> preview-name;
     in-out property <string> copied-link-format;

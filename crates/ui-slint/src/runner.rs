@@ -293,6 +293,16 @@ fn open_here(services: Services, host: Arc<dyn Host>, route: &str) -> bool {
                 configured.set(true);
                 apply_hwnd_theme(slint_win, event_host.as_ref(), event_host.is_light());
             }
+            if matches!(event, WinitWindowEvent::ScaleFactorChanged { .. }) {
+                // Slint adopts the OS scale after this handler returns; put the zoom back on top.
+                slint::Timer::single_shot(Duration::ZERO, || {
+                    WINDOW.with(|slot| {
+                        if let Some(win) = slot.borrow().as_ref() {
+                            crate::apply_zoom(win);
+                        }
+                    });
+                });
+            }
             if let WinitWindowEvent::ThemeChanged(theme) = event {
                 let light = matches!(theme, WinitTheme::Light);
                 WINDOW.with(|slot| {

@@ -12,6 +12,7 @@ export function settingsDto(): SettingsDto {
       subfolders: 'by_month',
       imageFormat: 'png',
       lossyQuality: 90,
+      zoom: 100,
       namePattern: '{app}_{yyyy}-{MM}-{dd}_{HH}-{mm}-{ss}',
       defaultWorkflow: [
         { kind: 'copy_image', enabled: true },

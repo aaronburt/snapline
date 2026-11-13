@@ -11,6 +11,8 @@ pub struct General {
     pub subfolders: Subfolders,
     pub image_format: ImageFormat,
     pub lossy_quality: u8,
+    /// Main-window zoom in percent (50 to 200).
+    pub zoom: u16,
     pub name_pattern: String,
     pub default_workflow: Vec<WorkflowStep>,
     pub copied_link_format: LinkFormat,
@@ -29,6 +31,7 @@ impl Default for General {
             subfolders: Subfolders::ByMonth,
             image_format: ImageFormat::Png,
             lossy_quality: 90,
+            zoom: 100,
             name_pattern: "{app}_{yyyy}-{MM}-{dd}_{HH}-{mm}-{ss}".to_owned(),
             default_workflow: default_workflow(),
             copied_link_format: LinkFormat::Direct,

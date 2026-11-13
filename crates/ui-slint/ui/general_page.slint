@@ -29,6 +29,8 @@ export component GeneralPage inherits VerticalLayout {
     property <bool> minimise-visible: SettingsState.text-matches("Start minimised to tray", "Don't open the main window on launch", root.filter);
     property <bool> tray-click-visible: SettingsState.text-matches("Open capture on tray click", "When off, clicking the tray icon opens the Quick Panel", root.filter);
     property <bool> notifications-visible: SettingsState.text-matches("Notifications", "Show a toast when an upload finishes or a link is copied", root.filter);
+    property <bool> show-appearance: SettingsState.text-matches("Appearance", "", root.filter)
+        || SettingsState.text-matches("Zoom", "Scale the whole window. Ctrl+= and Ctrl+- step, Ctrl+0 resets", root.filter);
     property <bool> show-startup: SettingsState.text-matches("Startup", "", root.filter)
         || launch-visible || minimise-visible || tray-click-visible || notifications-visible;
 
@@ -60,6 +62,13 @@ export component GeneralPage inherits VerticalLayout {
                 Text { text: "Version 0.1.0"; color: Tokens.text3; font-size: 12px; }
             }
         }
+    }
+
+    if show-appearance: Section {
+        heading: "Appearance";
+        Row { icon: Icons.search-plus; title: "Zoom"; description: "Scale the whole window. Ctrl+= and Ctrl+- step, Ctrl+0 resets";
+            Segmented { options: SettingsState.zoom-options; value: SettingsState.zoom + "%";
+                picked(v) => { SettingsState.update-zoom(v); } } }
     }
 
     if show-startup: Section {
