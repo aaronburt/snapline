@@ -263,7 +263,6 @@ fn count_label(count: usize) -> String {
 
 pub(crate) fn host_label(dest_id: &str, destinations: &[DestinationViewDto]) -> String {
     match dest_id {
-        "imgur" => "Imgur".into(),
         "s3" => "Amazon S3".into(),
         other => destinations
             .iter()
@@ -888,9 +887,7 @@ impl HistoryController {
         s.set_share_deletion_url(share.deletion_url.clone().unwrap_or_default().into());
         s.set_share_deletion(if has_deletion_url {
             "Deletion link saved".into()
-        } else if share.status == "uploaded"
-            && matches!(share.dest_id.as_deref(), Some("imgur" | "s3"))
-        {
+        } else if share.status == "uploaded" && matches!(share.dest_id.as_deref(), Some("s3")) {
             format!("Delete from {dest_label}").into()
         } else {
             "".into()
@@ -2165,7 +2162,6 @@ mod tests {
             passphrase_saved: false,
             warnings: Vec::new(),
         };
-        assert_eq!(host_label("imgur", &[]), "Imgur");
         assert_eq!(host_label("s3", &[]), "Amazon S3");
         assert_eq!(host_label("custom-1", &[dest]), "My CDN");
         assert_eq!(host_label("unknown-dest", &[]), "unknown-dest");
@@ -2225,7 +2221,7 @@ mod tests {
     #[test]
     fn live_matches_and_share_view_prioritise_live_over_dto_and_fall_back_cleanly() {
         let dto = UploadDto {
-            dest_id: "imgur".to_owned(),
+            dest_id: "s3".to_owned(),
             state: UploadStateDto::Queued,
             sent: 0,
             total: 100,
@@ -2260,7 +2256,7 @@ mod tests {
         assert_eq!(dto_view.label, "Queued");
         assert_eq!(dto_view.queue_id, Some(55));
         assert!(dto_view.cancellable);
-        assert_eq!(dto_view.dest_id.as_deref(), Some("imgur"));
+        assert_eq!(dto_view.dest_id.as_deref(), Some("s3"));
 
         let mut live = sample_upload_state(55, Some(42), UploadStatus::Uploading);
         live.dest = String::new();
@@ -2277,7 +2273,7 @@ mod tests {
             live_view.deletion_url.as_deref(),
             Some("https://img.example/del")
         );
-        assert_eq!(live_view.dest_id.as_deref(), Some("imgur"));
+        assert_eq!(live_view.dest_id.as_deref(), Some("s3"));
         assert_eq!(live_view.queue_id, Some(55));
     }
 

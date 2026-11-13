@@ -572,10 +572,6 @@ mod tests {
 
     #[test]
     fn destination_kind_parses_known_kinds_and_rejects_unknown() {
-        assert_eq!(
-            destination_kind("imgur").ok(),
-            Some(DestinationKindDto::Imgur)
-        );
         assert_eq!(destination_kind("s3").ok(), Some(DestinationKindDto::S3));
         assert_eq!(
             destination_kind("gist").ok(),

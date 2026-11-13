@@ -4,7 +4,7 @@ Written: 2026-11-10. Revised: 2026-11-10 after review. Owner: Aaron. Status: pro
 
 This is the roadmap for the capture, processing, upload and sharing features that ShareX has and Snapline lacks. ShareX's unrelated utilities (DNS changer, hash checker, monitor test, IRC, social posting) are out of scope.
 
-The rules in `progress-tauri.md` section 0 still apply: no code comments, UK English in the UI, no new dependency without approval, secrets never in a file, and Win32 only in `snapline-win` and `snapline-overlay`.
+The project rules still apply: no code comments, UK English in the UI, no new dependency without approval, secrets never in a file, and Win32 only in `snapline-win` and `snapline-overlay`.
 
 What changed in this revision:
 
@@ -538,4 +538,4 @@ Remote deletion is placed early because it closes an existing exposure, not beca
 - **Changing the `Uploader` trait** touches all five uploaders and their fakes at once. Keeping four of them on `read_all` makes that change mechanical.
 - **Borrowed paths go stale.** Files move and drives disconnect. History must show a missing file plainly and never treat it as an error to retry forever; the changed-file error is permanent for the same reason.
 - **The settings denylist must fail closed.** A test enumerates every key under the protected sections and asserts a patch to each is rejected.
-- **Memory.** Effects and the editor hold full-size BGRA images; a 4K capture is 33 MB per copy. Effects work in place where possible and drop intermediates, so the idle budget in `progress-tauri.md` section 6 holds after a workflow finishes.
+- **Memory.** Effects and the editor hold full-size BGRA images; a 4K capture is 33 MB per copy. Effects work in place where possible and drop intermediates, so the idle memory budget holds after a workflow finishes.

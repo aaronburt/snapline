@@ -39,7 +39,6 @@ pub struct DestinationItem {
 impl From<&DestinationViewDto> for DestinationItem {
     fn from(view: &DestinationViewDto) -> Self {
         let kind = match view.kind {
-            DestinationKindDto::Imgur => "imgur",
             DestinationKindDto::S3 => "s3",
             DestinationKindDto::Gist => "gist",
             DestinationKindDto::Sftp => "sftp",
@@ -129,7 +128,6 @@ mod tests {
     #[test]
     fn options_filter_by_target_and_configured_state() {
         let dests = vec![
-            dest("imgur", "Imgur", "imgur", true),
             dest("s3", "Amazon S3", "s3", true),
             dest("gist", "GitHub Gist", "gist", true),
             dest("sftp-unconf", "My SFTP", "sftp", false),
@@ -140,7 +138,6 @@ mod tests {
             options("images", &dests),
             vec![
                 ("save_locally_only".into(), "Save locally only".into()),
-                ("imgur".into(), "Imgur".into()),
                 ("s3".into(), "Amazon S3".into()),
                 ("custom".into(), "Custom Host".into()),
             ]

@@ -423,14 +423,6 @@ export component DestinationFormPanel inherits Rectangle {
         VerticalLayout {
             spacing: 18px;
 
-            if DestinationForm.kind == "imgur": HorizontalLayout {
-                SecretField {
-                    label: "Client ID";
-                    saved: DestinationForm.secret-saved;
-                    value <=> DestinationForm.secret;
-                }
-            }
-
             if DestinationForm.kind == "gist": HorizontalLayout {
                 SecretField {
                     label: "Token";
