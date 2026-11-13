@@ -66,8 +66,12 @@ fn apply_dark_mode(window: &WebviewWindow, light: bool) {
     let Ok(hwnd) = window.hwnd() else {
         return;
     };
+    apply_hwnd_dark_mode(hwnd, light);
+}
+
+pub fn apply_hwnd_dark_mode(hwnd: windows::Win32::Foundation::HWND, light: bool) {
     let dark = i32::from(u8::from(!light));
-    // SAFETY: hwnd is this window's live native handle and the pointer reads a live i32.
+    // SAFETY: hwnd is a live top-level native window handle and the pointer reads a live i32.
     let _ = unsafe {
         DwmSetWindowAttribute(
             hwnd,

@@ -14,6 +14,7 @@ snapline-upload = { path = "../../crates/upload" }
 snapline-win = { path = "../../crates/platform-windows" }
 snapline-overlay = { path = "../../crates/overlay-windows" }
 snapline-services = { path = "../../crates/services" }
+snapline-ui = { path = "../../crates/ui-slint" }
 tauri.workspace = true
 tauri-plugin-single-instance.workspace = true
 webview2-com.workspace = true

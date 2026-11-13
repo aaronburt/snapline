@@ -11,6 +11,7 @@ mod native_panel;
 mod panel;
 mod protocol;
 mod protocol_combine;
+mod slint_ui;
 mod theme;
 mod tray;
 mod upload_files;
@@ -201,8 +202,10 @@ impl snapline_services::destinations::SxcuDialog for SxcuFileDialog {
         Ok(Some(bytes))
     }
 
-    fn save(&self, _suggested_name: &str, _contents: &str) -> Result<Option<String>, ServiceError> {
-        Err(ServiceError::NotYet)
+    fn save(&self, suggested_name: &str, contents: &str) -> Result<Option<String>, ServiceError> {
+        snapline_win::dialogs::save_sxcu(suggested_name, contents)
+            .map(|path| path.map(|path| path.to_string_lossy().into_owned()))
+            .map_err(|error| ServiceError::Io(error.to_string()))
     }
 }
 
@@ -1004,6 +1007,11 @@ fn forward_input(app: &tauri::AppHandle, event: InputEvent) {
         }
         InputEvent::ThemeChanged => {
             theme::refresh_open_windows(app);
+            if let Some(manager) = app.try_state::<WindowManager>() {
+                if let Some(ui) = manager.slint_if_open() {
+                    ui.set_light_theme(theme::is_light());
+                }
+            }
         }
     }
 }

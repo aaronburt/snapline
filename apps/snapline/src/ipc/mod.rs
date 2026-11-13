@@ -12,8 +12,8 @@ use snapline_services::ServiceError;
 
 #[derive(Debug, Serialize)]
 pub struct IpcError {
-    code: &'static str,
-    message: String,
+    pub(crate) code: &'static str,
+    pub(crate) message: String,
 }
 
 impl IpcError {

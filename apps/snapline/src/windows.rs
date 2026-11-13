@@ -8,7 +8,7 @@ use tauri::{
     AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 
-use crate::{theme, webview_tuning};
+use crate::{slint_ui, theme, webview_tuning};
 
 const LINGER: Duration = Duration::from_secs(15);
 const MAIN_LABEL: &str = "main";
@@ -51,6 +51,7 @@ impl WindowKind {
 #[derive(Debug, Default)]
 pub struct WindowManager {
     generation: AtomicU64,
+    slint: std::sync::OnceLock<Option<snapline_ui::UiHandle>>,
 }
 
 impl WindowManager {
@@ -59,7 +60,32 @@ impl WindowManager {
     }
 
     pub fn open_main(&self, app: &AppHandle, route: &str) -> tauri::Result<()> {
+        if !slint_ui::web_ui_requested() {
+            if let Some(ui) = self.slint_ui(app) {
+                ui.open(route);
+                return Ok(());
+            }
+        }
         self.open(app, WindowKind::Main, route)
+    }
+
+    fn slint_ui(&self, app: &AppHandle) -> Option<snapline_ui::UiHandle> {
+        self.slint
+            .get_or_init(|| {
+                let services = app.state::<snapline_services::Services>().inner().clone();
+                match slint_ui::start(services) {
+                    Ok(handle) => Some(handle),
+                    Err(error) => {
+                        tracing::error!(%error, "the Slint window could not start; using the web window");
+                        None
+                    }
+                }
+            })
+            .clone()
+    }
+
+    pub fn slint_if_open(&self) -> Option<snapline_ui::UiHandle> {
+        self.slint.get().and_then(Clone::clone)
     }
 
     pub fn open_panel(&self, app: &AppHandle) -> tauri::Result<()> {
