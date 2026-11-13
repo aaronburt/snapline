@@ -57,6 +57,7 @@ pub struct GeneralDto {
     pub subfolders: SubfoldersDto,
     pub image_format: ImageFormatDto,
     pub lossy_quality: u8,
+    pub zoom: u16,
     pub name_pattern: String,
     pub default_workflow: Vec<WorkflowStepDto>,
     pub copied_link_format: LinkFormatDto,
@@ -331,6 +332,7 @@ impl From<&store::General> for GeneralDto {
             subfolders: SubfoldersDto::from(value.subfolders),
             image_format: ImageFormatDto::from(value.image_format),
             lossy_quality: value.lossy_quality,
+            zoom: value.zoom,
             name_pattern: value.name_pattern.clone(),
             default_workflow: value
                 .default_workflow

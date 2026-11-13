@@ -87,3 +87,53 @@ pub fn labels(pairs: &[(&str, impl AsRef<str>)]) -> Vec<String> {
         .map(|(_, shown)| shown.as_ref().to_string())
         .collect()
 }
+
+/// Main-window zoom steps in percent.
+pub const ZOOM_STEPS: [u16; 7] = [50, 75, 100, 125, 150, 175, 200];
+
+pub fn zoom_labels() -> Vec<String> {
+    ZOOM_STEPS.iter().map(|step| format!("{step}%")).collect()
+}
+
+/// The step nearest to `percent`, so a hand-edited value still lands on a button.
+pub fn nearest_zoom(percent: i64) -> u16 {
+    ZOOM_STEPS
+        .iter()
+        .copied()
+        .min_by_key(|step| (i64::from(*step) - percent).abs())
+        .unwrap_or(100)
+}
+
+/// The step `delta` places away from `current` (0 resets to 100%), clamped to the ends.
+pub fn step_zoom(current: i64, delta: i32) -> u16 {
+    if delta == 0 {
+        return 100;
+    }
+    let at = ZOOM_STEPS
+        .iter()
+        .position(|step| *step == nearest_zoom(current))
+        .unwrap_or(2) as i32;
+    ZOOM_STEPS[(at + delta).clamp(0, ZOOM_STEPS.len() as i32 - 1) as usize]
+}
+
+#[cfg(test)]
+mod zoom_tests {
+    use super::*;
+
+    #[test]
+    fn zoom_steps_walk_and_clamp() {
+        assert_eq!(step_zoom(100, 1), 125);
+        assert_eq!(step_zoom(100, -1), 75);
+        assert_eq!(step_zoom(50, -1), 50);
+        assert_eq!(step_zoom(200, 1), 200);
+        assert_eq!(step_zoom(175, 0), 100);
+    }
+
+    #[test]
+    fn stray_values_snap_to_a_step() {
+        assert_eq!(nearest_zoom(0), 50);
+        assert_eq!(nearest_zoom(1000), 200);
+        assert_eq!(nearest_zoom(110), 100);
+        assert_eq!(zoom_labels()[2], "100%");
+    }
+}
