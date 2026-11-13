@@ -488,7 +488,7 @@ export function defaultSettings(): Settings {
     general: {
       launchAtSignIn: true,
       startMinimised: true,
-      trayClickCapture: false,
+      trayClickCapture: true,
       notifications: true,
       saveFolder: '%USERPROFILE%\\Pictures\\Snapline',
       subfolders: SUBFOLDER_OPTIONS[0],

@@ -66,9 +66,19 @@ export component GeneralPage inherits VerticalLayout {
 
     if show-appearance: Section {
         heading: "Appearance";
-        Row { icon: Icons.search-plus; title: "Zoom"; description: "Scale the whole window. Ctrl+= and Ctrl+- step, Ctrl+0 resets";
-            Segmented { options: SettingsState.zoom-options; value: SettingsState.zoom + "%";
+        if root.width >= 560px: Row { icon: Icons.search-plus; title: "Zoom"; description: "Scale the whole window. Ctrl+= and Ctrl+- step, Ctrl+0 resets";
+            Segmented { options: SettingsState.zoom-options; value: SettingsState.zoom + "%"; update-value-on-pick: false;
                 picked(v) => { SettingsState.update-zoom(v); } } }
+        if root.width < 560px: Card {
+            VerticalLayout {
+                padding: 12px;
+                spacing: 6px;
+                Text { text: "Zoom"; color: Tokens.text; font-size: 14px; }
+                Select { width: 80px; model: SettingsState.zoom-options; current-value: SettingsState.zoom + "%";
+                    selected(v) => { SettingsState.update-zoom(v); } }
+                Text { text: "Ctrl+= and Ctrl+- step, Ctrl+0 resets"; color: Tokens.text3; font-size: 12px; wrap: word-wrap; }
+            }
+        }
     }
 
     if show-startup: Section {

@@ -239,6 +239,7 @@ fn apply_hwnd_theme(slint_window: &slint::Window, host: &dyn Host, light: bool) 
 
 fn raise(window: &SnaplineWindow, host: &dyn Host) {
     let _ = window.show();
+    crate::apply_zoom(window);
     let light = host.is_light();
     window.global::<Tokens>().set_light(light);
     apply_hwnd_theme(window.window(), host, light);

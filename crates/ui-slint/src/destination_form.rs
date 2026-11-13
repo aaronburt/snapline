@@ -78,7 +78,8 @@ pub fn wire(app: &SnaplineWindow, backend: RcBackend) {
                 }
                 match result {
                     Ok(DestinationResp::Destination(view)) => {
-                        if lock_form(&f2).seq == seq {
+                        let is_current = lock_form(&f2).seq == seq;
+                        if is_current {
                             open(&w2, &f2, &view);
                         }
                         refresh(&w2, &ui_bg);
@@ -123,7 +124,8 @@ pub fn wire(app: &SnaplineWindow, backend: RcBackend) {
                     }) => {
                         set_import_warning(&w2, &warnings.join("\n"));
                         if let Some(view) = destination {
-                            if lock_form(&f2).seq == seq {
+                            let is_current = lock_form(&f2).seq == seq;
+                            if is_current {
                                 open(&w2, &f2, &view);
                             }
                         }
@@ -331,7 +333,8 @@ pub fn wire(app: &SnaplineWindow, backend: RcBackend) {
                 u.set_busy(false);
                 match result {
                     Ok(_) => {
-                        if lock_form(&f2).seq == seq {
+                        let is_current = lock_form(&f2).seq == seq;
+                        if is_current {
                             close_form(&w2, &f2);
                         }
                         refresh(&w2, &ui_bg);

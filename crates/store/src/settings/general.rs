@@ -25,7 +25,7 @@ impl Default for General {
         Self {
             launch_at_signin: true,
             start_minimised: true,
-            tray_click_capture: false,
+            tray_click_capture: true,
             notifications: true,
             save_folder: "%USERPROFILE%\\Pictures\\Snapline".to_owned(),
             subfolders: Subfolders::ByMonth,
