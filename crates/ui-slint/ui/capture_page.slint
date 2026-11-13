@@ -51,32 +51,32 @@ export component CapturePage inherits VerticalLayout {
     if show-screenshots: Section {
         heading: "Screenshots";
         if cursor-visible: Row { icon: Icons.cursor; title: "Include mouse cursor"; description: "Draw the pointer into screenshots";
-            Toggle { checked: SettingsState.include-cursor; toggled(v) => { SettingsState.update-bool("capture.include_cursor", v); } } }
+            Toggle { label: "Include mouse cursor"; checked: SettingsState.include-cursor; toggled(v) => { SettingsState.update-bool("capture.include_cursor", v); } } }
         if delay-visible: Row { icon: Icons.timer; title: "Capture delay"; description: "Wait before capturing, so you can open a menu first";
             Segmented { options: SettingsState.capture-delay-options; value: SettingsState.capture-delay;
                 picked(v) => { SettingsState.update-choice("capture.capture_delay", v); } } }
         if shutter-visible: Row { icon: Icons.speaker; title: "Shutter sound"; description: "Play a sound when a capture is taken";
-            Toggle { checked: SettingsState.shutter-sound; toggled(v) => { SettingsState.update-bool("capture.shutter_sound", v); } } }
+            Toggle { label: "Shutter sound"; checked: SettingsState.shutter-sound; toggled(v) => { SettingsState.update-bool("capture.shutter_sound", v); } } }
         if shadow-visible: Row { icon: Icons.shadow; title: "Keep window shadow and rounded corners"; description: "Window captures keep the Windows 11 shadow on a transparent background";
-            Toggle { checked: SettingsState.window-shadow; toggled(v) => { SettingsState.update-bool("capture.keep_window_shadow", v); } } }
+            Toggle { label: "Keep window shadow and rounded corners"; checked: SettingsState.window-shadow; toggled(v) => { SettingsState.update-bool("capture.keep_window_shadow", v); } } }
     }
 
     if show-region: Section {
         heading: "Region selection";
         if freeze-visible: Row { icon: Icons.freeze; title: "Freeze the screen while selecting";
-            Toggle { checked: SettingsState.freeze-screen; toggled(v) => { SettingsState.update-bool("capture.freeze_screen", v); } } }
+            Toggle { label: "Freeze the screen while selecting"; checked: SettingsState.freeze-screen; toggled(v) => { SettingsState.update-bool("capture.freeze_screen", v); } } }
         if magnifier-visible: Row { icon: Icons.search-plus; title: "Magnifier"; description: "Pixel-accurate zoom next to the cursor";
-            Toggle { checked: SettingsState.magnifier; toggled(v) => { SettingsState.update-bool("capture.magnifier", v); } } }
+            Toggle { label: "Magnifier"; checked: SettingsState.magnifier; toggled(v) => { SettingsState.update-bool("capture.magnifier", v); } } }
         if zoom-visible: Row { icon: Icons.search; title: "Magnifier zoom";
             Segmented { options: SettingsState.magnifier-zoom-options; value: SettingsState.magnifier-zoom;
                 disabled: !SettingsState.magnifier;
                 picked(v) => { SettingsState.update-choice("capture.magnifier_zoom", v); } } }
         if snap-visible: Row { icon: Icons.snap; title: "Snap to windows and controls"; description: "Hover to pick a whole window, panel or button, then click";
-            Toggle { checked: SettingsState.snap-windows; toggled(v) => { SettingsState.update-bool("capture.snap_to_windows", v); } } }
+            Toggle { label: "Snap to windows and controls"; checked: SettingsState.snap-windows; toggled(v) => { SettingsState.update-bool("capture.snap_to_windows", v); } } }
         if size-visible: Row { icon: Icons.ruler; title: "Show size and position"; description: "Width, height and coordinates while dragging";
-            Toggle { checked: SettingsState.show-size; toggled(v) => { SettingsState.update-bool("capture.show_size_and_position", v); } } }
+            Toggle { label: "Show size and position"; checked: SettingsState.show-size; toggled(v) => { SettingsState.update-bool("capture.show_size_and_position", v); } } }
         if crosshair-visible: Row { icon: Icons.cross; title: "Full-screen crosshair"; description: "Guide lines across every monitor";
-            Toggle { checked: SettingsState.crosshair; toggled(v) => { SettingsState.update-bool("capture.fullscreen_crosshair", v); } } }
+            Toggle { label: "Full-screen crosshair"; checked: SettingsState.crosshair; toggled(v) => { SettingsState.update-bool("capture.fullscreen_crosshair", v); } } }
     }
 
     if monitors-visible: Section {
@@ -157,15 +157,15 @@ export component CapturePage inherits VerticalLayout {
             Select { model: SettingsState.quality-options; current-value: SettingsState.quality;
                 selected(v) => { SettingsState.update-choice("capture.video_quality", v); } } }
         if system-audio-visible: Row { icon: Icons.audio; title: "Record system audio"; description: "Sound playing on this PC";
-            Toggle { checked: SettingsState.system-audio; toggled(v) => { SettingsState.update-bool("capture.record_system_audio", v); } } }
+            Toggle { label: "Record system audio"; checked: SettingsState.system-audio; toggled(v) => { SettingsState.update-bool("capture.record_system_audio", v); } } }
         if microphone-visible: Row { icon: Icons.mic; title: "Record microphone";
-            Toggle { checked: SettingsState.microphone; toggled(v) => { SettingsState.update-bool("capture.record_microphone", v); } } }
+            Toggle { label: "Record microphone"; checked: SettingsState.microphone; toggled(v) => { SettingsState.update-bool("capture.record_microphone", v); } } }
         if microphone-device-visible: Row { icon: Icons.mic; title: "Microphone device";
             Select { model: SettingsState.microphone-options; current-value: SettingsState.microphone-device;
                 disabled: !SettingsState.microphone;
                 selected(v) => { SettingsState.update-text("capture.microphone_device", v); } } }
         if border-visible: Row { icon: Icons.border; title: "Show recording border"; description: "Outline the recorded area (not included in the video)";
-            Toggle { checked: SettingsState.recording-border; toggled(v) => { SettingsState.update-bool("capture.recording_border", v); } } }
+            Toggle { label: "Show recording border"; checked: SettingsState.recording-border; toggled(v) => { SettingsState.update-bool("capture.recording_border", v); } } }
         if ffmpeg-visible: Row { icon: Icons.code; title: "FFmpeg location"; description: "Choose the FFmpeg executable. Snapline finds it automatically when unset.";
             Field {
                 width: SettingsState.ffmpeg-path != "" ? 155px : 240px;
@@ -187,6 +187,6 @@ export component CapturePage inherits VerticalLayout {
             Select { model: SettingsState.gif-width-options; current-value: SettingsState.gif-width;
                 selected(v) => { SettingsState.update-choice("capture.gif_max_width", v); } } }
         if palette-visible: Row { icon: Icons.palette; title: "Optimise colour palette"; description: "Smaller files, slightly slower to encode";
-            Toggle { checked: SettingsState.optimise-palette; toggled(v) => { SettingsState.update-bool("capture.gif_optimise_palette", v); } } }
+            Toggle { label: "Optimise colour palette"; checked: SettingsState.optimise-palette; toggled(v) => { SettingsState.update-bool("capture.gif_optimise_palette", v); } } }
     }
 }

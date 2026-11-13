@@ -19,9 +19,15 @@ export component Icon inherits Path {
 }
 
 export component Toggle inherits HorizontalLayout {
+    in property <string> label;
     in property <bool> checked;
     in property <bool> disabled: false;
     callback toggled(bool);
+    accessible-role: switch;
+    accessible-label: root.label;
+    accessible-checked: root.checked;
+    accessible-enabled: !root.disabled;
+    accessible-action-default => { if (!root.disabled) { root.toggled(!root.checked); } }
     spacing: 12px;
     alignment: end;
     horizontal-stretch: 0;
@@ -155,6 +161,12 @@ export component Segmented inherits Rectangle {
         padding: 2px;
         for option in root.options: Rectangle {
             property <bool> on: option == root.value;
+            accessible-role: button;
+            accessible-label: option;
+            accessible-checkable: true;
+            accessible-checked: on;
+            accessible-enabled: !root.disabled;
+            accessible-action-default => { if (!root.disabled) { if (root.update-value-on-pick) { root.value = option; } root.picked(option); } }
             min-width: 52px;
             background: on ? Tokens.card : transparent;
             border-radius: 4px;
@@ -189,6 +201,11 @@ export component Select inherits Rectangle {
     in property <string> current-value;
     in property <bool> disabled: false;
     callback selected(string);
+    accessible-role: combobox;
+    accessible-label: root.current-value;
+    accessible-value: root.current-value;
+    accessible-enabled: !root.disabled;
+    accessible-action-default => { if (!root.disabled) { popup.show(); } }
     width: 220px;
     height: 34px;
     border-radius: 4px;

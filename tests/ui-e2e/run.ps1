@@ -16,7 +16,30 @@ public static class Win { [DllImport("user32.dll")] public static extern bool Se
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); }
 "@
 [Win]::SetProcessDPIAware() | Out-Null
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public static class Disp {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+  public struct DEVMODE {
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+    public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra;
+    public int dmFields, dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
+    public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+    public short dmLogPixels; public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
+    public int dmICMMethod, dmICMIntent, dmMediaType, dmDitherType, dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight;
+  }
+  [DllImport("user32.dll", CharSet = CharSet.Ansi)] public static extern int ChangeDisplaySettings(ref DEVMODE m, int flags);
+  public static int Set(int w, int h) {
+    DEVMODE m = new DEVMODE(); m.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
+    m.dmPelsWidth = w; m.dmPelsHeight = h; m.dmFields = 0x80000 | 0x100000;
+    return ChangeDisplaySettings(ref m, 0);
+  }
+}
+"@
 
+# A bigger desktop so the whole window fits (runners default to 1024x768).
+try { Write-Host ("display change result: " + [Disp]::Set(1920, 1080)); Start-Sleep -Seconds 2 } catch { Write-Host "display change failed: $_" }
 $OutDir = [IO.Path]::GetFullPath($OutDir)
 Remove-Item $OutDir -Recurse -Force -ErrorAction SilentlyContinue
 New-Item $OutDir -ItemType Directory | Out-Null
@@ -24,19 +47,43 @@ $script:step = 0
 $script:failures = @()
 function Log($m) { $l = "[{0}] {1}" -f (Get-Date -Format HH:mm:ss), $m; Write-Host $l; Add-Content "$OutDir\run.log" $l }
 
+function Grab($r) {
+    $scr = [Windows.Forms.SystemInformation]::VirtualScreen
+    $x = [Math]::Max([int]$r.X, $scr.X); $y = [Math]::Max([int]$r.Y, $scr.Y)
+    $w = [Math]::Min([int]($r.X + $r.Width), $scr.X + $scr.Width) - $x
+    $h = [Math]::Min([int]($r.Y + $r.Height), $scr.Y + $scr.Height) - $y
+    if ($w -lt 10 -or $h -lt 10) { throw "window is off screen" }
+    $bmp = New-Object Drawing.Bitmap $w, $h
+    $g = [Drawing.Graphics]::FromImage($bmp)
+    $g.CopyFromScreen($x, $y, 0, 0, $bmp.Size)
+    $g.Dispose()
+    return $bmp
+}
+function BmpHash($bmp) {
+    $ms = New-Object IO.MemoryStream
+    $bmp.Save($ms, [Drawing.Imaging.ImageFormat]::Png)
+    return [BitConverter]::ToString([Security.Cryptography.MD5]::Create().ComputeHash($ms.ToArray()))
+}
+
 function Shot($name) {
     $script:step++
     $file = "{0:D2}-{1}" -f $script:step, ($name -replace '[^\w\-]+', '-')
     try {
-        $r = $script:win.Current.BoundingRectangle
-        if ($r.Width -lt 10) { throw "window has no size" }
-        $bmp = New-Object Drawing.Bitmap ([int]$r.Width), ([int]$r.Height)
-        $g = [Drawing.Graphics]::FromImage($bmp)
-        $g.CopyFromScreen([int]$r.X, [int]$r.Y, 0, 0, $bmp.Size)
+        # wait until two captures in a row are identical, so the picture matches the step
+        Start-Sleep -Milliseconds 400
+        $bmp = Grab $script:win.Current.BoundingRectangle
+        $hash = BmpHash $bmp
+        for ($i = 0; $i -lt 12; $i++) {
+            Start-Sleep -Milliseconds 250
+            $next = Grab $script:win.Current.BoundingRectangle
+            $nextHash = BmpHash $next
+            $bmp.Dispose(); $bmp = $next
+            if ($nextHash -eq $hash) { break }
+            $hash = $nextHash
+        }
         $bmp.Save("$OutDir\$file.png", [Drawing.Imaging.ImageFormat]::Png)
-        $g.Dispose(); $bmp.Dispose()
+        $bmp.Dispose()
     } catch {
-        # fall back to full screen so a failure still leaves evidence
         $b = [Windows.Forms.SystemInformation]::VirtualScreen
         $bmp = New-Object Drawing.Bitmap $b.Width, $b.Height
         $g = [Drawing.Graphics]::FromImage($bmp)
@@ -44,12 +91,13 @@ function Shot($name) {
         $bmp.Save("$OutDir\$file.png", [Drawing.Imaging.ImageFormat]::Png)
         $g.Dispose(); $bmp.Dispose()
     }
-    # element tree beside the picture: names, roles, positions (useful for AI review)
     try {
         $all = $script:win.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
         $lines = foreach ($e in $all) {
             $c = $e.Current; $b = $c.BoundingRectangle
-            "{0}`t{1}`t{2}`t{3},{4} {5}x{6}`tenabled={7}" -f $c.ControlType.ProgrammaticName, $c.Name, $c.AutomationId, [int]$b.X, [int]$b.Y, [int]$b.Width, [int]$b.Height, $c.IsEnabled
+            $state = ""
+            try { $t = $e.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern); $state = "toggle=" + $t.Current.ToggleState } catch {}
+            "{0}`t{1}`t{2}`t{3},{4} {5}x{6}`tenabled={7} {8}" -f $c.ControlType.ProgrammaticName, $c.Name, $c.AutomationId, [int]$b.X, [int]$b.Y, [int]$b.Width, [int]$b.Height, $c.IsEnabled, $state
         }
         $lines | Set-Content "$OutDir\$file.tree.txt"
     } catch { Log "tree dump failed: $_" }
@@ -64,8 +112,11 @@ function Find($name, $timeoutSec = 8) {
     $cond = New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::NameProperty), $name
     $end = (Get-Date).AddSeconds($timeoutSec)
     do {
-        $e = $script:win.FindFirst([Windows.Automation.TreeScope]::Descendants, $cond)
-        if ($e) { return $e }
+        $hits = $script:win.FindAll([Windows.Automation.TreeScope]::Descendants, $cond)
+        $pick = $null
+        foreach ($h in $hits) { if ($h.Current.ControlType -ne [Windows.Automation.ControlType]::Text) { $pick = $h; break } }
+        if (-not $pick -and $hits.Count -gt 0) { $pick = $hits[0] }
+        if ($pick) { return $pick }
         Start-Sleep -Milliseconds 250
     } while ((Get-Date) -lt $end -and -not $script:proc.HasExited)
     return $null
@@ -76,8 +127,8 @@ function Press($name, $shotName) {
     $e = Find $name
     if (-not $e) { Fail "control not found: '$name'"; Shot "missing-$name"; return $false }
     try {
-        $invoke = $e.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern)
-        $invoke.Invoke()
+        try { $e.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke() }
+        catch { $e.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern).Toggle() }
     } catch {
         # no Invoke pattern: click the centre of its box
         $r = $e.Current.BoundingRectangle
@@ -127,6 +178,32 @@ Shot "launch"
 foreach ($page in "General", "Capture", "Hotkeys", "Upload destinations", "History", "Workflows", "Tools") {
     Press $page "page-$page" | Out-Null
 }
+
+# --- Switches and segmented controls: flip each one, screenshot, flip it back ---
+function ExerciseToggles($page) {
+    if (-not (Alive)) { return }
+    Press $page "toggles-$page-start" | Out-Null
+    $cond = New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::IsTogglePatternAvailableProperty), $true
+    $items = @($script:win.FindAll([Windows.Automation.TreeScope]::Descendants, $cond))
+    Log ("{0}: {1} switch-like controls" -f $page, $items.Count)
+    $n = 0
+    foreach ($e in $items) {
+        if ($n -ge 30 -or -not (Alive)) { break }
+        $n++
+        try {
+            $t = $e.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
+            $before = $t.Current.ToggleState
+            $t.Toggle(); Start-Sleep -Milliseconds 300
+            $after = $t.Current.ToggleState
+            if ($before -eq $after) { Log "note: '$($e.Current.Name)' did not change state" }
+            Shot "toggle-$page-$($e.Current.Name)"
+            if ($before -ne $after) { $t.Toggle(); Start-Sleep -Milliseconds 300 }
+        } catch { Log "note: toggle on '$($e.Current.Name)' failed: $_" }
+    }
+}
+foreach ($page in "General", "Capture", "Hotkeys", "Upload destinations") { ExerciseToggles $page }
+Press "General" "zoom-start" | Out-Null
+foreach ($z in "50%", "200%", "100%") { Press $z "zoom-$z" | Out-Null }
 
 # --- Upload destinations: open the add menu and every form, then cancel out ---
 Press "Upload destinations" "uploads-again" | Out-Null

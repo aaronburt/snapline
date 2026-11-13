@@ -9,6 +9,10 @@ component FormButton inherits Rectangle {
     in property <bool> upload-icon: false;
     in property <bool> disabled: false;
     callback clicked();
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: !root.disabled;
+    accessible-action-default => { root.clicked(); }
 
     property <bool> flat: root.variant == "text" || root.variant == "danger";
     property <color> ink: root.variant == "accent" ? Tokens.on-accent : (root.variant == "text" ? Tokens.accent : (root.variant == "danger" ? Tokens.err : Tokens.text));
@@ -161,6 +165,10 @@ component FormSelect inherits Rectangle {
     in property <[string]> model;
     in property <string> current;
     callback selected(string);
+    accessible-role: combobox;
+    accessible-label: root.current;
+    accessible-value: root.current;
+    accessible-action-default => { popup.show(); }
     horizontal-stretch: 1;
     min-width: 0px;
     height: 34px;
@@ -222,6 +230,11 @@ component FormChoice inherits VerticalLayout {
 // The outline switch used in these forms (.tg in styles/base.css).
 component FormSwitch inherits Rectangle {
     in-out property <bool> checked;
+    in property <string> label: "Public read";
+    accessible-role: switch;
+    accessible-label: root.label;
+    accessible-checked: root.checked;
+    accessible-action-default => { root.checked = !root.checked; }
     horizontal-stretch: 0;
     width: 40px;
     height: 20px;
@@ -245,6 +258,10 @@ component FormSwitch inherits Rectangle {
 component FormCheckbox inherits Rectangle {
     in property <string> label;
     in-out property <bool> checked;
+    accessible-role: checkbox;
+    accessible-label: root.label;
+    accessible-checked: root.checked;
+    accessible-action-default => { root.checked = !root.checked; }
     horizontal-stretch: 0;
     height: 20px;
     preferred-width: 24px + label-text.preferred-width;
@@ -287,6 +304,11 @@ component AuthSegment inherits Rectangle {
     in property <string> label;
     in property <bool> chosen;
     callback picked();
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-checkable: true;
+    accessible-checked: root.chosen;
+    accessible-action-default => { root.picked(); }
     horizontal-stretch: 0;
     border-radius: 4px;
     background: root.chosen ? Tokens.card : Tokens.transparent;
@@ -404,6 +426,9 @@ export component DestinationFormPanel inherits Rectangle {
                 }
             }
             Rectangle {
+                accessible-role: button;
+                accessible-label: "Close form";
+                accessible-action-default => { UploadsState.close-destination(); }
                 width: 30px;
                 height: 30px;
                 border-radius: 4px;

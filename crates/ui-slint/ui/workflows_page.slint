@@ -92,7 +92,7 @@ component WorkflowCard inherits Rectangle {
             }
             VerticalLayout {
                 alignment: center;
-                Toggle {
+                Toggle { label: root.data.title;
                     checked: root.data.enabled;
                     disabled: root.data.is-default;
                     toggled(v) => { if (!root.data.is-default) { root.toggle(root.data.id, v); } }
@@ -279,7 +279,7 @@ export component WorkflowsPage inherits VerticalLayout {
         Row {
             icon: Icons.power;
             title: "Enabled";
-            Toggle {
+            Toggle { label: "Enabled";
                 checked: WorkflowsState.editor-enabled;
                 disabled: WorkflowsState.editor-is-default;
                 toggled(v) => { if (!WorkflowsState.editor-is-default) { WorkflowsState.enabled-changed(v); } }
