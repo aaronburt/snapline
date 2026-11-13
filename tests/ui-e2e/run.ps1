@@ -205,6 +205,24 @@ function ExerciseToggles($page) {
     }
 }
 foreach ($page in "General", "Capture", "Hotkeys", "Upload destinations") { ExerciseToggles $page }
+
+# Switches show up to UI Automation as buttons with Invoke: flip each one, screenshot, flip it back
+$switches = [ordered]@{
+    "General" = "Launch at sign-in", "Start minimised to tray", "Open capture on tray click", "Notifications"
+    "Capture" = "Include mouse cursor", "Shutter sound", "Keep window shadow and rounded corners", "Freeze the screen while selecting", "Magnifier", "Snap to windows and controls", "Show size and position", "Full-screen crosshair", "Record system audio", "Record microphone", "Show recording border", "Optimise colour palette"
+    "Hotkeys" = "Take over the PrtSc key", "Warn about clashes"
+    "Upload destinations" = "Remove location and camera data", "Ask before uploading from the clipboard"
+}
+foreach ($page in $switches.Keys) {
+    Press $page "switches-$page" | Out-Null
+    foreach ($name in $switches[$page]) {
+        if (-not (Alive)) { break }
+        if (Find $name 1) {
+            Press $name "switch-$name-flipped" | Out-Null
+            Press $name "switch-$name-restored" | Out-Null
+        } else { Log "note: switch '$name' not shown on $page" }
+    }
+}
 # --- Upload destinations: open the add menu and every form, then cancel out ---
 Press "Upload destinations" "uploads-again" | Out-Null
 if (Press "Add destination" "add-menu-open") {
