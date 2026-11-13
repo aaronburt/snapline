@@ -547,13 +547,6 @@ fn build_input(g: &DestinationForm, state: &FormState) -> Result<DestinationInpu
     let kind = state.kind.ok_or("Choose a destination first.")?;
     let mut input = blank(kind, state.id.clone());
     match kind {
-        DestinationKindDto::Imgur => {
-            let client_id = g.get_secret().trim().to_string();
-            if client_id.is_empty() && !g.get_secret_saved() {
-                return Err("Enter the Imgur Client ID.".into());
-            }
-            input.client_id = non_empty(client_id);
-        }
         DestinationKindDto::Gist => {
             let token = g.get_secret().trim().to_string();
             if token.is_empty() && !g.get_secret_saved() {
@@ -739,7 +732,6 @@ fn set_headers(g: &DestinationForm, headers: &[HeaderDraft]) {
 
 fn kind_name(kind: DestinationKindDto) -> &'static str {
     match kind {
-        DestinationKindDto::Imgur => "imgur",
         DestinationKindDto::S3 => "s3",
         DestinationKindDto::Gist => "gist",
         DestinationKindDto::Sftp => "sftp",
@@ -810,7 +802,7 @@ fn seed(backend: &Backend) {
         Ok(list) if list.is_empty() => {}
         _ => return,
     }
-    for kind in ["imgur", "s3", "gist", "sftp", "custom"] {
+    for kind in ["s3", "gist", "sftp", "custom"] {
         let result = destination_kind(kind)
             .and_then(|kind| backend.destination_request(DestinationReq::Add { kind }));
         if let Err(error) = result {

@@ -9,7 +9,6 @@ use snapline_store::settings::Settings;
 use snapline_upload::custom::{header_secret_field, sxcu, CustomUploader};
 use snapline_upload::gist::{GistUploader, TOKEN_FIELD as GIST_TOKEN_FIELD};
 use snapline_upload::http::{HttpClient, HttpTimeout, Method, ProxySetting};
-use snapline_upload::imgur::{ImgurUploader, CLIENT_ID_FIELD};
 use snapline_upload::queue::{UploadFile, Uploader};
 use snapline_upload::s3::{
     S3Config, S3Uploader, ACCESS_KEY_ID_FIELD, DEFAULT_PUBLIC_URL_PATTERN, SECRET_ACCESS_KEY_FIELD,
@@ -26,7 +25,6 @@ use crate::dto::upload::{
 use crate::uploads::DestinationSource;
 use crate::{ServiceError, Services};
 
-pub const IMGUR_NAME: &str = "Imgur";
 pub const S3_NAME: &str = "Amazon S3";
 pub const GIST_NAME: &str = "GitHub Gist";
 pub const SFTP_NAME: &str = "SFTP";
@@ -51,9 +49,6 @@ const TEST_PNG: [u8; 67] = [
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DestinationConfig {
-    Imgur {
-        id: String,
-    },
     S3 {
         id: String,
         endpoint: Option<String>,
@@ -102,8 +97,7 @@ pub struct HeaderConfig {
 impl DestinationConfig {
     pub fn id(&self) -> &str {
         match self {
-            Self::Imgur { id }
-            | Self::S3 { id, .. }
+            Self::S3 { id, .. }
             | Self::Gist { id, .. }
             | Self::Sftp { id, .. }
             | Self::Custom { id, .. } => id,
@@ -112,7 +106,6 @@ impl DestinationConfig {
 
     pub fn kind(&self) -> DestinationKindDto {
         match self {
-            Self::Imgur { .. } => DestinationKindDto::Imgur,
             Self::S3 { .. } => DestinationKindDto::S3,
             Self::Gist { .. } => DestinationKindDto::Gist,
             Self::Sftp { .. } => DestinationKindDto::Sftp,
@@ -122,7 +115,6 @@ impl DestinationConfig {
 
     fn name(&self) -> String {
         match self {
-            Self::Imgur { .. } => IMGUR_NAME.to_owned(),
             Self::S3 { .. } => S3_NAME.to_owned(),
             Self::Gist { .. } => GIST_NAME.to_owned(),
             Self::Sftp { .. } => SFTP_NAME.to_owned(),
@@ -138,7 +130,6 @@ impl DestinationConfig {
 
     fn secret_fields(&self) -> Vec<String> {
         match self {
-            Self::Imgur { .. } => vec![CLIENT_ID_FIELD.to_owned()],
             Self::S3 { .. } => vec![
                 ACCESS_KEY_ID_FIELD.to_owned(),
                 SECRET_ACCESS_KEY_FIELD.to_owned(),
@@ -239,11 +230,6 @@ impl UploaderFactory for LiveFactory {
         proxy: ProxySetting,
     ) -> Result<Arc<dyn Uploader>, ServiceError> {
         match config {
-            DestinationConfig::Imgur { id } => {
-                let uploader = ImgurUploader::from_settings(id.clone(), timeout, proxy)
-                    .map_err(upload_error)?;
-                Ok(Arc::new(uploader))
-            }
             DestinationConfig::S3 { .. } => {
                 let s3 = s3_config(config)?;
                 let uploader = S3Uploader::with_http(s3, timeout, proxy).map_err(upload_error)?;
@@ -448,7 +434,6 @@ impl Registry {
 
     fn next_id(&self, kind: DestinationKindDto, configs: &[DestinationConfig]) -> String {
         let base = match kind {
-            DestinationKindDto::Imgur => "imgur",
             DestinationKindDto::S3 => "s3",
             DestinationKindDto::Gist => "gist",
             DestinationKindDto::Sftp => "sftp",
@@ -473,46 +458,6 @@ impl Registry {
             _ => Vec::new(),
         };
         match config {
-            DestinationConfig::Imgur { id } => {
-                let saved = self.secret_saved(id, CLIENT_ID_FIELD);
-                DestinationViewDto {
-                    id: id.clone(),
-                    kind: DestinationKindDto::Imgur,
-                    name: IMGUR_NAME.to_owned(),
-                    detail: "Image host · anonymous uploads".to_owned(),
-                    status: status(saved),
-                    action: DestinationActionDto::Configure,
-                    configured: saved,
-                    client_id_saved: saved,
-                    endpoint: None,
-                    region: None,
-                    bucket: None,
-                    path_prefix: None,
-                    public_url_pattern: None,
-                    acl_public_read: false,
-                    access_key_id_saved: false,
-                    secret_access_key_saved: false,
-                    method: None,
-                    request_url: None,
-                    body: None,
-                    file_form_field: None,
-                    link: None,
-                    thumbnail: None,
-                    deletion: None,
-                    error_message: None,
-                    headers: Vec::new(),
-                    imported_from_sxcu: false,
-                    host: None,
-                    port: None,
-                    username: None,
-                    auth_method: None,
-                    private_key_path: None,
-                    remote_folder: None,
-                    password_saved: false,
-                    passphrase_saved: false,
-                    warnings,
-                }
-            }
             DestinationConfig::S3 {
                 id,
                 endpoint,
@@ -794,7 +739,6 @@ impl DestinationOperations for Registry {
         let mut configs = self.configs()?;
         let id = self.next_id(kind, &configs);
         let config = match kind {
-            DestinationKindDto::Imgur => DestinationConfig::Imgur { id },
             DestinationKindDto::S3 => DestinationConfig::S3 {
                 id,
                 endpoint: None,
@@ -858,27 +802,6 @@ impl DestinationOperations for Registry {
             ));
         }
         let config = match existing {
-            DestinationConfig::Imgur { id } => {
-                let saved = self.secret_saved(&id, CLIENT_ID_FIELD);
-                let client_id = input
-                    .client_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty());
-                if let Some(client_id) = client_id {
-                    if !client_id.bytes().all(|byte| byte.is_ascii_graphic()) {
-                        return Err(ServiceError::Invalid(
-                            "The Client ID is not valid.".to_owned(),
-                        ));
-                    }
-                    self.put_secret(&id, CLIENT_ID_FIELD, client_id)?;
-                } else if !saved {
-                    return Err(ServiceError::Invalid(
-                        "Enter the Imgur Client ID.".to_owned(),
-                    ));
-                }
-                DestinationConfig::Imgur { id }
-            }
             DestinationConfig::S3 { id, .. } => {
                 let region = input.region.as_deref().unwrap_or("").trim().to_owned();
                 let bucket = input.bucket.as_deref().unwrap_or("").trim().to_owned();
@@ -1756,41 +1679,6 @@ mod tests {
         }
     }
 
-    fn imgur_input(id: &str, client_id: Option<&str>) -> DestinationInput {
-        DestinationInput {
-            id: Some(id.to_owned()),
-            kind: DestinationKindDto::Imgur,
-            name: None,
-            client_id: client_id.map(str::to_owned),
-            endpoint: None,
-            region: None,
-            bucket: None,
-            access_key_id: None,
-            secret_access_key: None,
-            path_prefix: None,
-            public_url_pattern: None,
-            acl_public_read: None,
-            method: None,
-            request_url: None,
-            body: None,
-            file_form_field: None,
-            link: None,
-            thumbnail: None,
-            deletion: None,
-            error_message: None,
-            headers: Vec::new(),
-            imported_from_sxcu: None,
-            host: None,
-            port: None,
-            username: None,
-            auth_method: None,
-            private_key_path: None,
-            remote_folder: None,
-            password: None,
-            passphrase: None,
-        }
-    }
-
     fn custom_input(id: &str) -> DestinationInput {
         DestinationInput {
             id: Some(id.to_owned()),
@@ -1868,49 +1756,6 @@ mod tests {
         assert_eq!(settings.uploads.text_and_code.as_str(), "save_locally_only");
         assert_eq!(settings.uploads.other_files.as_str(), "save_locally_only");
         assert_eq!(settings.uploads.link_shortener.as_str(), "none");
-    }
-
-    #[test]
-    fn imgur_add_save_and_status_use_the_credential_store() {
-        let fixture = fixture();
-        let registry = fixture.registry();
-        let added = registry.add(DestinationKindDto::Imgur).expect("add");
-        assert_eq!(added.id, "imgur");
-        assert_eq!(added.status, DestinationStatusDto::NotSetUp);
-        assert_eq!(added.action, DestinationActionDto::Configure);
-        assert!(!added.client_id_saved);
-
-        let saved = registry
-            .save(imgur_input("imgur", Some("a1b2c3d4")))
-            .expect("save");
-        assert_eq!(saved.status, DestinationStatusDto::Configured);
-        assert!(saved.client_id_saved);
-        assert!(fixture.secrets.has("imgur", CLIENT_ID_FIELD));
-        assert!(!fixture.settings_text().contains("a1b2c3d4"));
-        let json = serde_json::to_string(&saved).expect("json");
-        assert!(!json.contains("a1b2c3d4"));
-        assert!(!format!("{saved:?}").contains("a1b2c3d4"));
-        let input = imgur_input("imgur", Some("a1b2c3d4"));
-        assert!(!format!("{input:?}").contains("a1b2c3d4"));
-        assert_eq!(saved.detail, "Image host · anonymous uploads");
-    }
-
-    #[test]
-    fn imgur_requires_a_client_id_once_and_keeps_the_saved_one() {
-        let fixture = fixture();
-        let registry = fixture.registry();
-        registry.add(DestinationKindDto::Imgur).expect("add");
-        let error = registry
-            .save(imgur_input("imgur", None))
-            .expect_err("empty");
-        assert_eq!(error.to_string(), "Enter the Imgur Client ID.");
-        registry
-            .save(imgur_input("imgur", Some("a1b2c3d4")))
-            .expect("first save");
-        let saved = registry
-            .save(imgur_input("imgur", None))
-            .expect("keep saved");
-        assert!(saved.configured);
     }
 
     #[test]
@@ -2087,13 +1932,13 @@ mod tests {
     fn removing_a_destination_deletes_its_secrets() {
         let fixture = fixture();
         let registry = fixture.registry();
-        registry.add(DestinationKindDto::Imgur).expect("add");
+        registry.add(DestinationKindDto::Gist).expect("add");
         registry
-            .save(imgur_input("imgur", Some("a1b2c3d4")))
+            .save(gist_input("gist", Some("a1b2c3d4"), false))
             .expect("save");
-        assert!(fixture.secrets.has("imgur", CLIENT_ID_FIELD));
-        registry.remove("imgur").expect("remove");
-        assert!(!fixture.secrets.has("imgur", CLIENT_ID_FIELD));
+        assert!(fixture.secrets.has("gist", GIST_TOKEN_FIELD));
+        registry.remove("gist").expect("remove");
+        assert!(!fixture.secrets.has("gist", GIST_TOKEN_FIELD));
         assert!(list(&registry).is_empty());
     }
 
@@ -2179,9 +2024,9 @@ mod tests {
             uploader: uploader.clone(),
         });
         let registry = fixture.registry_with(Arc::new(FakeDialog::empty()), factory);
-        registry.add(DestinationKindDto::Imgur).expect("add");
+        registry.add(DestinationKindDto::Gist).expect("add");
         registry
-            .save(imgur_input("imgur", Some("a1b2c3d4")))
+            .save(gist_input("gist", Some("a1b2c3d4"), false))
             .expect("save");
         let thread = UploaderThread::start(
             &fixture.services,
@@ -2194,7 +2039,7 @@ mod tests {
         let service = thread.service();
         let response = service
             .handle(UploadReq::Destination(DestinationReq::Test {
-                id: "imgur".to_owned(),
+                id: "gist".to_owned(),
             }))
             .expect("test");
         let outcome = match response {
@@ -2206,7 +2051,7 @@ mod tests {
         assert_eq!(outcome.status, DestinationTestStatusDto::Succeeded);
         assert_eq!(
             outcome.link.as_deref(),
-            Some("https://example.test/snapline-test.png")
+            Some("https://example.test/snapline-test.txt")
         );
         assert_eq!(uploader.calls.load(Ordering::SeqCst), 1);
         thread.join().expect("join");
@@ -2389,7 +2234,6 @@ mod tests {
     #[test]
     fn destination_kinds_round_trip_through_json() {
         for kind in [
-            DestinationKindDto::Imgur,
             DestinationKindDto::S3,
             DestinationKindDto::Gist,
             DestinationKindDto::Sftp,
