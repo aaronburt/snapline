@@ -26,6 +26,7 @@ export struct HotkeyRowData {
 }
 
 export global SettingsState {
+    in property <string> app-version: "0.0.0";
     in-out property <bool> launch-at-sign-in: true;
     in-out property <bool> start-minimised: false;
     in-out property <bool> tray-click-capture: true;

@@ -345,6 +345,7 @@ fn apply_settings(s: &SettingsState, v: &Value, mics: Vec<String>, monitors: &[M
     s.set_image_format_options(model(labels::labels(labels::IMAGE_FORMAT)));
     s.set_image_format(choice_label(labels::IMAGE_FORMAT, &general["imageFormat"], "PNG").into());
     s.set_lossy_quality(general["lossyQuality"].as_i64().unwrap_or(90) as i32);
+    s.set_app_version(env!("CARGO_PKG_VERSION").into());
     s.set_zoom_options(model(labels::zoom_labels()));
     s.set_zoom(i32::from(labels::nearest_zoom(
         general["zoom"].as_i64().unwrap_or(100),

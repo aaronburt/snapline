@@ -140,19 +140,28 @@ fn place() {
             return;
         };
         let window = open.window.window();
-        let size = window.size();
         let current = f64::from(window.scale_factor());
+        // Size from the laid-out content, not window.size(): the OS resize after
+        // the data loads is asynchronous, so the live size can still be the old one.
+        let logical_width = f64::from(window.size().width) / current;
+        let logical_height = f64::from(open.window.get_content_height());
+        let scale = open.monitor.map_or(current, |monitor| monitor.scale);
+        let width = logical_width * scale;
+        let height = logical_height * scale;
+        window.set_size(slint::PhysicalSize::new(
+            round(width).max(1).unsigned_abs(),
+            round(height).max(1).unsigned_abs(),
+        ));
         let (x, y) = match open.monitor {
             Some(monitor) => {
-                let ratio = monitor.scale / current;
                 let (bx, by, bw, bh) = monitor.bounds;
                 let (wx, wy, ww, wh) = monitor.work;
                 placement(
                     open.anchor,
                     Bounds::new(f64::from(wx), f64::from(wy), f64::from(ww), f64::from(wh)),
                     Bounds::new(f64::from(bx), f64::from(by), f64::from(bw), f64::from(bh)),
-                    f64::from(size.width) * ratio,
-                    f64::from(size.height) * ratio,
+                    width,
+                    height,
                 )
             }
             None => (open.anchor.x, open.anchor.y),

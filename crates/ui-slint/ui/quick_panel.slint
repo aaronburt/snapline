@@ -163,6 +163,7 @@ export component QuickPanelWindow inherits Window {
     default-font-family: "Segoe UI Variable Text";
     default-font-size: 13px;
     width: 344px;
+    out property <length> content-height: stack.preferred-height;
 
     FocusScope {
         init => { self.focus(); }
@@ -178,7 +179,7 @@ export component QuickPanelWindow inherits Window {
     Rectangle {
         border-width: 1px;
         border-color: Tokens.stroke;
-        VerticalLayout {
+        stack := VerticalLayout {
             padding: 1px;
             HorizontalLayout {
                 padding-left: 16px;
