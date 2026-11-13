@@ -27,6 +27,12 @@ export struct HotkeyRowData {
 
 export global SettingsState {
     in property <string> app-version: "0.0.0";
+    // Manual update check: "" (idle), or the short result shown next to the button.
+    in-out property <string> update-message;
+    in-out property <bool> update-checking: false;
+    in-out property <string> update-url;
+    callback check-updates();
+    callback open-update();
     in-out property <bool> launch-at-sign-in: true;
     in-out property <bool> start-minimised: false;
     in-out property <bool> tray-click-capture: true;

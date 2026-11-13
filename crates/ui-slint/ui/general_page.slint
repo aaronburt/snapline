@@ -61,6 +61,27 @@ export component GeneralPage inherits VerticalLayout {
                 Text { text: "Snapline"; color: Tokens.text; font-size: 16px; font-weight: 600; }
                 Text { text: "Version " + SettingsState.app-version; color: Tokens.text3; font-size: 12px; }
             }
+            VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: end;
+                    if SettingsState.update-message != "": VerticalLayout {
+                        alignment: center;
+                        Text { text: SettingsState.update-message; color: Tokens.text3; font-size: 12px; wrap: word-wrap; horizontal-alignment: right; }
+                    }
+                    if SettingsState.update-url != "": Button {
+                        label: "Update available";
+                        kind: "accent";
+                        clicked => { SettingsState.open-update(); }
+                    }
+                    Button {
+                        label: SettingsState.update-checking ? "Checking..." : "Check updates";
+                        disabled: SettingsState.update-checking;
+                        clicked => { SettingsState.check-updates(); }
+                    }
+                }
+            }
         }
     }
 
