@@ -8,7 +8,7 @@ use snapline_core::colour::ColourFormat;
 use snapline_core::geometry::{Point, Px, Rect};
 use snapline_core::image::Image;
 use snapline_core::ports::{
-    FrozenDesktop, FrozenMonitor, ImageCodec as _, Notice, OverlayTheme, ScreenCapture as _,
+    FrozenDesktop, FrozenMonitor, Notice, OverlayTheme, ScreenCapture as _,
 };
 use snapline_services::dto::settings::{SettingsDto, SettingsResp};
 use snapline_services::recording::DEFAULT_MICROPHONE;

@@ -411,7 +411,7 @@ impl Services {
         picker.pick_ffmpeg()
     }
 
-    pub(crate) fn notifier(&self) -> Option<Arc<dyn snapline_core::ports::Notifier + Send + Sync>> {
+    pub fn notifier(&self) -> Option<Arc<dyn snapline_core::ports::Notifier + Send + Sync>> {
         self.inner
             .hotkeys
             .lock()

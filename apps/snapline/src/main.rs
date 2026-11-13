@@ -34,7 +34,7 @@ use ::windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 use cli::{Args, BudgetWindow};
 use snapline_core::chord::Chord;
 use snapline_core::ffmpeg_args::{fallback_encoder, FfmpegCommand, VideoEncoder, VideoFormat};
-use snapline_core::geometry::{Point, Px, Rect};
+use snapline_core::geometry::{Point, Px};
 use snapline_core::hotkey_plan::{Blocked, Owner};
 use snapline_core::image::Image;
 use snapline_core::ports::{MagnifierZoom, Notice, Notifier, OverlayTheme, ScreenCapture};
@@ -1425,6 +1425,7 @@ mod recording_desktop_tests {
     use std::time::Duration;
 
     use snapline_core::ffmpeg_args::{video_command, VideoFrameRate, VideoQuality, VideoRequest};
+    use snapline_core::geometry::Rect;
     use snapline_core::recording::RecordingTarget;
 
     use super::*;
