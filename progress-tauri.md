@@ -814,7 +814,7 @@ The two bold changes are made by this plan because, under fail closed, the desig
 - Static C runtime (`-C target-feature=+crt-static` in `.cargo/config.toml`), so no VC++ redistributable is needed.
 - Node.js LTS and npm for `ui/`. `npm ci` only (never `npm install` in CI), lockfile committed.
 - The binary has `#![windows_subsystem = "windows"]`. `build.rs` runs `tauri_build::build()` with a Windows app manifest setting per-monitor DPI awareness v2, Common Controls 6, UTF-8 active code page, `asInvoker`, and Windows 10/11 supported OS GUIDs.
-- Release profile: `opt-level = 3`, `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`, `debug = "line-tables-only"`.
+- Release profile: `opt-level = 3`, `lto = "thin"`, `codegen-units = 1`, `panic = "abort"`, `debug = "line-tables-only"`.
 - Lints (workspace): `unsafe_op_in_unsafe_fn = "deny"`; clippy `unwrap_used`, `expect_used`, `dbg_macro` deny; `pedantic` warn; all warnings are errors in `check`. Tests may use `unwrap` and `expect` (`#[cfg(test)]` modules allow them).
 - Formatting: `rustfmt` defaults with `max_width = 100`; Prettier for `ui/` with `printWidth: 100`, `singleQuote: true`, `semi: true`.
 - Files stay under about 400 lines; split a bigger one.
