@@ -514,18 +514,19 @@ pub(crate) fn apply_zoom(app: &SnaplineWindow) {
     use slint::platform::WindowEvent;
     use slint::winit_030::WinitWindowAccessor;
     let zoom = app.global::<SettingsState>().get_zoom() as f32 / 100.0;
-    let Some(os_scale) = app
-        .window()
-        .with_winit_window(|window| window.scale_factor() as f32)
-    else {
+    let window = app.window();
+    let Some(os_scale) = window.with_winit_window(|window| window.scale_factor() as f32) else {
         return;
     };
     let wanted = os_scale * zoom;
-    if (app.window().scale_factor() - wanted).abs() > f32::EPSILON {
-        app.window()
-            .dispatch_event(WindowEvent::ScaleFactorChanged {
-                scale_factor: wanted,
-            });
+    let size = window.size();
+    if (window.scale_factor() - wanted).abs() > f32::EPSILON && size.width > 0 && size.height > 0 {
+        window.dispatch_event(WindowEvent::ScaleFactorChanged {
+            scale_factor: wanted,
+        });
+        window.dispatch_event(WindowEvent::Resized {
+            size: size.to_logical(wanted),
+        });
     }
 }
 
