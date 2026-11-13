@@ -1,0 +1,645 @@
+import { Tokens } from "tokens.slint";
+import { Icons } from "icons.slint";
+import { Icon } from "widgets.slint";
+import { UploadsState, DestinationForm } from "state.slint";
+
+component FormButton inherits Rectangle {
+    in property <string> label;
+    in property <string> variant: "secondary";
+    in property <bool> upload-icon: false;
+    in property <bool> disabled: false;
+    callback clicked();
+
+    property <bool> flat: root.variant == "text" || root.variant == "danger";
+    property <color> ink: root.variant == "accent" ? Tokens.on-accent : (root.variant == "text" ? Tokens.accent : (root.variant == "danger" ? Tokens.err : Tokens.text));
+    horizontal-stretch: 0;
+    height: 34px;
+    border-radius: 4px;
+    border-width: root.flat ? 0px : 1px;
+    border-color: root.variant == "accent" ? Tokens.accent : Tokens.stroke;
+    background: root.variant == "accent" ? Tokens.accent : (root.flat ? Tokens.transparent : Tokens.layer);
+    opacity: root.disabled ? 0.45 : 1;
+    preferred-width: content.preferred-width;
+    content := HorizontalLayout {
+        padding-left: root.flat ? 8px : 14px;
+        padding-right: root.flat ? 8px : 14px;
+        spacing: 8px;
+        alignment: center;
+        if root.upload-icon: VerticalLayout {
+            alignment: center;
+            Path {
+                width: 14px;
+                height: 14px;
+                viewbox-width: 24;
+                viewbox-height: 24;
+                commands: "M12 15V4M7 9l5-5 5 5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4";
+                stroke: root.ink;
+                stroke-width: 1px;
+                fill: transparent;
+            }
+        }
+        Text {
+            text: root.label;
+            color: root.ink;
+            font-size: 13px;
+            font-weight: root.variant == "accent" ? 600 : 400;
+            vertical-alignment: center;
+        }
+    }
+    TouchArea { enabled: !root.disabled; clicked => { root.clicked(); } }
+}
+
+component FieldBox inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <bool> mono: false;
+    in property <InputType> input-type: InputType.text;
+    callback typed(string);
+    horizontal-stretch: 1;
+    min-width: 0px;
+    preferred-width: 0px;
+    height: 34px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Tokens.stroke;
+    background: Tokens.layer;
+    Rectangle { y: parent.height - 2px; height: 1px; x: 3px; width: parent.width - 6px; background: Tokens.stroke-hi; }
+    entry := TextInput {
+        x: 10px;
+        width: parent.width - 20px;
+        height: parent.height;
+        vertical-alignment: center;
+        text <=> root.text;
+        input-type: root.input-type;
+        color: Tokens.text;
+        font-size: 12px;
+        font-family: root.mono ? Tokens.mono : "";
+        edited => {
+            DestinationForm.error = "";
+            DestinationForm.notice = "";
+            root.typed(self.text);
+        }
+    }
+    if root.text == "" && root.placeholder != "": Text {
+        x: 10px;
+        width: parent.width - 20px;
+        height: parent.height;
+        vertical-alignment: center;
+        text: root.placeholder;
+        color: Tokens.text3;
+        font-size: 12px;
+        font-family: root.mono ? Tokens.mono : "";
+    }
+}
+
+// A labelled text input, as the .field blocks in DestinationForm.svelte.
+component FormField inherits VerticalLayout {
+    in property <string> label;
+    in property <string> placeholder;
+    in property <bool> mono: false;
+    in-out property <string> value;
+    horizontal-stretch: 1;
+    min-width: 0px;
+    preferred-width: 0px;
+    spacing: 6px;
+    Text { text: root.label; color: Tokens.text2; font-size: 12px; }
+    FieldBox {
+        text <=> root.value;
+        placeholder: root.placeholder;
+        mono: root.mono;
+    }
+}
+
+// A secret field with a show and hide eye, as SecretInput.svelte. A saved secret shows "Saved".
+component SecretField inherits VerticalLayout {
+    in property <string> label;
+    in property <bool> saved: false;
+    in-out property <string> value;
+    callback typed(string);
+    property <bool> shown: false;
+    horizontal-stretch: 1;
+    min-width: 0px;
+    preferred-width: 0px;
+    spacing: 6px;
+    Text { text: root.label; color: Tokens.text2; font-size: 12px; }
+    HorizontalLayout {
+        spacing: 6px;
+        FieldBox {
+            text <=> root.value;
+            mono: true;
+            placeholder: root.saved ? "Saved" : "";
+            input-type: root.shown ? InputType.text : InputType.password;
+            typed(entry) => { root.typed(entry); }
+        }
+        Rectangle {
+            horizontal-stretch: 0;
+            width: 34px;
+            height: 34px;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Tokens.stroke;
+            background: Tokens.layer;
+            Path {
+                x: 9px;
+                y: 9px;
+                width: 16px;
+                height: 16px;
+                viewbox-width: 24;
+                viewbox-height: 24;
+                commands: root.shown ? "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 3l18 18" : "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z";
+                stroke: Tokens.text2;
+                stroke-width: 1.1px;
+                fill: transparent;
+            }
+            TouchArea { clicked => { root.shown = !root.shown; } }
+        }
+    }
+}
+
+// A dropdown in the form style: 34px high, 13px text, with a list that opens below.
+component FormSelect inherits Rectangle {
+    in property <[string]> model;
+    in property <string> current;
+    callback selected(string);
+    horizontal-stretch: 1;
+    min-width: 0px;
+    height: 34px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Tokens.stroke;
+    background: Tokens.layer;
+    Text { x: 10px; width: parent.width - 30px; text: root.current; color: Tokens.text; font-size: 13px; vertical-alignment: center; overflow: elide; }
+    Text { x: parent.width - 18px; text: "⌄"; color: Tokens.text3; font-size: 12px; vertical-alignment: center; }
+    TouchArea { clicked => { popup.show(); } }
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: root.width;
+        Rectangle {
+            width: parent.width;
+            height: list.preferred-height + 8px;
+            background: Tokens.menu-layer;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: Tokens.stroke-hi;
+            list := VerticalLayout {
+                padding: 4px;
+                for option in root.model: Rectangle {
+                    height: 28px;
+                    border-radius: 4px;
+                    background: option == root.current ? Tokens.accent-soft : Tokens.transparent;
+                    Text { x: 10px; text: option; color: Tokens.text; font-size: 13px; vertical-alignment: center; }
+                    TouchArea {
+                        clicked => {
+                            root.selected(option);
+                            popup.close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A labelled dropdown, as the Request method and Body fields.
+component FormChoice inherits VerticalLayout {
+    in property <string> label;
+    in property <[string]> model;
+    in property <string> current;
+    callback selected(string);
+    horizontal-stretch: 1;
+    min-width: 0px;
+    preferred-width: 0px;
+    spacing: 6px;
+    Text { text: root.label; color: Tokens.text2; font-size: 12px; }
+    FormSelect {
+        model: root.model;
+        current: root.current;
+        selected(entry) => { root.selected(entry); }
+    }
+}
+
+// The outline switch used in these forms (.tg in styles/base.css).
+component FormSwitch inherits Rectangle {
+    in-out property <bool> checked;
+    horizontal-stretch: 0;
+    width: 40px;
+    height: 20px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: root.checked ? Tokens.accent : Tokens.text3;
+    background: root.checked ? Tokens.accent : Tokens.transparent;
+    Rectangle {
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        x: root.checked ? 24px : 4px;
+        y: 4px;
+        background: root.checked ? Tokens.on-accent : Tokens.text2;
+        animate x { duration: 150ms; }
+    }
+    TouchArea { clicked => { root.checked = !root.checked; } }
+}
+
+// A checkbox with its label, as the "Include header values" option.
+component FormCheckbox inherits Rectangle {
+    in property <string> label;
+    in-out property <bool> checked;
+    horizontal-stretch: 0;
+    height: 20px;
+    preferred-width: 24px + label-text.preferred-width;
+    Rectangle {
+        x: 0px;
+        y: 2px;
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: root.checked ? Tokens.accent : Tokens.text3;
+        background: root.checked ? Tokens.accent : Tokens.layer;
+        Path {
+            x: 3px;
+            y: 3px;
+            width: 10px;
+            height: 10px;
+            viewbox-width: 12;
+            viewbox-height: 12;
+            commands: "M2 6.2L4.8 9L10 3.2";
+            stroke: Tokens.on-accent;
+            stroke-width: 1.4px;
+            fill: transparent;
+            visible: root.checked;
+        }
+    }
+    label-text := Text {
+        x: 24px;
+        width: root.width - 24px;
+        text: root.label;
+        color: Tokens.text2;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
+    TouchArea { clicked => { root.checked = !root.checked; } }
+}
+
+// One side of the Password or Private key file choice.
+component AuthSegment inherits Rectangle {
+    in property <string> label;
+    in property <bool> chosen;
+    callback picked();
+    horizontal-stretch: 0;
+    border-radius: 4px;
+    background: root.chosen ? Tokens.card : Tokens.transparent;
+    preferred-width: segment-text.preferred-width + 24px;
+    segment-text := Text {
+        text: root.label;
+        color: root.chosen ? Tokens.text : Tokens.text2;
+        font-size: 12px;
+        font-weight: root.chosen ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    TouchArea { clicked => { root.picked(); } }
+}
+
+// The SFTP Password or Private key file choice, drawn as the Segmented control in Segmented.svelte.
+component AuthChoice inherits Rectangle {
+    in-out property <bool> password-auth: true;
+    horizontal-stretch: 0;
+    height: 30px;
+    preferred-width: track.preferred-width;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Tokens.stroke;
+    background: Tokens.subtle;
+    track := HorizontalLayout {
+        padding: 2px;
+        spacing: 2px;
+        alignment: start;
+        AuthSegment {
+            label: "Password";
+            chosen: root.password-auth;
+            picked => { root.password-auth = true; }
+        }
+        AuthSegment {
+            label: "Private key file";
+            chosen: !root.password-auth;
+            picked => { root.password-auth = false; }
+        }
+    }
+}
+
+// The "Add header" button: accent text with a plus, 12px.
+component AddHeaderButton inherits Rectangle {
+    callback clicked();
+    horizontal-stretch: 0;
+    height: 30px;
+    preferred-width: add-row.preferred-width;
+    add-row := HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 6px;
+        alignment: start;
+        VerticalLayout {
+            alignment: center;
+            Path {
+                width: 12px;
+                height: 12px;
+                viewbox-width: 24;
+                viewbox-height: 24;
+                commands: "M12 5v14M5 12h14";
+                stroke: Tokens.accent;
+                stroke-width: 1px;
+                fill: transparent;
+            }
+        }
+        Text { text: "Add header"; color: Tokens.accent; font-size: 12px; vertical-alignment: center; }
+    }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+component TestPill inherits Rectangle {
+    in property <string> text;
+    in property <int> tone: 0;
+    horizontal-stretch: 0;
+    height: 24px;
+    max-width: 420px;
+    border-radius: 12px;
+    preferred-width: pill-text.preferred-width + 20px;
+    background: root.tone == 1 ? Tokens.ok-soft : (root.tone == 2 ? Tokens.err-soft : Tokens.subtle);
+    pill-text := Text {
+        x: 10px;
+        width: parent.width - 20px;
+        height: parent.height;
+        text: root.text;
+        color: root.tone == 1 ? Tokens.ok : (root.tone == 2 ? Tokens.err : Tokens.text3);
+        font-size: 12px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+export component DestinationFormPanel inherits Rectangle {
+    background: Tokens.card;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Tokens.stroke;
+    height: content.preferred-height;
+
+    content := VerticalLayout {
+        padding: 20px;
+
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: start;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 4px;
+                Text { text: DestinationForm.title; color: Tokens.text; font-size: 14px; font-weight: 600; }
+                if DestinationForm.description != "": Text {
+                    text: DestinationForm.description;
+                    color: Tokens.text3;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+            Rectangle {
+                width: 30px;
+                height: 30px;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: Tokens.stroke;
+                background: close-ta.has-hover ? Tokens.card-alt : Tokens.layer;
+                opacity: DestinationForm.busy ? 0.45 : 1;
+                Icon { x: 8px; y: 8px; d: Icons.close; size: 14px; tint: Tokens.text; sw: 1.8; }
+                close-ta := TouchArea {
+                    enabled: !DestinationForm.busy;
+                    clicked => { UploadsState.close-destination(); }
+                }
+            }
+        }
+        Rectangle { height: 16px; }
+
+        VerticalLayout {
+            spacing: 18px;
+
+            if DestinationForm.kind == "imgur": HorizontalLayout {
+                SecretField {
+                    label: "Client ID";
+                    saved: DestinationForm.secret-saved;
+                    value <=> DestinationForm.secret;
+                }
+            }
+
+            if DestinationForm.kind == "gist": HorizontalLayout {
+                SecretField {
+                    label: "Token";
+                    saved: DestinationForm.secret-saved;
+                    value <=> DestinationForm.secret;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            if DestinationForm.kind == "gist": HorizontalLayout {
+                spacing: 16px;
+                alignment: start;
+                Text { text: "Public"; color: Tokens.text2; font-size: 13px; vertical-alignment: center; }
+                FormSwitch { checked <=> DestinationForm.acl-public-read; }
+            }
+
+            if DestinationForm.kind == "s3": VerticalLayout {
+                spacing: 14px;
+                HorizontalLayout {
+                    spacing: 16px;
+                    FormField { label: "Endpoint (default AWS)"; placeholder: "AWS"; value <=> DestinationForm.endpoint; }
+                    FormField { label: "Region"; value <=> DestinationForm.region; }
+                }
+                HorizontalLayout {
+                    spacing: 16px;
+                    FormField { label: "Bucket"; value <=> DestinationForm.bucket; }
+                    FormField { label: "Path prefix"; mono: true; value <=> DestinationForm.path-prefix; }
+                }
+                HorizontalLayout {
+                    spacing: 16px;
+                    SecretField { label: "Access key ID"; saved: DestinationForm.access-key-saved; value <=> DestinationForm.access-key-id; }
+                    SecretField { label: "Secret access key"; saved: DestinationForm.secret-access-key-saved; value <=> DestinationForm.secret-access-key; }
+                }
+                FormField { label: "Public URL pattern"; mono: true; value <=> DestinationForm.public-url-pattern; }
+            }
+            if DestinationForm.kind == "s3": HorizontalLayout {
+                spacing: 16px;
+                alignment: start;
+                Text { text: "ACL public-read"; color: Tokens.text2; font-size: 13px; vertical-alignment: center; }
+                FormSwitch { checked <=> DestinationForm.acl-public-read; }
+            }
+
+            if DestinationForm.kind == "sftp": VerticalLayout {
+                spacing: 18px;
+                HorizontalLayout {
+                    spacing: 16px;
+                    FormField { label: "Host"; value <=> DestinationForm.host; }
+                    FormField { label: "Port (22)"; value <=> DestinationForm.port; }
+                }
+                HorizontalLayout {
+                    spacing: 16px;
+                    FormField { label: "Username"; value <=> DestinationForm.username; }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+                VerticalLayout {
+                    spacing: 6px;
+                    Text { text: "Password or Private key file"; color: Tokens.text2; font-size: 12px; }
+                    HorizontalLayout {
+                        alignment: start;
+                        AuthChoice { password-auth <=> DestinationForm.password-auth; }
+                    }
+                }
+                if DestinationForm.password-auth: HorizontalLayout {
+                    spacing: 16px;
+                    SecretField { label: "Password"; saved: DestinationForm.password-saved; value <=> DestinationForm.password; }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+                if !DestinationForm.password-auth: HorizontalLayout {
+                    spacing: 16px;
+                    FormField { label: "Private key file"; mono: true; value <=> DestinationForm.private-key-path; }
+                    SecretField { label: "Passphrase"; saved: DestinationForm.passphrase-saved; value <=> DestinationForm.passphrase; }
+                }
+                VerticalLayout {
+                    spacing: 14px;
+                    HorizontalLayout {
+                        spacing: 16px;
+                        FormField { label: "Remote folder"; mono: true; value <=> DestinationForm.remote-folder; }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    FormField { label: "Public URL pattern"; mono: true; placeholder: "https://example.com/<key>"; value <=> DestinationForm.public-url-pattern; }
+                }
+            }
+
+            if DestinationForm.kind == "custom": VerticalLayout {
+                spacing: 18px;
+                VerticalLayout {
+                    spacing: 14px;
+                    HorizontalLayout {
+                        spacing: 16px;
+                        FormField { label: "Name"; value <=> DestinationForm.name; }
+                        FormChoice {
+                            label: "Request method";
+                            model: ["POST", "PUT", "PATCH"];
+                            current: DestinationForm.method;
+                            selected(entry) => { DestinationForm.method = entry; DestinationForm.error = ""; DestinationForm.notice = ""; }
+                        }
+                    }
+                    FormField { label: "Request URL"; mono: true; value <=> DestinationForm.request-url; }
+                    HorizontalLayout {
+                        spacing: 16px;
+                        FormChoice {
+                            label: "Body";
+                            model: ["Multipart form data", "Binary", "Form URL-encoded", "JSON"];
+                            current: DestinationForm.body;
+                            selected(entry) => { DestinationForm.body = entry; DestinationForm.error = ""; DestinationForm.notice = ""; }
+                        }
+                        FormField { label: "File form field"; mono: true; value <=> DestinationForm.file-form-field; }
+                    }
+                    HorizontalLayout {
+                        spacing: 16px;
+                        FormField { label: "Link from response"; mono: true; placeholder: "$.data.url"; value <=> DestinationForm.link; }
+                        FormField { label: "Thumbnail from response"; mono: true; placeholder: "$.data.thumbnail"; value <=> DestinationForm.thumbnail; }
+                    }
+                    HorizontalLayout {
+                        spacing: 16px;
+                        FormField { label: "Deletion link from response"; mono: true; placeholder: "$.data.delete_url"; value <=> DestinationForm.deletion; }
+                        FormField { label: "Error message from response"; mono: true; placeholder: "$.error.message"; value <=> DestinationForm.error-message; }
+                    }
+                }
+                VerticalLayout {
+                    spacing: 6px;
+                    Text { text: "Headers"; color: Tokens.text2; font-size: 12px; }
+                    for header in DestinationForm.headers: HorizontalLayout {
+                        spacing: 6px;
+                        FieldBox {
+                            mono: true;
+                            text: header.name;
+                            typed(entry) => { DestinationForm.header-name-edited(header.index, entry); }
+                        }
+                        SecretField {
+                            horizontal-stretch: 2;
+                            label: "Header value";
+                            saved: header.saved;
+                            value: header.value;
+                            typed(entry) => { DestinationForm.header-value-edited(header.index, entry); }
+                        }
+                    }
+                    AddHeaderButton { clicked => { DestinationForm.add-header(); } }
+                    FormCheckbox { label: "Include header values"; checked <=> DestinationForm.include-header-values; }
+                }
+            }
+
+            if DestinationForm.error != "": Text {
+                text: DestinationForm.error;
+                color: Tokens.err;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            if DestinationForm.notice != "": Text {
+                text: DestinationForm.notice;
+                color: Tokens.text3;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            VerticalLayout {
+                spacing: 14px;
+                Rectangle { height: 1px; background: Tokens.stroke; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    FormButton {
+                        label: "Test upload";
+                        variant: "accent";
+                        upload-icon: true;
+                        disabled: DestinationForm.busy || DestinationForm.test-state == "testing";
+                        clicked => { DestinationForm.test-destination(); }
+                    }
+                    FormButton {
+                        label: "Save";
+                        disabled: DestinationForm.busy || DestinationForm.test-state == "testing";
+                        clicked => { DestinationForm.save-destination(); }
+                    }
+                    if DestinationForm.kind == "custom": FormButton {
+                        label: "Export .sxcu";
+                        disabled: DestinationForm.busy || DestinationForm.test-state == "testing";
+                        clicked => { DestinationForm.export-sxcu(); }
+                    }
+                    if !DestinationForm.confirm-delete: FormButton {
+                        label: "Remove destination";
+                        variant: "danger";
+                        disabled: DestinationForm.busy || DestinationForm.test-state == "testing";
+                        clicked => { DestinationForm.confirm-delete = true; }
+                    }
+                    if DestinationForm.confirm-delete: Text {
+                        text: "Remove this destination?";
+                        color: Tokens.text2;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                    if DestinationForm.confirm-delete: FormButton {
+                        label: "Remove";
+                        variant: "danger";
+                        disabled: DestinationForm.busy || DestinationForm.test-state == "testing";
+                        clicked => { DestinationForm.delete-destination(); }
+                    }
+                    if DestinationForm.confirm-delete: FormButton {
+                        label: "Cancel";
+                        variant: "text";
+                        disabled: DestinationForm.busy || DestinationForm.test-state == "testing";
+                        clicked => { DestinationForm.confirm-delete = false; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    TestPill {
+                        text: DestinationForm.test-state == "testing" ? "Testing…"
+                            : (DestinationForm.test-state == "success" ? (DestinationForm.test-message != "" ? DestinationForm.test-message : "Test upload succeeded")
+                            : (DestinationForm.test-state == "failed" ? "Test failed: " + DestinationForm.test-message : "Not tested yet"));
+                        tone: DestinationForm.test-state == "success" ? 1 : (DestinationForm.test-state == "failed" ? 2 : 0);
+                    }
+                }
+            }
+        }
+    }
+}

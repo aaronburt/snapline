@@ -7,6 +7,7 @@ members = [
     "crates/platform-windows",
     "crates/overlay-windows",
     "crates/services",
+    "crates/ui-slint",
     "apps/snapline",
     "xtask",
 ]

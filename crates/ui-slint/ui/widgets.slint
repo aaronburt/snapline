@@ -1,0 +1,462 @@
+import { Tokens } from "tokens.slint";
+import { SettingsState, HotkeyFormatResult } from "state.slint";
+
+export component Icon inherits Path {
+    in property <string> d;
+    in property <length> size: 16px;
+    in property <color> tint: Tokens.text2;
+    in property <float> sw: 1.6;
+    width: root.size;
+    height: root.size;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: root.d;
+    stroke: root.tint;
+    stroke-width: root.size * root.sw / 24;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+    fill: transparent;
+}
+
+export component Toggle inherits HorizontalLayout {
+    in property <bool> checked;
+    in property <bool> disabled: false;
+    callback toggled(bool);
+    spacing: 12px;
+    alignment: end;
+    horizontal-stretch: 0;
+    opacity: root.disabled ? 0.45 : 1;
+    VerticalLayout {
+        alignment: center;
+        Text { text: root.checked ? "On" : "Off"; color: Tokens.text2; font-size: 13px; width: 24px; horizontal-alignment: right; }
+    }
+    VerticalLayout {
+        alignment: center;
+        Rectangle {
+            width: 40px;
+            height: 20px;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: root.checked ? Tokens.accent : Tokens.text3;
+            background: root.checked ? Tokens.accent : transparent;
+            Rectangle {
+                width: 12px; height: 12px; border-radius: 6px;
+                x: root.checked ? 24px : 4px;
+                y: 3px;
+                background: root.checked ? Tokens.on-accent : Tokens.text2;
+                animate x { duration: 120ms; }
+            }
+            TouchArea { enabled: !root.disabled; clicked => { root.toggled(!root.checked); } }
+        }
+    }
+}
+
+export component Row inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    in property <string> icon;
+    vertical-stretch: 0;
+    background: Tokens.card;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Tokens.stroke;
+    min-height: 68px;
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        spacing: 16px;
+        if root.icon != "": VerticalLayout {
+            alignment: center;
+            Icon { d: root.icon; size: 20px; tint: Tokens.text2; }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text { text: root.title; color: Tokens.text; font-size: 14px; overflow: elide; }
+            if root.description != "": Text { text: root.description; color: Tokens.text3; font-size: 12px; wrap: word-wrap; }
+        }
+        VerticalLayout { alignment: center; horizontal-stretch: 0; HorizontalLayout { alignment: end; spacing: 8px; @children } }
+    }
+}
+
+export component Section inherits VerticalLayout {
+    in property <string> heading;
+    in property <string> caption;
+    spacing: 4px;
+    vertical-stretch: 0;
+    Text { text: root.heading; color: Tokens.text; font-size: 14px; font-weight: 600; }
+    Rectangle { height: 0px; }
+    if root.caption != "": VerticalLayout { padding-bottom: 6px; Text { text: root.caption; color: Tokens.text3; font-size: 12px; wrap: word-wrap; } }
+    @children
+}
+
+export component PageHeader inherits VerticalLayout {
+    in property <string> title;
+    in property <string> intro;
+    spacing: 6px;
+    vertical-stretch: 0;
+    Text { text: root.title; color: Tokens.text; font-size: 28px; font-weight: 600; height: 36px; vertical-alignment: center; }
+    if root.intro != "": Text { text: root.intro; color: Tokens.text3; font-size: 12px; wrap: word-wrap; }
+}
+
+export component Button inherits Rectangle {
+    in property <string> label;
+    in property <string> kind: "secondary";
+    in property <string> icon;
+    in property <bool> disabled: false;
+    callback clicked();
+    height: 34px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.kind == "accent" ? Tokens.accent : (root.kind == "secondary" ? Tokens.stroke : transparent);
+    background: root.kind == "accent" ? Tokens.accent : (root.kind == "secondary" ? Tokens.layer : transparent);
+    opacity: root.disabled ? 0.45 : 1;
+    preferred-width: row.preferred-width;
+    horizontal-stretch: 0;
+    row := HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 8px;
+        alignment: center;
+        if root.icon != "": VerticalLayout { alignment: center; Icon { d: root.icon; size: 16px; tint: root.kind == "accent" ? Tokens.on-accent : Tokens.text; } }
+        Text {
+            text: root.label;
+            font-size: 13px;
+            font-weight: root.kind == "accent" ? 600 : 400;
+            vertical-alignment: center;
+            color: root.kind == "accent" ? Tokens.on-accent : (root.kind == "text" ? Tokens.accent : (root.kind == "danger" ? Tokens.err : Tokens.text));
+        }
+    }
+    TouchArea { enabled: !root.disabled; clicked => { root.clicked(); } }
+}
+
+export component Segmented inherits Rectangle {
+    in property <[string]> options;
+    in-out property <string> value;
+    in property <bool> disabled: false;
+    callback picked(string);
+    height: 36px;
+    horizontal-stretch: 0;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Tokens.stroke;
+    background: Tokens.subtle;
+    opacity: root.disabled ? 0.45 : 1;
+    preferred-width: seg.preferred-width;
+    seg := HorizontalLayout {
+        padding: 2px;
+        for option in root.options: Rectangle {
+            property <bool> on: option == root.value;
+            min-width: 52px;
+            background: on ? Tokens.card : transparent;
+            border-radius: 4px;
+            drop-shadow-blur: on ? 2px : 0px;
+            drop-shadow-color: Tokens.shadow;
+            drop-shadow-offset-y: 1px;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                label := Text {
+                    text: option;
+                    color: on ? Tokens.text : Tokens.text2;
+                    font-size: 12px;
+                    font-weight: on ? 600 : 400;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+            TouchArea { enabled: !root.disabled; clicked => { root.value = option; root.picked(option); } }
+        }
+    }
+}
+
+export component Select inherits Rectangle {
+    in property <[string]> model;
+    in property <string> current-value;
+    in property <bool> disabled: false;
+    callback selected(string);
+    width: 220px;
+    height: 34px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Tokens.stroke;
+    background: Tokens.layer;
+    opacity: root.disabled ? 0.45 : 1;
+    Text { x: 10px; width: parent.width - 36px; height: parent.height; text: root.current-value; color: Tokens.text; font-size: 13px; vertical-alignment: center; overflow: elide; }
+    Icon { x: parent.width - 24px; y: (parent.height - 12px) / 2; size: 12px; d: "M6 9l6 6 6-6"; tint: Tokens.text2; sw: 2; }
+    TouchArea { enabled: !root.disabled; clicked => { popup.show(); } }
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + 2px;
+        width: root.width;
+        Rectangle {
+            width: parent.width;
+            height: list.preferred-height;
+            background: Tokens.menu-layer;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: Tokens.stroke-hi;
+            list := VerticalLayout {
+                padding: 4px;
+                for option in root.model: Rectangle {
+                    height: 32px;
+                    border-radius: 4px;
+                    background: option == root.current-value ? Tokens.accent-soft : transparent;
+                    Text { x: 10px; width: parent.width - 20px; height: parent.height; text: option; color: Tokens.text; font-size: 13px; vertical-alignment: center; overflow: elide; }
+                    TouchArea {
+                        clicked => {
+                            root.selected(option);
+                            popup.close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component Card inherits Rectangle {
+    vertical-stretch: 0;
+    background: Tokens.card;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Tokens.stroke;
+}
+
+export component Field inherits Rectangle {
+    in-out property <string> text;
+    in property <bool> mono;
+    in property <length> font-size: 12px;
+    in property <string> placeholder;
+    in property <bool> invalid;
+    in property <bool> read-only: false;
+    in property <bool> disabled: false;
+    callback edited(string);
+    height: 34px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.invalid ? Tokens.err : Tokens.stroke;
+    background: Tokens.layer;
+    opacity: root.disabled ? 0.45 : 1;
+    Rectangle { y: parent.height - 2px; height: 1px; x: 3px; width: parent.width - 6px; background: Tokens.stroke-hi; }
+    input := TextInput {
+        x: 10px;
+        width: parent.width - 20px;
+        height: parent.height;
+        vertical-alignment: center;
+        text <=> root.text;
+        enabled: !root.disabled;
+        read-only: root.read-only || root.disabled;
+        color: Tokens.text;
+        font-size: root.font-size;
+        font-family: root.mono ? Tokens.mono : "Segoe UI Variable Text";
+        single-line: true;
+        edited => { root.edited(self.text); }
+    }
+    if root.text == "" && root.placeholder != "": Text {
+        x: 10px;
+        width: parent.width - 20px;
+        height: parent.height;
+        text: root.placeholder;
+        color: Tokens.text3;
+        font-size: root.font-size;
+        font-family: root.mono ? Tokens.mono : "Segoe UI Variable Text";
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+export component Range inherits HorizontalLayout {
+    in property <int> lo: 0;
+    in property <int> hi: 100;
+    in-out property <int> value;
+    in property <string> unit;
+    in property <bool> disabled: false;
+    callback changed(int);
+    spacing: 12px;
+    horizontal-stretch: 0;
+    opacity: root.disabled ? 0.45 : 1;
+    VerticalLayout {
+        alignment: center;
+        Rectangle {
+            width: 200px;
+            height: 20px;
+            Rectangle {
+                x: 0px;
+                width: parent.width;
+                y: (parent.height - 4px) / 2;
+                height: 4px;
+                border-radius: 2px;
+                background: Tokens.track;
+            }
+            Rectangle {
+                x: 0px;
+                y: (parent.height - 4px) / 2;
+                height: 4px;
+                border-radius: 2px;
+                width: (parent.width - 16px) * (root.value - root.lo) / (root.hi - root.lo) + 8px;
+                background: Tokens.accent;
+            }
+            Rectangle {
+                x: (parent.width - 16px) * (root.value - root.lo) / (root.hi - root.lo);
+                y: 2px;
+                width: 16px;
+                height: 16px;
+                border-radius: 8px;
+                background: Tokens.accent;
+            }
+            TouchArea {
+                enabled: !root.disabled;
+                function pick() {
+                    root.value = max(root.lo, min(root.hi, root.lo + round((self.mouse-x - 8px) / (parent.width - 16px) * (root.hi - root.lo))));
+                    root.changed(root.value);
+                }
+                pointer-event(e) => { if (e.kind == PointerEventKind.down) { self.pick(); } }
+                moved => { if (self.pressed) { self.pick(); } }
+            }
+        }
+    }
+    VerticalLayout { alignment: center; Text { width: 44px; text: root.value + root.unit; color: Tokens.text2; font-size: 13px; horizontal-alignment: right; } }
+}
+
+export component Logo inherits Rectangle {
+    in property <length> size: 32px;
+    width: root.size;
+    height: root.size;
+    border-radius: root.size * 0.25;
+    background: Tokens.accent;
+    Path {
+        width: parent.width;
+        height: parent.height;
+        viewbox-width: 32;
+        viewbox-height: 32;
+        commands: "M9 13V9h4M19 9h4v4M23 19v4h-4M13 23H9v-4";
+        stroke: Tokens.on-accent;
+        stroke-width: root.size * (root.size >= 32px ? 2.2 : 2.6) / 32;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        fill: transparent;
+    }
+    Rectangle {
+        width: root.size * 0.15;
+        height: root.size * 0.15;
+        x: root.size * 0.425;
+        y: root.size * 0.425;
+        border-radius: root.size * 0.075;
+        background: Tokens.on-accent;
+    }
+}
+
+export component HotkeyField inherits VerticalLayout {
+    in property <string> chord;
+    in property <string> clash;
+    in property <bool> disabled: false;
+    in-out property <bool> capturing: false;
+    in-out property <string> error;
+    callback committed(string);
+    spacing: 4px;
+    opacity: root.disabled ? 0.45 : 1;
+
+    function apply-hotkey(res: HotkeyFormatResult) -> EventResult {
+        if (res.status == "ok") {
+            root.error = "";
+            root.capturing = false;
+            root.committed(res.value);
+            return accept;
+        }
+        if (res.status == "error") {
+            root.error = res.value;
+            return accept;
+        }
+        return reject;
+    }
+
+    changed chord => {
+        root.error = "";
+    }
+
+    HorizontalLayout {
+        height: 34px;
+        spacing: 6px;
+        Rectangle {
+            horizontal-stretch: 1;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: (root.error != "" || root.clash != "") ? Tokens.err : Tokens.stroke;
+            background: Tokens.layer;
+            Rectangle {
+                y: parent.height - 2px;
+                height: 1px;
+                x: 3px;
+                width: parent.width - 6px;
+                background: (root.error != "" || root.clash != "") ? Tokens.err : Tokens.stroke-hi;
+            }
+            Text {
+                x: 10px;
+                width: parent.width - 20px;
+                height: parent.height;
+                text: root.capturing ? "Press keys…" : (root.chord == "" ? "Not set" : root.chord);
+                color: root.capturing ? Tokens.accent : (root.chord == "" ? Tokens.text3 : Tokens.text);
+                font-size: 12px;
+                font-family: Tokens.mono;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            TouchArea {
+                enabled: !root.disabled;
+                clicked => {
+                    if (!root.capturing) {
+                        root.error = "";
+                        root.capturing = true;
+                    }
+                }
+            }
+            key-handler := FocusScope {
+                enabled: root.capturing && !root.disabled;
+                key-pressed(event) => {
+                    if (event.text == Key.Escape) {
+                        root.error = "";
+                        root.capturing = false;
+                        return accept;
+                    }
+                    if (event.text == Key.Backspace) {
+                        root.error = "";
+                        root.capturing = false;
+                        root.committed("");
+                        return accept;
+                    }
+                    return root.apply-hotkey(SettingsState.format-hotkey(
+                        event.text,
+                        event.modifiers.control,
+                        event.modifiers.alt,
+                        event.modifiers.shift,
+                        event.modifiers.meta,
+                    ));
+                }
+            }
+        }
+        Button {
+            width: 73px;
+            disabled: root.disabled;
+            label: root.capturing ? "Cancel" : "Change";
+            clicked => {
+                root.error = "";
+                root.capturing = !root.capturing;
+            }
+        }
+    }
+    if root.error != "": Text {
+        text: root.error;
+        color: Tokens.err;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+    changed capturing => {
+        if (self.capturing) {
+            key-handler.focus();
+        }
+    }
+}

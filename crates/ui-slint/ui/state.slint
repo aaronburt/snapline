@@ -1,0 +1,513 @@
+// Settings state shared by every page. Rust fills these from the services layer and
+// receives edits through the update-* callbacks (see src/backend.rs and src/main.rs).
+import { Tokens } from "tokens.slint";
+
+export struct HotkeyFormatResult {
+    status: string,
+    value: string,
+}
+
+export struct MonitorItemData {
+    number: string,
+    resolution: string,
+    left: float,
+    top: float,
+    width: float,
+    height: float,
+    primary: bool,
+}
+
+export struct HotkeyRowData {
+    owner: string,
+    label: string,
+    description: string,
+    chord: string,
+    clash: string,
+}
+
+export global SettingsState {
+    in-out property <bool> launch-at-sign-in: true;
+    in-out property <bool> start-minimised: false;
+    in-out property <bool> tray-click-capture: true;
+    in-out property <bool> notifications: true;
+    in-out property <string> save-folder;
+    in-out property <string> subfolders;
+    in-out property <string> image-format;
+    in-out property <int> lossy-quality: 90;
+    in-out property <string> name-pattern;
+    in-out property <string> preview-name;
+    in-out property <string> copied-link-format;
+    in-out property <[string]> subfolder-options;
+    in-out property <[string]> image-format-options;
+    in-out property <[string]> link-format-options;
+
+    in-out property <bool> include-cursor: true;
+    in-out property <string> capture-delay;
+    in-out property <bool> shutter-sound: false;
+    in-out property <bool> window-shadow: true;
+    in-out property <bool> freeze-screen: true;
+    in-out property <bool> magnifier: true;
+    in-out property <string> magnifier-zoom;
+    in-out property <bool> snap-windows: true;
+    in-out property <bool> show-size: true;
+    in-out property <bool> crosshair: false;
+    in-out property <string> monitor-mode;
+    in-out property <[MonitorItemData]> monitors;
+    in-out property <int> monitors-total-w: 0;
+    in-out property <int> monitors-total-h: 0;
+    in-out property <string> monitor-caption: "Reading monitor layout…";
+    in-out property <string> video-format;
+    in-out property <string> frame-rate;
+    in-out property <string> quality;
+    in-out property <bool> system-audio: true;
+    in-out property <bool> microphone: false;
+    in-out property <string> microphone-device;
+    in-out property <[string]> microphone-options;
+    in-out property <bool> recording-border: true;
+    in-out property <string> ffmpeg-path;
+    in-out property <string> gif-frame-rate;
+    in-out property <string> gif-width;
+    in-out property <bool> optimise-palette: true;
+    in-out property <[string]> capture-delay-options;
+    in-out property <[string]> magnifier-zoom-options;
+    in-out property <[string]> monitor-options;
+    in-out property <[string]> video-format-options;
+    in-out property <[string]> frame-rate-options;
+    in-out property <[string]> quality-options;
+    in-out property <[string]> gif-frame-rate-options;
+    in-out property <[string]> gif-width-options;
+
+    in-out property <string> capture-hotkey: "PrtSc";
+    in-out property <[HotkeyRowData]> capture-hotkeys;
+    in-out property <[HotkeyRowData]> recording-hotkeys;
+    in-out property <[HotkeyRowData]> tool-hotkeys;
+    in-out property <bool> take-over-prtsc: true;
+    in-out property <bool> warn-clashes: true;
+    in-out property <string> prtsc-hint;
+
+    callback update-bool(string, bool);
+    callback update-text(string, string);
+    callback update-choice(string, string);
+    callback update-number(string, int);
+    callback update-chord(string, string);
+    callback preview-name-requested(string);
+    callback browse-folder();
+    callback reset-ffmpeg();
+    callback browse-ffmpeg();
+    callback run-capture();
+    pure callback text-matches(string, string, string) -> bool;
+    pure callback hotkey-group-visible(string, string) -> bool;
+    callback format-hotkey(string, bool, bool, bool, bool) -> HotkeyFormatResult;
+}
+
+export struct DestinationRowData {
+    id: string,
+    name: string,
+    detail: string,
+    status: string,
+    configured: bool,
+    kind: string,
+    action: string,   // "Configure", "Edit" or "Set up"
+    index: int,
+}
+
+// Upload settings and destination accounts. Rust fills these and handles the callbacks.
+export global UploadsState {
+    in-out property <string> images;
+    in-out property <string> videos;
+    in-out property <string> text;
+    in-out property <string> other-files;
+    in-out property <string> link-shortener;
+    in-out property <[string]> images-options;
+    in-out property <[string]> videos-options;
+    in-out property <[string]> text-options;
+    in-out property <[string]> other-options;
+    in-out property <[string]> shortener-options;
+    in-out property <bool> strip-exif: true;
+    in-out property <bool> ask-clipboard: true;
+    in-out property <string> retry;
+    in-out property <string> timeout;
+    in-out property <string> keep-history;
+    in-out property <string> proxy;
+    in-out property <string> custom-proxy;
+    in-out property <[string]> retry-options;
+    in-out property <[string]> timeout-options;
+    in-out property <[string]> keep-history-options;
+    in-out property <[string]> proxy-options;
+    in-out property <[DestinationRowData]> destinations;
+    in-out property <string> destination-error;
+    in-out property <string> import-warning;
+    in-out property <string> active-id;
+    in-out property <bool> add-open: false;
+    in-out property <bool> busy: false;
+
+    callback update-choice(string, string);
+    callback update-bool(string, bool);
+    callback update-text(string, string);
+    callback add-destination(string);
+    callback import-sxcu();
+    callback open-destination(string);
+    callback close-destination();
+    pure callback accounts-visible(string) -> bool;
+}
+
+export struct FormHeaderData {
+    index: int,
+    name: string,
+    value: string,
+    saved: bool,
+}
+
+export global DestinationForm {
+    in-out property <string> kind;
+    in-out property <string> title;
+    in-out property <string> description;
+    in-out property <string> error;
+    in-out property <string> notice;
+    in-out property <string> test-state: "idle";
+    in-out property <string> test-message;
+    in-out property <bool> confirm-delete: false;
+    in-out property <bool> busy: false;
+
+    // Imgur client ID, or the GitHub token for a Gist. Never sent back to the page, only its saved flag.
+    in-out property <string> secret;
+    in-out property <bool> secret-saved: false;
+    // S3 ACL public-read, or a public Gist.
+    in-out property <bool> acl-public-read: false;
+
+    // Amazon S3. The public URL pattern is shared with SFTP.
+    in-out property <string> endpoint;
+    in-out property <string> region;
+    in-out property <string> bucket;
+    in-out property <string> path-prefix;
+    in-out property <string> access-key-id;
+    in-out property <bool> access-key-saved: false;
+    in-out property <string> secret-access-key;
+    in-out property <bool> secret-access-key-saved: false;
+    in-out property <string> public-url-pattern;
+
+    // SFTP
+    in-out property <string> host;
+    in-out property <string> port;
+    in-out property <string> username;
+    in-out property <bool> password-auth: true;     // false means private key file
+    in-out property <string> password;
+    in-out property <bool> password-saved: false;
+    in-out property <string> private-key-path;
+    in-out property <string> passphrase;
+    in-out property <bool> passphrase-saved: false;
+    in-out property <string> remote-folder;
+
+    // Custom uploader
+    in-out property <string> name;
+    in-out property <string> method;
+    in-out property <string> request-url;
+    in-out property <string> body;
+    in-out property <string> file-form-field;
+    in-out property <string> link;
+    in-out property <string> thumbnail;
+    in-out property <string> deletion;
+    in-out property <string> error-message;
+    in-out property <[FormHeaderData]> headers;
+    in-out property <bool> include-header-values: false;
+
+    callback save-destination();
+    callback test-destination();
+    callback delete-destination();
+    callback export-sxcu();
+    callback add-header();
+    callback header-name-edited(int, string);
+    callback header-value-edited(int, string);
+}
+
+export struct WorkflowRowData {
+    id: string,
+    label: string,
+    checked: bool,
+    note: string,
+}
+
+// The default workflow ("what PrtSc does") shown on the General page.
+export global WorkflowState {
+    in-out property <[WorkflowRowData]> default-rows;
+    in-out property <string> message;
+    in-out property <int> workflow-count;
+    callback toggle(int);            // row index
+    callback move(int, int);         // row index, direction (-1 up, 1 down)
+    callback open-workflows();
+}
+
+export struct WorkflowItemData {
+    id: string,
+    title: string,
+    chord: string,
+    chord-blocked: bool,
+    steps: string,
+    step-list: [string],
+    clash: string,
+    enabled: bool,
+    is-default: bool,
+}
+
+export struct EditorStepData {
+    label: string,
+    icon: string,
+    index: int,
+    error: string,
+    choices: [string],
+    choice: string,
+}
+
+export global WorkflowsState {
+    in-out property <[WorkflowItemData]> items;
+    in-out property <bool> has-workflows: false;
+    in-out property <string> message;
+    in-out property <string> query;
+    in-out property <bool> editing: false;
+    in-out property <bool> is-new: false;
+    in-out property <string> editor-title;
+    in-out property <string> editor-name;
+    in-out property <string> editor-hotkey;
+    in-out property <string> editor-clash;
+    in-out property <bool> editor-enabled: true;
+    in-out property <bool> editor-is-default: false;
+    in-out property <[EditorStepData]> editor-steps;
+    in-out property <[string]> add-choices;
+    in-out property <string> name-error;
+    in-out property <string> list-error;
+    in-out property <bool> confirm-delete: false;
+
+    callback search-changed(string);
+    callback new-workflow();
+    callback edit(string);
+    callback toggle(string, bool);
+    callback back();
+    callback save();
+    callback duplicate();
+    callback delete();
+    callback name-edited(string);
+    callback hotkey-committed(string);
+    callback enabled-changed(bool);
+    callback add-step(string);
+    callback remove-step(int);
+    callback move-step(int, int);
+    callback step-choice(int, string);
+}
+
+export struct HistoryCellData {
+    id: int,
+    name: string,
+    meta: string,
+    tag: string,
+    thumb: image,
+    has-thumb: bool,
+    selected: bool,
+    index: int,
+    day: string,
+    duration: string,
+    badge: string,
+    badge-tone: string,
+    type-label: string,
+    captured: string,
+    size: string,
+    timed: string,
+    progress: float,
+    show-progress: bool,
+    cancellable: bool,
+}
+
+export struct HistoryDestOption {
+    id: string,
+    name: string,
+}
+
+// One day: its heading and its captures.
+export struct HistoryRowData {
+    label: string,
+    count: string,
+    size: int,
+    cells: [HistoryCellData],
+}
+
+// History page, mirroring ui/src/windows/main/history/HistoryPage.svelte and DetailPane.svelte.
+export global HistoryState {
+    in-out property <string> stats-line;
+    in-out property <string> message;
+    in-out property <string> query;
+    in-out property <int> filter-index: 0;
+    in-out property <string> filter-label: "All";
+    in-out property <bool> grid-view: true;
+    in-out property <[HistoryRowData]> rows;
+    in-out property <[HistoryCellData]> cells;
+    in-out property <int> selected-id: -1;
+    in-out property <int> selected-count: 0;
+    in-out property <bool> has-selection: false;
+    in-out property <bool> loading: false;
+    in-out property <bool> loaded: false;
+    in-out property <bool> is-empty: false;
+    in-out property <bool> empty-filtered: false;
+    in-out property <bool> can-clear-search: false;
+    in-out property <bool> can-reset-filter: false;
+    in-out property <bool> has-more: false;
+    in-out property <bool> deleting: false;
+    in-out property <bool> upload-busy: false;
+    in-out property <string> detail-name;
+    in-out property <string> detail-kind;
+    in-out property <string> detail-tag;
+    in-out property <image> detail-thumb;
+    in-out property <bool> detail-has-thumb: false;
+    in-out property <bool> detail-is-image: false;
+    in-out property <bool> detail-owned: false;
+    in-out property <bool> detail-missing: false;
+    in-out property <string> detail-dimensions;
+    in-out property <string> detail-size;
+    in-out property <string> detail-duration;
+    in-out property <string> detail-source;
+    in-out property <string> detail-folder;
+    in-out property <bool> confirm-delete: false;
+    in-out property <string> detail-destination;
+    in-out property <string> detail-timed;
+    in-out property <string> share-status: "local";
+    in-out property <string> share-label;
+    in-out property <string> share-url;
+    in-out property <string> share-note;
+    in-out property <string> share-deletion;
+    in-out property <bool> share-has-deletion-url: false;
+    in-out property <string> share-deletion-url;
+    in-out property <bool> share-uploading: false;
+    in-out property <float> share-progress: -1;
+    in-out property <bool> share-cancellable: false;
+    in-out property <string> share-error;
+    in-out property <[HistoryDestOption]> destinations;
+
+    callback select(int, bool, bool);
+    callback clear-selection();
+    callback close-details();
+    callback open-file(int);
+    callback annotate(int);
+    callback copy-image(int);
+    callback show-in-folder(int);
+    callback pin-capture(int);
+    callback delete-capture(int);
+    callback delete-selected();
+    callback upload-files();
+    callback load-more();
+    callback clear-search();
+    callback reset-filter();
+    callback copy-share-link(string);
+    callback copy-deletion-link(string);
+    callback retry-upload();
+    callback cancel-upload();
+    callback cancel-row-upload(int);
+    callback upload-to(string);
+    callback ensure-destinations();
+    callback search-changed(string);
+    callback filter-changed(int);
+    callback set-grid(bool);
+    callback move-selection(int);
+    callback activate-selected();
+    callback copy-selected();
+    callback delete-hotkey();
+}
+
+export struct ToolCardData {
+    id: string,
+    name: string,
+    description: string,
+    icon: string,
+    hotkey: string,
+    action: string,
+}
+
+export struct CombineSourceItem {
+    kind: string,
+    id: int,
+    name: string,
+    index: int,
+}
+
+export struct CombineHistoryItem {
+    id: int,
+    name: string,
+}
+
+export struct ConvertHistoryItem {
+    id: int,
+    name: string,
+    meta: string,
+}
+
+export global ToolsState {
+    in-out property <string> active-panel: "";
+    in-out property <string> message;
+    in-out property <string> query;
+    in-out property <[ToolCardData]> cards;
+    in-out property <bool> tool-busy: false;
+
+    in-out property <string> qr-text;
+    in-out property <image> qr-preview;
+    in-out property <bool> qr-has-preview: false;
+    in-out property <string> qr-link;
+    in-out property <string> qr-scan-text;
+    in-out property <string> qr-scan-link;
+    in-out property <bool> qr-busy: false;
+    in-out property <string> qr-error;
+    in-out property <string> qr-notice;
+
+    in-out property <[CombineSourceItem]> combine-sources;
+    in-out property <[CombineHistoryItem]> combine-history-choices;
+    in-out property <string> combine-layout: "Side by side";
+    in-out property <string> combine-align: "Start";
+    in-out property <int> combine-spacing: 8;
+    in-out property <string> combine-background: "Transparent";
+    in-out property <string> combine-custom-hex: "#1a2b3c";
+    in-out property <color> combine-custom-swatch: #1a2b3c;
+    in-out property <image> combine-preview;
+    in-out property <bool> combine-has-preview: false;
+    in-out property <bool> combine-busy: false;
+    in-out property <string> combine-error;
+    in-out property <string> combine-notice;
+    in-out property <int> combine-done-capture-id: -1;
+
+    in-out property <[ConvertHistoryItem]> convert-history-choices;
+    in-out property <string> convert-source-kind;
+    in-out property <int> convert-capture-id: -1;
+    in-out property <string> convert-file-path;
+    in-out property <string> convert-source-label: "No video chosen";
+    in-out property <string> convert-format: "GIF";
+    in-out property <bool> convert-running: false;
+    in-out property <float> convert-progress: -1.0;
+    in-out property <string> convert-status;
+    in-out property <string> convert-error;
+    in-out property <int> convert-done-capture-id: -1;
+    in-out property <string> convert-done-name;
+
+    callback search-changed(string);
+    callback clear-search();
+    callback run-tool(string);
+    callback open-panel(string);
+    callback close-panel();
+
+    callback qr-text-edited(string);
+    callback qr-open-link(string);
+    callback qr-copy-text(string);
+    callback qr-copy-image();
+    callback qr-save-png();
+    callback qr-scan-screen();
+    callback qr-use-scanned();
+
+    callback combine-pick-files();
+    callback combine-add-history(int);
+    callback combine-move-source(int, int);
+    callback combine-remove-source(int);
+    callback combine-options-changed();
+    callback combine-save();
+    callback combine-show-in-history();
+
+    callback convert-pick-file();
+    callback convert-choose-history(int);
+    callback convert-start();
+    callback convert-cancel();
+    callback convert-open-result();
+    callback convert-show-in-history();
+}

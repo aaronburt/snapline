@@ -1,0 +1,30 @@
+[package]
+name = "snapline-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The Slint main window: History, Workflows, Tools and Settings over snapline-services."
+
+[lib]
+name = "snapline_ui"
+
+[[bin]]
+name = "snapline-ui-spike"
+path = "src/bin/spike.rs"
+
+[dependencies]
+slint = { version = "1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-software", "compat-1-2", "accessibility", "unstable-winit-030"] }
+anyhow.workspace = true
+serde_json.workspace = true
+time.workspace = true
+snapline-services = { path = "../services" }
+snapline-store = { path = "../store" }
+snapline-core = { path = "../core" }
+snapline-upload = { path = "../upload" }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+
+[build-dependencies]
+slint-build = "1.18.1"
+
+[lints]
+workspace = true

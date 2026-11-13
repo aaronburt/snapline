@@ -1,0 +1,966 @@
+import { Tokens } from "tokens.slint";
+import { Icons } from "icons.slint";
+import { Icon, PageHeader, Button, Field, Card, Segmented, Range } from "widgets.slint";
+import { ToolsState, ToolCardData } from "state.slint";
+
+global ToolIcon {
+    pure public function of(key: string) -> string {
+        return key == "colour" ? Icons.colour
+            : key == "ocr" ? Icons.ocr
+            : key == "ruler" ? Icons.ruler
+            : key == "qr" ? Icons.qr
+            : key == "edit" ? Icons.edit
+            : key == "pin" ? Icons.pin
+            : key == "combine" ? Icons.combine
+            : Icons.gif;
+    }
+}
+
+component Banner inherits Rectangle {
+    in property <string> kind: "error";
+    in property <string> text;
+    vertical-stretch: 0;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: root.kind == "notice" ? Tokens.ok : Tokens.err;
+    background: root.kind == "notice" ? Tokens.ok-soft : Tokens.err-soft;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 9px;
+        padding-bottom: 9px;
+        spacing: 8px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                d: root.kind == "notice" ? Icons.check : Icons.alert;
+                size: 14px;
+                sw: 2;
+                tint: root.kind == "notice" ? Tokens.ok : Tokens.err;
+            }
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.text;
+            color: root.kind == "notice" ? Tokens.ok : Tokens.err;
+            font-size: 12px;
+            wrap: word-wrap;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component ToolsProgress inherits Rectangle {
+    in property <float> value: -1.0;
+    height: 4px;
+    border-radius: 2px;
+    background: Tokens.track;
+    clip: true;
+    Rectangle {
+        x: root.value >= 0.0 ? 0px : parent.width * 0.35;
+        y: 0px;
+        width: root.value >= 0.0 ? parent.width * min(max(root.value, 0.0), 1.0) : parent.width * 0.3;
+        height: parent.height;
+        border-radius: 2px;
+        background: Tokens.accent;
+    }
+}
+
+component ToolCard inherits Rectangle {
+    in property <ToolCardData> data;
+    in property <bool> disabled: false;
+    callback clicked();
+
+    background: root.disabled ? Tokens.card : (ta.has-hover ? Tokens.card-alt : Tokens.card);
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: (!root.disabled && ta.has-hover) ? Tokens.stroke-hi : Tokens.stroke;
+    opacity: root.disabled ? 0.5 : 1.0;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+        Rectangle {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            background: Tokens.accent-soft;
+            Icon {
+                x: 10px;
+                y: 10px;
+                d: ToolIcon.of(root.data.icon);
+                size: 20px;
+                tint: Tokens.accent;
+            }
+        }
+        VerticalLayout {
+            spacing: 4px;
+            vertical-stretch: 1;
+            Text {
+                text: root.data.name;
+                color: Tokens.text;
+                font-size: 14px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                vertical-stretch: 1;
+                text: root.data.description;
+                color: Tokens.text3;
+                font-size: 12px;
+                wrap: word-wrap;
+                overflow: elide;
+                vertical-alignment: top;
+            }
+        }
+        Text {
+            text: root.data.hotkey == "" ? "—" : root.data.hotkey;
+            color: Tokens.text2;
+            font-size: 11px;
+            font-family: Tokens.mono;
+            overflow: elide;
+        }
+    }
+
+    ta := TouchArea {
+        enabled: !root.disabled;
+        mouse-cursor: root.disabled ? default : pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component PanelHeader inherits VerticalLayout {
+    in property <string> title;
+    in property <string> subtitle;
+    callback back();
+    spacing: 10px;
+    vertical-stretch: 0;
+    HorizontalLayout {
+        alignment: start;
+        Button {
+            label: "Back to tools";
+            icon: Icons.back;
+            clicked => { root.back(); }
+        }
+    }
+    PageHeader {
+        title: root.title;
+        intro: root.subtitle;
+    }
+}
+
+component QrPanel inherits VerticalLayout {
+    spacing: 16px;
+    vertical-stretch: 0;
+
+    PanelHeader {
+        title: "QR code";
+        subtitle: "Make a QR code from text or a link, or scan one from your screen";
+        back => { ToolsState.close-panel(); }
+    }
+
+    if ToolsState.qr-error != "": Banner { kind: "error"; text: ToolsState.qr-error; }
+    if ToolsState.qr-notice != "": Banner { kind: "notice"; text: ToolsState.qr-notice; }
+
+    Card {
+        VerticalLayout {
+            padding: 18px;
+            spacing: 14px;
+            Text {
+                text: "Make a QR code";
+                color: Tokens.text;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            VerticalLayout {
+                spacing: 6px;
+                Text {
+                    text: "Text or link";
+                    color: Tokens.text2;
+                    font-size: 12px;
+                }
+                Field {
+                    mono: false;
+                    placeholder: "Enter text or a link…";
+                    text <=> ToolsState.qr-text;
+                    edited(v) => { ToolsState.qr-text-edited(v); }
+                }
+            }
+            HorizontalLayout {
+                alignment: start;
+                spacing: 8px;
+                Button {
+                    label: "Copy text";
+                    icon: Icons.copy;
+                    disabled: ToolsState.qr-text == "" || ToolsState.qr-busy;
+                    clicked => { ToolsState.qr-copy-text(ToolsState.qr-text); }
+                }
+                Button {
+                    label: "Copy image";
+                    icon: Icons.image;
+                    disabled: !ToolsState.qr-has-preview || ToolsState.qr-busy;
+                    clicked => { ToolsState.qr-copy-image(); }
+                }
+                Button {
+                    kind: "accent";
+                    label: "Save PNG…";
+                    icon: Icons.save;
+                    disabled: !ToolsState.qr-has-preview || ToolsState.qr-busy;
+                    clicked => { ToolsState.qr-save-png(); }
+                }
+            }
+            if ToolsState.qr-has-preview: VerticalLayout {
+                spacing: 10px;
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 212px;
+                        height: 212px;
+                        background: #ffffff;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: Tokens.stroke;
+                        Image {
+                            x: 10px;
+                            y: 10px;
+                            width: 192px;
+                            height: 192px;
+                            source: ToolsState.qr-preview;
+                            image-fit: contain;
+                            image-rendering: pixelated;
+                        }
+                    }
+                }
+                if ToolsState.qr-link != "": Rectangle {
+                    background: Tokens.layer;
+                    border-radius: 6px;
+                    border-width: 1px;
+                    border-color: Tokens.stroke;
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        padding-top: 8px;
+                        padding-bottom: 8px;
+                        spacing: 10px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: ToolsState.qr-link;
+                            color: Tokens.text2;
+                            font-family: Tokens.mono;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Button {
+                            label: "Open link";
+                            icon: Icons.open;
+                            clicked => { ToolsState.qr-open-link(ToolsState.qr-link); }
+                        }
+                    }
+                }
+            }
+            if !ToolsState.qr-has-preview: Rectangle {
+                height: 120px;
+                background: Tokens.layer;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: Tokens.stroke;
+                Text {
+                    text: "Enter text or a link above to generate a QR code.";
+                    color: Tokens.text3;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    Card {
+        VerticalLayout {
+            padding: 18px;
+            spacing: 12px;
+            HorizontalLayout {
+                spacing: 12px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 2px;
+                    alignment: center;
+                    Text {
+                        text: "Scan from screen";
+                        color: Tokens.text;
+                        font-size: 14px;
+                        font-weight: 600;
+                    }
+                    Text {
+                        text: "Select a region on screen to decode a QR code.";
+                        color: Tokens.text3;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Button {
+                        kind: "accent";
+                        icon: Icons.qr;
+                        label: ToolsState.qr-busy ? "Scanning…" : "Scan from screen";
+                        disabled: ToolsState.qr-busy;
+                        clicked => { ToolsState.qr-scan-screen(); }
+                    }
+                }
+            }
+            if ToolsState.qr-scan-text != "": VerticalLayout {
+                spacing: 10px;
+                Rectangle {
+                    background: Tokens.layer;
+                    border-radius: 6px;
+                    border-width: 1px;
+                    border-color: Tokens.stroke;
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 4px;
+                        Text {
+                            text: "Scanned content";
+                            color: Tokens.text3;
+                            font-size: 11px;
+                        }
+                        Text {
+                            text: ToolsState.qr-scan-text;
+                            color: Tokens.text;
+                            font-family: Tokens.mono;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 8px;
+                    Button {
+                        label: "Copy text";
+                        icon: Icons.copy;
+                        clicked => { ToolsState.qr-copy-text(ToolsState.qr-scan-text); }
+                    }
+                    Button {
+                        label: "Use as input";
+                        clicked => { ToolsState.qr-use-scanned(); }
+                    }
+                    if ToolsState.qr-scan-link != "": Button {
+                        kind: "accent";
+                        label: "Open link";
+                        icon: Icons.open;
+                        clicked => { ToolsState.qr-open-link(ToolsState.qr-scan-link); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component CombinePanel inherits VerticalLayout {
+    spacing: 16px;
+    vertical-stretch: 0;
+
+    PanelHeader {
+        title: "Image combiner";
+        subtitle: "Join several captures side by side or stacked into a single image";
+        back => { ToolsState.close-panel(); }
+    }
+
+    if ToolsState.combine-error != "": Banner { kind: "error"; text: ToolsState.combine-error; }
+    if ToolsState.combine-notice != "": Banner { kind: "notice"; text: ToolsState.combine-notice; }
+
+    Card {
+        VerticalLayout {
+            padding: 18px;
+            spacing: 12px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: "Source images";
+                    color: Tokens.text;
+                    font-size: 14px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                Button {
+                    label: "Add files…";
+                    icon: Icons.plus;
+                    disabled: ToolsState.combine-busy;
+                    clicked => { ToolsState.combine-pick-files(); }
+                }
+                Rectangle {
+                    horizontal-stretch: 0;
+                    preferred-width: add-hist-btn.preferred-width;
+                    preferred-height: add-hist-btn.preferred-height;
+                    add-hist-btn := Button {
+                        label: "Add from History…";
+                        icon: Icons.history;
+                        disabled: ToolsState.combine-busy || ToolsState.combine-history-choices.length == 0;
+                        clicked => { combine-hist-popup.show(); }
+                    }
+                    combine-hist-popup := PopupWindow {
+                        x: parent.width - 280px;
+                        y: parent.height + 4px;
+                        width: 280px;
+                        Rectangle {
+                            width: parent.width;
+                            height: min(260px, combine-hist-list.preferred-height + 8px);
+                            background: Tokens.menu-layer;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: Tokens.stroke-hi;
+                            clip: true;
+                            Flickable {
+                                width: parent.width;
+                                height: parent.height;
+                                content-height: combine-hist-list.preferred-height + 8px;
+                                combine-hist-list := VerticalLayout {
+                                    width: parent.width;
+                                    padding: 4px;
+                                    spacing: 2px;
+                                    for item in ToolsState.combine-history-choices: Rectangle {
+                                        height: 32px;
+                                        border-radius: 4px;
+                                        background: ch-ta.has-hover ? Tokens.subtle : transparent;
+                                        Text {
+                                            x: 10px;
+                                            width: parent.width - 20px;
+                                            height: parent.height;
+                                            text: item.name;
+                                            color: Tokens.text;
+                                            font-size: 12px;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        ch-ta := TouchArea {
+                                            clicked => {
+                                                combine-hist-popup.close();
+                                                ToolsState.combine-add-history(item.id);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if ToolsState.combine-sources.length == 0: Rectangle {
+                height: 76px;
+                background: Tokens.layer;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: Tokens.stroke;
+                Text {
+                    text: "Add images from files or History to arrange and combine them.";
+                    color: Tokens.text3;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            if ToolsState.combine-sources.length > 0: Rectangle {
+                background: Tokens.layer;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: Tokens.stroke;
+                VerticalLayout {
+                    for src[i] in ToolsState.combine-sources: VerticalLayout {
+                        if i > 0: Rectangle { height: 1px; background: Tokens.stroke; }
+                        HorizontalLayout {
+                            min-height: 44px;
+                            padding-left: 12px;
+                            padding-right: 10px;
+                            spacing: 10px;
+                            Text {
+                                width: 18px;
+                                text: src.index + 1;
+                                color: Tokens.text3;
+                                font-size: 12px;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 0;
+                                Rectangle {
+                                    height: 20px;
+                                    border-radius: 4px;
+                                    background: Tokens.subtle;
+                                    preferred-width: kind-label.preferred-width + 12px;
+                                    kind-label := Text {
+                                        text: src.kind == "history" ? "History" : "File";
+                                        color: Tokens.text2;
+                                        font-size: 11px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                            Text {
+                                horizontal-stretch: 1;
+                                text: src.name;
+                                color: Tokens.text;
+                                font-size: 13px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    Rectangle {
+                                        width: 24px;
+                                        height: 24px;
+                                        border-radius: 4px;
+                                        background: up-ta.has-hover && src.index > 0 ? Tokens.subtle : Tokens.card;
+                                        opacity: src.index > 0 ? 1.0 : 0.4;
+                                        Text {
+                                            text: "↑";
+                                            color: src.index > 0 ? Tokens.text2 : Tokens.text3;
+                                            font-size: 12px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                        up-ta := TouchArea {
+                                            enabled: src.index > 0;
+                                            clicked => { ToolsState.combine-move-source(src.index, -1); }
+                                        }
+                                    }
+                                    Rectangle {
+                                        width: 24px;
+                                        height: 24px;
+                                        border-radius: 4px;
+                                        background: dn-ta.has-hover && src.index < ToolsState.combine-sources.length - 1 ? Tokens.subtle : Tokens.card;
+                                        opacity: src.index < ToolsState.combine-sources.length - 1 ? 1.0 : 0.4;
+                                        Text {
+                                            text: "↓";
+                                            color: src.index < ToolsState.combine-sources.length - 1 ? Tokens.text2 : Tokens.text3;
+                                            font-size: 12px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                        dn-ta := TouchArea {
+                                            enabled: src.index < ToolsState.combine-sources.length - 1;
+                                            clicked => { ToolsState.combine-move-source(src.index, 1); }
+                                        }
+                                    }
+                                    Rectangle {
+                                        width: 24px;
+                                        height: 24px;
+                                        border-radius: 4px;
+                                        background: rm-ta.has-hover ? Tokens.subtle : transparent;
+                                        Icon { x: 5px; y: 5px; d: Icons.close; size: 14px; tint: Tokens.text3; }
+                                        rm-ta := TouchArea {
+                                            clicked => { ToolsState.combine-remove-source(src.index); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Card {
+        VerticalLayout {
+            padding: 18px;
+            spacing: 12px;
+            Text {
+                text: "Layout options";
+                color: Tokens.text;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            HorizontalLayout {
+                min-height: 36px;
+                Text { horizontal-stretch: 1; text: "Arrangement"; color: Tokens.text; font-size: 13px; vertical-alignment: center; }
+                Segmented {
+                    options: ["Side by side", "Stacked"];
+                    value <=> ToolsState.combine-layout;
+                    picked(_) => { ToolsState.combine-options-changed(); }
+                }
+            }
+            HorizontalLayout {
+                min-height: 36px;
+                Text { horizontal-stretch: 1; text: "Alignment"; color: Tokens.text; font-size: 13px; vertical-alignment: center; }
+                Segmented {
+                    options: ["Start", "Centre", "End"];
+                    value <=> ToolsState.combine-align;
+                    picked(_) => { ToolsState.combine-options-changed(); }
+                }
+            }
+            HorizontalLayout {
+                min-height: 36px;
+                Text { horizontal-stretch: 1; text: "Spacing"; color: Tokens.text; font-size: 13px; vertical-alignment: center; }
+                Range {
+                    lo: 0;
+                    hi: 64;
+                    unit: " px";
+                    value <=> ToolsState.combine-spacing;
+                    changed(_) => { ToolsState.combine-options-changed(); }
+                }
+            }
+            HorizontalLayout {
+                min-height: 36px;
+                Text { horizontal-stretch: 1; text: "Background"; color: Tokens.text; font-size: 13px; vertical-alignment: center; }
+                Segmented {
+                    options: ["Transparent", "White", "Black", "Custom"];
+                    value <=> ToolsState.combine-background;
+                    picked(_) => { ToolsState.combine-options-changed(); }
+                }
+            }
+            if ToolsState.combine-background == "Custom": HorizontalLayout {
+                min-height: 36px;
+                spacing: 8px;
+                Text { horizontal-stretch: 1; text: "Custom colour"; color: Tokens.text; font-size: 13px; vertical-alignment: center; }
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        border-radius: 4px;
+                        border-width: 1px;
+                        border-color: Tokens.stroke;
+                        background: ToolsState.combine-custom-swatch;
+                    }
+                }
+                Field {
+                    width: 120px;
+                    mono: true;
+                    placeholder: "#1A2B3C";
+                    text <=> ToolsState.combine-custom-hex;
+                    edited(_) => { ToolsState.combine-options-changed(); }
+                }
+            }
+        }
+    }
+
+    Card {
+        VerticalLayout {
+            padding: 18px;
+            spacing: 14px;
+            HorizontalLayout {
+                Text {
+                    horizontal-stretch: 1;
+                    text: "Preview";
+                    color: Tokens.text;
+                    font-size: 14px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                if ToolsState.combine-busy: Text {
+                    text: "Updating…";
+                    color: Tokens.text3;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+            Rectangle {
+                height: 240px;
+                background: Tokens.layer;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: Tokens.stroke;
+                clip: true;
+                if ToolsState.combine-has-preview: Image {
+                    x: 8px;
+                    y: 8px;
+                    width: parent.width - 16px;
+                    height: parent.height - 16px;
+                    source: ToolsState.combine-preview;
+                    image-fit: contain;
+                }
+                if !ToolsState.combine-has-preview: Text {
+                    text: "Preview appears here once images are added.";
+                    color: Tokens.text3;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+            HorizontalLayout {
+                alignment: start;
+                spacing: 8px;
+                Button {
+                    kind: "accent";
+                    icon: Icons.save;
+                    label: ToolsState.combine-busy ? "Working…" : "Save combined image";
+                    disabled: ToolsState.combine-sources.length == 0 || ToolsState.combine-busy;
+                    clicked => { ToolsState.combine-save(); }
+                }
+                if ToolsState.combine-done-capture-id > 0: Button {
+                    icon: Icons.history;
+                    label: "Show in History";
+                    clicked => { ToolsState.combine-show-in-history(); }
+                }
+            }
+        }
+    }
+}
+
+component ConvertPanel inherits VerticalLayout {
+    spacing: 16px;
+    vertical-stretch: 0;
+
+    PanelHeader {
+        title: "Video converter";
+        subtitle: "Turn recordings into GIF, WebM VP9 or a smaller MP4";
+        back => { ToolsState.close-panel(); }
+    }
+
+    if ToolsState.convert-error != "": Banner { kind: "error"; text: ToolsState.convert-error; }
+
+    Card {
+        VerticalLayout {
+            padding: 18px;
+            spacing: 12px;
+            Text {
+                text: "Source video";
+                color: Tokens.text;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            Rectangle {
+                height: 44px;
+                background: Tokens.layer;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: Tokens.stroke;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 10px;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon { d: Icons.film; size: 16px; tint: Tokens.text2; }
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: ToolsState.convert-source-label;
+                        color: ToolsState.convert-source-kind == "" ? Tokens.text3 : Tokens.text;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: start;
+                spacing: 8px;
+                Button {
+                    icon: Icons.film;
+                    label: "Choose video file…";
+                    disabled: ToolsState.convert-running;
+                    clicked => { ToolsState.convert-pick-file(); }
+                }
+                Rectangle {
+                    horizontal-stretch: 0;
+                    preferred-width: conv-hist-btn.preferred-width;
+                    preferred-height: conv-hist-btn.preferred-height;
+                    conv-hist-btn := Button {
+                        icon: Icons.history;
+                        label: "From History…";
+                        disabled: ToolsState.convert-running || ToolsState.convert-history-choices.length == 0;
+                        clicked => { conv-hist-popup.show(); }
+                    }
+                    conv-hist-popup := PopupWindow {
+                        x: 0px;
+                        y: parent.height + 4px;
+                        width: 320px;
+                        Rectangle {
+                            width: parent.width;
+                            height: min(280px, conv-hist-list.preferred-height + 8px);
+                            background: Tokens.menu-layer;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: Tokens.stroke-hi;
+                            clip: true;
+                            Flickable {
+                                width: parent.width;
+                                height: parent.height;
+                                content-height: conv-hist-list.preferred-height + 8px;
+                                conv-hist-list := VerticalLayout {
+                                    width: parent.width;
+                                    padding: 4px;
+                                    spacing: 2px;
+                                    for item in ToolsState.convert-history-choices: Rectangle {
+                                        height: 44px;
+                                        border-radius: 4px;
+                                        background: cv-ta.has-hover ? Tokens.subtle : transparent;
+                                        VerticalLayout {
+                                            padding-left: 10px;
+                                            padding-right: 10px;
+                                            alignment: center;
+                                            spacing: 2px;
+                                            Text {
+                                                text: item.name;
+                                                color: Tokens.text;
+                                                font-size: 12px;
+                                                overflow: elide;
+                                            }
+                                            Text {
+                                                text: item.meta;
+                                                color: Tokens.text3;
+                                                font-size: 11px;
+                                                overflow: elide;
+                                            }
+                                        }
+                                        cv-ta := TouchArea {
+                                            clicked => {
+                                                conv-hist-popup.close();
+                                                ToolsState.convert-choose-history(item.id);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Card {
+        VerticalLayout {
+            padding: 18px;
+            spacing: 14px;
+            HorizontalLayout {
+                min-height: 36px;
+                Text { horizontal-stretch: 1; text: "Output format"; color: Tokens.text; font-size: 14px; font-weight: 600; vertical-alignment: center; }
+                Segmented {
+                    options: ["GIF", "WebM VP9", "MP4 Small"];
+                    value <=> ToolsState.convert-format;
+                    disabled: ToolsState.convert-running;
+                }
+            }
+            HorizontalLayout {
+                alignment: start;
+                spacing: 8px;
+                Button {
+                    kind: "accent";
+                    icon: Icons.play;
+                    label: ToolsState.convert-running ? "Converting…" : "Convert";
+                    disabled: ToolsState.convert-source-kind == "" || ToolsState.convert-running;
+                    clicked => { ToolsState.convert-start(); }
+                }
+                if ToolsState.convert-running: Button {
+                    kind: "danger";
+                    icon: Icons.stop;
+                    label: "Cancel";
+                    clicked => { ToolsState.convert-cancel(); }
+                }
+            }
+            if ToolsState.convert-running || ToolsState.convert-status != "": VerticalLayout {
+                spacing: 6px;
+                ToolsProgress { value: ToolsState.convert-progress; }
+                Text {
+                    text: ToolsState.convert-status;
+                    color: Tokens.text2;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+
+    if ToolsState.convert-done-capture-id > 0: Card {
+        VerticalLayout {
+            padding: 18px;
+            spacing: 12px;
+            HorizontalLayout {
+                spacing: 10px;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        border-radius: 14px;
+                        background: Tokens.ok-soft;
+                        Icon { x: 6px; y: 6px; d: Icons.check; size: 16px; sw: 2; tint: Tokens.ok; }
+                    }
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 2px;
+                    Text { text: ToolsState.convert-done-name; color: Tokens.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                    Text { text: "Converted video saved to History."; color: Tokens.ok; font-size: 12px; }
+                }
+            }
+            HorizontalLayout {
+                alignment: start;
+                spacing: 8px;
+                Button {
+                    kind: "accent";
+                    icon: Icons.open;
+                    label: "Open file";
+                    clicked => { ToolsState.convert-open-result(); }
+                }
+                Button {
+                    icon: Icons.history;
+                    label: "Show in History";
+                    clicked => { ToolsState.convert-show-in-history(); }
+                }
+            }
+        }
+    }
+}
+
+export component ToolsPage inherits VerticalLayout {
+    spacing: 20px;
+    horizontal-stretch: 1;
+    vertical-stretch: 0;
+
+    property <int> columns: max(1, floor((root.width + 12px) / 232px));
+    property <length> card-width: (root.width - 12px * (root.columns - 1)) / root.columns;
+    property <length> card-height: 176px;
+
+    if ToolsState.active-panel == "": VerticalLayout {
+        spacing: 20px;
+        PageHeader {
+            title: "Tools";
+            intro: "Utilities that don't need a capture first";
+        }
+        if ToolsState.message != "": Banner { kind: "error"; text: ToolsState.message; }
+        if ToolsState.cards.length == 0: Card {
+            height: 140px;
+            VerticalLayout {
+                alignment: center;
+                spacing: 10px;
+                VerticalLayout {
+                    spacing: 4px;
+                    Text { text: "No matching tools"; color: Tokens.text; font-size: 14px; font-weight: 600; horizontal-alignment: center; }
+                    Text { text: "Try another search or clear the search filter."; color: Tokens.text3; font-size: 12px; horizontal-alignment: center; }
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    Button { label: "Clear search"; clicked => { ToolsState.clear-search(); } }
+                }
+            }
+        }
+        if ToolsState.cards.length > 0: Rectangle {
+            height: ceil(ToolsState.cards.length / root.columns) * (root.card-height + 12px) - 12px;
+            for card[i] in ToolsState.cards: ToolCard {
+                x: (i - floor(i / root.columns) * root.columns) * (root.card-width + 12px);
+                y: floor(i / root.columns) * (root.card-height + 12px);
+                width: root.card-width;
+                height: root.card-height;
+                data: card;
+                disabled: ToolsState.tool-busy;
+                clicked => { ToolsState.run-tool(card.action); }
+            }
+        }
+    }
+
+    if ToolsState.active-panel == "qr": QrPanel { }
+    if ToolsState.active-panel == "combine": CombinePanel { }
+    if ToolsState.active-panel == "convert": ConvertPanel { }
+}

@@ -1,0 +1,192 @@
+import { Tokens } from "tokens.slint";
+import { Icons } from "icons.slint";
+import { Toggle, Row, Section, Segmented, Select, PageHeader, Card, Field, Button } from "widgets.slint";
+import { SettingsState } from "state.slint";
+
+export component CapturePage inherits VerticalLayout {
+    in property <string> filter;
+    horizontal-stretch: 1;
+    spacing: 28px;
+    vertical-stretch: 0;
+
+    property <bool> cursor-visible: SettingsState.text-matches("Include mouse cursor", "Draw the pointer into screenshots", root.filter);
+    property <bool> delay-visible: SettingsState.text-matches("Capture delay", "Wait before capturing, so you can open a menu first", root.filter);
+    property <bool> shutter-visible: SettingsState.text-matches("Shutter sound", "Play a sound when a capture is taken", root.filter);
+    property <bool> shadow-visible: SettingsState.text-matches("Keep window shadow and rounded corners", "Window captures keep the Windows 11 shadow on a transparent background", root.filter);
+    property <bool> show-screenshots: SettingsState.text-matches("Screenshots", "", root.filter)
+        || cursor-visible || delay-visible || shutter-visible || shadow-visible;
+
+    property <bool> freeze-visible: SettingsState.text-matches("Freeze the screen while selecting", "", root.filter);
+    property <bool> magnifier-visible: SettingsState.text-matches("Magnifier", "Pixel-accurate zoom next to the cursor", root.filter);
+    property <bool> zoom-visible: SettingsState.text-matches("Magnifier zoom", "", root.filter);
+    property <bool> snap-visible: SettingsState.text-matches("Snap to windows and controls", "Hover to pick a whole window, panel or button, then click", root.filter);
+    property <bool> size-visible: SettingsState.text-matches("Show size and position", "Width, height and coordinates while dragging", root.filter);
+    property <bool> crosshair-visible: SettingsState.text-matches("Full-screen crosshair", "Guide lines across every monitor", root.filter);
+    property <bool> show-region: SettingsState.text-matches("Region selection", "", root.filter)
+        || freeze-visible || magnifier-visible || zoom-visible || snap-visible || size-visible || crosshair-visible;
+
+    property <bool> monitors-visible: SettingsState.text-matches("Monitors", "Choose what a full-screen capture (Ctrl+PrtSc) includes.", root.filter)
+        || SettingsState.text-matches("Full-screen capture uses", "", root.filter);
+
+    property <bool> video-format-visible: SettingsState.text-matches("Video format", "H.264 plays everywhere; H.265 is smaller", root.filter);
+    property <bool> frame-rate-visible: SettingsState.text-matches("Frame rate", "Frames per second", root.filter);
+    property <bool> quality-visible: SettingsState.text-matches("Quality", "", root.filter);
+    property <bool> system-audio-visible: SettingsState.text-matches("Record system audio", "Sound playing on this PC", root.filter);
+    property <bool> microphone-visible: SettingsState.text-matches("Record microphone", "", root.filter);
+    property <bool> microphone-device-visible: SettingsState.text-matches("Microphone device", "", root.filter);
+    property <bool> border-visible: SettingsState.text-matches("Show recording border", "Outline the recorded area (not included in the video)", root.filter);
+    property <bool> ffmpeg-visible: SettingsState.text-matches("FFmpeg location", "Choose the FFmpeg executable. Snapline finds it automatically when unset.", root.filter);
+    property <bool> show-recording: SettingsState.text-matches("Screen recording", "", root.filter)
+        || video-format-visible || frame-rate-visible || quality-visible || system-audio-visible
+        || microphone-visible || microphone-device-visible || border-visible || ffmpeg-visible;
+
+    property <bool> gif-frame-rate-visible: SettingsState.text-matches("Frame rate", "Lower frame rates make much smaller GIFs", root.filter);
+    property <bool> gif-width-visible: SettingsState.text-matches("Maximum width", "", root.filter);
+    property <bool> palette-visible: SettingsState.text-matches("Optimise colour palette", "Smaller files, slightly slower to encode", root.filter);
+    property <bool> show-gif: SettingsState.text-matches("GIF", "", root.filter)
+        || gif-frame-rate-visible || gif-width-visible || palette-visible;
+
+    PageHeader { title: "Capture"; }
+
+    if show-screenshots: Section {
+        heading: "Screenshots";
+        if cursor-visible: Row { icon: Icons.cursor; title: "Include mouse cursor"; description: "Draw the pointer into screenshots";
+            Toggle { checked: SettingsState.include-cursor; toggled(v) => { SettingsState.update-bool("capture.include_cursor", v); } } }
+        if delay-visible: Row { icon: Icons.timer; title: "Capture delay"; description: "Wait before capturing, so you can open a menu first";
+            Segmented { options: SettingsState.capture-delay-options; value: SettingsState.capture-delay;
+                picked(v) => { SettingsState.update-choice("capture.capture_delay", v); } } }
+        if shutter-visible: Row { icon: Icons.speaker; title: "Shutter sound"; description: "Play a sound when a capture is taken";
+            Toggle { checked: SettingsState.shutter-sound; toggled(v) => { SettingsState.update-bool("capture.shutter_sound", v); } } }
+        if shadow-visible: Row { icon: Icons.shadow; title: "Keep window shadow and rounded corners"; description: "Window captures keep the Windows 11 shadow on a transparent background";
+            Toggle { checked: SettingsState.window-shadow; toggled(v) => { SettingsState.update-bool("capture.keep_window_shadow", v); } } }
+    }
+
+    if show-region: Section {
+        heading: "Region selection";
+        if freeze-visible: Row { icon: Icons.freeze; title: "Freeze the screen while selecting";
+            Toggle { checked: SettingsState.freeze-screen; toggled(v) => { SettingsState.update-bool("capture.freeze_screen", v); } } }
+        if magnifier-visible: Row { icon: Icons.search-plus; title: "Magnifier"; description: "Pixel-accurate zoom next to the cursor";
+            Toggle { checked: SettingsState.magnifier; toggled(v) => { SettingsState.update-bool("capture.magnifier", v); } } }
+        if zoom-visible: Row { icon: Icons.search; title: "Magnifier zoom";
+            Segmented { options: SettingsState.magnifier-zoom-options; value: SettingsState.magnifier-zoom;
+                disabled: !SettingsState.magnifier;
+                picked(v) => { SettingsState.update-choice("capture.magnifier_zoom", v); } } }
+        if snap-visible: Row { icon: Icons.snap; title: "Snap to windows and controls"; description: "Hover to pick a whole window, panel or button, then click";
+            Toggle { checked: SettingsState.snap-windows; toggled(v) => { SettingsState.update-bool("capture.snap_to_windows", v); } } }
+        if size-visible: Row { icon: Icons.ruler; title: "Show size and position"; description: "Width, height and coordinates while dragging";
+            Toggle { checked: SettingsState.show-size; toggled(v) => { SettingsState.update-bool("capture.show_size_and_position", v); } } }
+        if crosshair-visible: Row { icon: Icons.cross; title: "Full-screen crosshair"; description: "Guide lines across every monitor";
+            Toggle { checked: SettingsState.crosshair; toggled(v) => { SettingsState.update-bool("capture.fullscreen_crosshair", v); } } }
+    }
+
+    if monitors-visible: Section {
+        heading: "Monitors";
+        caption: "Choose what a full-screen capture (Ctrl+PrtSc) includes.";
+        Card {
+            VerticalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                padding-top: 24px;
+                padding-bottom: 18px;
+                spacing: 14px;
+                alignment: center;
+                if SettingsState.monitors.length > 0 && SettingsState.monitors-total-w > 0 && SettingsState.monitors-total-h > 0: HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        property <length> max-diag: min(560px, 220px * SettingsState.monitors-total-w / SettingsState.monitors-total-h);
+                        width: min(max(120px, root.width - 40px), max-diag);
+                        height: self.width * SettingsState.monitors-total-h / SettingsState.monitors-total-w;
+                        for monitor in SettingsState.monitors: Rectangle {
+                            property <bool> on: SettingsState.monitor-mode == "All monitors"
+                                || (SettingsState.monitor-mode == "Primary monitor" && monitor.primary);
+                            x: monitor.left * parent.width + 2px;
+                            y: monitor.top * parent.height + 2px;
+                            width: max(0px, monitor.width * parent.width - 4px);
+                            height: max(0px, monitor.height * parent.height - 4px);
+                            border-radius: 6px;
+                            background: on ? Tokens.accent-soft : Tokens.subtle;
+                            border-width: on ? 2px : 1px;
+                            border-color: on ? Tokens.accent : Tokens.stroke-hi;
+                            clip: true;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                padding: 4px;
+                                Text {
+                                    text: monitor.number;
+                                    color: on ? Tokens.text : Tokens.text3;
+                                    font-size: 22px;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: monitor.resolution;
+                                    color: on ? Tokens.text : Tokens.text3;
+                                    opacity: 0.85;
+                                    font-size: 11px;
+                                    horizontal-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                    }
+                }
+                Text {
+                    text: SettingsState.monitor-caption;
+                    color: Tokens.text3;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
+        Row { icon: Icons.screen; title: "Full-screen capture uses";
+            Select { model: SettingsState.monitor-options; current-value: SettingsState.monitor-mode;
+                selected(v) => { SettingsState.update-choice("capture.fullscreen_capture_uses", v); } } }
+    }
+
+    if show-recording: Section {
+        heading: "Screen recording";
+        if video-format-visible: Row { icon: Icons.film; title: "Video format"; description: "H.264 plays everywhere; H.265 is smaller";
+            Select { model: SettingsState.video-format-options; current-value: SettingsState.video-format;
+                selected(v) => { SettingsState.update-choice("capture.video_format", v); } } }
+        if frame-rate-visible: Row { icon: Icons.fps; title: "Frame rate"; description: "Frames per second";
+            Segmented { options: SettingsState.frame-rate-options; value: SettingsState.frame-rate;
+                picked(v) => { SettingsState.update-choice("capture.frame_rate", v); } } }
+        if quality-visible: Row { icon: Icons.gauge; title: "Quality";
+            Select { model: SettingsState.quality-options; current-value: SettingsState.quality;
+                selected(v) => { SettingsState.update-choice("capture.video_quality", v); } } }
+        if system-audio-visible: Row { icon: Icons.audio; title: "Record system audio"; description: "Sound playing on this PC";
+            Toggle { checked: SettingsState.system-audio; toggled(v) => { SettingsState.update-bool("capture.record_system_audio", v); } } }
+        if microphone-visible: Row { icon: Icons.mic; title: "Record microphone";
+            Toggle { checked: SettingsState.microphone; toggled(v) => { SettingsState.update-bool("capture.record_microphone", v); } } }
+        if microphone-device-visible: Row { icon: Icons.mic; title: "Microphone device";
+            Select { model: SettingsState.microphone-options; current-value: SettingsState.microphone-device;
+                disabled: !SettingsState.microphone;
+                selected(v) => { SettingsState.update-text("capture.microphone_device", v); } } }
+        if border-visible: Row { icon: Icons.border; title: "Show recording border"; description: "Outline the recorded area (not included in the video)";
+            Toggle { checked: SettingsState.recording-border; toggled(v) => { SettingsState.update-bool("capture.recording_border", v); } } }
+        if ffmpeg-visible: Row { icon: Icons.code; title: "FFmpeg location"; description: "Choose the FFmpeg executable. Snapline finds it automatically when unset.";
+            Field {
+                width: SettingsState.ffmpeg-path != "" ? 155px : 240px;
+                mono: true;
+                read-only: true;
+                placeholder: "Automatically detected";
+                text: SettingsState.ffmpeg-path;
+            }
+            Button { label: "Browse…"; clicked => { SettingsState.browse-ffmpeg(); } }
+            if SettingsState.ffmpeg-path != "": Button { label: "Use bundled"; clicked => { SettingsState.reset-ffmpeg(); } } }
+    }
+
+    if show-gif: Section {
+        heading: "GIF";
+        if gif-frame-rate-visible: Row { icon: Icons.fps; title: "Frame rate"; description: "Lower frame rates make much smaller GIFs";
+            Segmented { options: SettingsState.gif-frame-rate-options; value: SettingsState.gif-frame-rate;
+                picked(v) => { SettingsState.update-choice("capture.gif_frame_rate", v); } } }
+        if gif-width-visible: Row { icon: Icons.width; title: "Maximum width";
+            Select { model: SettingsState.gif-width-options; current-value: SettingsState.gif-width;
+                selected(v) => { SettingsState.update-choice("capture.gif_max_width", v); } } }
+        if palette-visible: Row { icon: Icons.palette; title: "Optimise colour palette"; description: "Smaller files, slightly slower to encode";
+            Toggle { checked: SettingsState.optimise-palette; toggled(v) => { SettingsState.update-bool("capture.gif_optimise_palette", v); } } }
+    }
+}
