@@ -1,0 +1,107 @@
+import { Tokens } from "tokens.slint";
+import { Icons } from "icons.slint";
+import { Toggle, Row, Section, HotkeyField, PageHeader, Icon } from "widgets.slint";
+import { SettingsState, HotkeyRowData } from "state.slint";
+
+component HotkeyRowView inherits Rectangle {
+    in property <HotkeyRowData> data;
+    callback chord-committed(string, string);
+    property <string> icon: root.data.owner == "capture_region" ? Icons.region
+        : root.data.owner == "capture_window" ? Icons.window
+        : root.data.owner == "capture_screen" ? Icons.screen
+        : root.data.owner == "capture_last_region" ? Icons.stop
+        : root.data.owner == "record_video" ? Icons.film
+        : root.data.owner == "record_gif" ? Icons.gif-mark
+        : root.data.owner == "tool_ocr" ? Icons.ocr
+        : root.data.owner == "tool_colour" ? Icons.palette
+        : root.data.owner == "tool_ruler" ? Icons.ruler
+        : root.data.owner == "upload_clipboard" ? Icons.clip : Icons.hotkeys;
+    min-height: 68px;
+    vertical-stretch: 0;
+    background: Tokens.card;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Tokens.stroke;
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        spacing: 16px;
+        VerticalLayout { alignment: center; Icon { d: root.icon; size: 20px; tint: Tokens.text2; } }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text { text: root.data.label; color: Tokens.text; font-size: 14px; }
+            if root.data.description != "": Text { text: root.data.description; color: Tokens.text3; font-size: 12px; }
+            if root.data.clash != "": Text { text: root.data.clash; color: Tokens.err; font-size: 12px; wrap: word-wrap; }
+        }
+        VerticalLayout {
+            alignment: center;
+            HotkeyField {
+                width: 354px;
+                chord: root.data.chord;
+                clash: root.data.clash;
+                committed(value) => { root.chord-committed(root.data.owner, value); }
+            }
+        }
+    }
+}
+
+export component HotkeysPage inherits VerticalLayout {
+    in property <string> filter;
+    horizontal-stretch: 1;
+    spacing: 28px;
+    vertical-stretch: 0;
+
+    property <bool> capture-visible: SettingsState.hotkey-group-visible("capture", root.filter);
+    property <bool> recording-visible: SettingsState.hotkey-group-visible("recording", root.filter);
+    property <bool> tools-visible: SettingsState.hotkey-group-visible("tools", root.filter);
+    property <bool> take-over-visible: SettingsState.text-matches("Take over the PrtSc key", "Stops Windows opening Snipping Tool when you press PrtSc", root.filter);
+    property <bool> clash-visible: SettingsState.text-matches("Warn about clashes", "Tell me when another app already uses a hotkey", root.filter);
+    property <bool> show-behaviour: SettingsState.text-matches("Behaviour", "", root.filter)
+        || take-over-visible || clash-visible;
+
+    PageHeader { title: "Hotkeys"; intro: "If two actions share a chord, or another app owns it, neither is bound and you are told."; }
+
+    if capture-visible: Section {
+        heading: "Capture";
+        for row in SettingsState.capture-hotkeys: VerticalLayout {
+            if SettingsState.text-matches(row.label, row.description, root.filter): HotkeyRowView {
+                data: row;
+                chord-committed(owner, chord) => { SettingsState.update-chord(owner, chord); }
+            }
+        }
+    }
+    if recording-visible: Section {
+        heading: "Recording";
+        for row in SettingsState.recording-hotkeys: VerticalLayout {
+            if SettingsState.text-matches(row.label, row.description, root.filter): HotkeyRowView {
+                data: row;
+                chord-committed(owner, chord) => { SettingsState.update-chord(owner, chord); }
+            }
+        }
+    }
+    if tools-visible: Section {
+        heading: "Tools";
+        for row in SettingsState.tool-hotkeys: VerticalLayout {
+            if SettingsState.text-matches(row.label, row.description, root.filter): HotkeyRowView {
+                data: row;
+                chord-committed(owner, chord) => { SettingsState.update-chord(owner, chord); }
+            }
+        }
+    }
+    if show-behaviour: Section {
+        heading: "Behaviour";
+        if take-over-visible: Row { icon: Icons.shield; title: "Take over the PrtSc key"; description: "Stops Windows opening Snipping Tool when you press PrtSc";
+            Toggle { checked: SettingsState.take-over-prtsc; toggled(v) => { SettingsState.update-bool("hotkeys.take_over_prtsc", v); } } }
+        if take-over-visible && SettingsState.prtsc-hint != "": HorizontalLayout {
+            padding-left: 20px;
+            padding-right: 20px;
+            Text { text: SettingsState.prtsc-hint; color: Tokens.text3; font-size: 12px; wrap: word-wrap; }
+        }
+        if clash-visible: Row { icon: Icons.alert; title: "Warn about clashes"; description: "Tell me when another app already uses a hotkey";
+            Toggle { checked: SettingsState.warn-clashes; toggled(v) => { SettingsState.update-bool("hotkeys.warn_about_clashes", v); } } }
+    }
+}

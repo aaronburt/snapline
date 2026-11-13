@@ -1,0 +1,945 @@
+import { Tokens } from "tokens.slint";
+import { Icons } from "icons.slint";
+import { HistoryState, HistoryCellData } from "state.slint";
+import { Icon, Segmented } from "widgets.slint";
+
+component Badge inherits Rectangle {
+    in property <string> label;
+    in property <string> tone;
+    property <color> ink: root.tone == "ok" ? Tokens.ok : (root.tone == "failed" ? Tokens.err : (root.tone == "uploading" ? Tokens.accent : Tokens.text2));
+    height: 19px;
+    border-radius: 10px;
+    horizontal-stretch: 0;
+    preferred-width: row.preferred-width;
+    background: root.tone == "ok" ? Tokens.ok-soft : (root.tone == "failed" ? Tokens.err-soft : (root.tone == "uploading" ? Tokens.accent-soft : Tokens.subtle));
+    row := HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: 4px;
+        alignment: center;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                size: 11px;
+                sw: 2.2;
+                tint: root.ink;
+                d: root.tone == "ok" ? Icons.link : (root.tone == "failed" ? Icons.alert : (root.tone == "uploading" ? Icons.upload : Icons.folder));
+            }
+        }
+        Text { text: root.label; color: root.ink; font-size: 11px; vertical-alignment: center; }
+    }
+}
+
+component Progress inherits Rectangle {
+    in property <float> value: -1;
+    height: 4px;
+    border-radius: 2px;
+    background: Tokens.stroke-hi;
+    clip: true;
+    Rectangle {
+        x: root.value >= 0 ? 0px : parent.width * 0.35;
+        width: root.value >= 0 ? parent.width * min(root.value, 1.0) : parent.width * 0.3;
+        background: Tokens.accent;
+    }
+}
+
+component Thumb inherits Rectangle {
+    in property <HistoryCellData> data;
+    in property <string> tag;
+    in property <length> tag-size: 11px;
+    in property <bool> chip: true;
+    background: Tokens.subtle;
+    border-width: 1px;
+    border-color: Tokens.stroke;
+    border-radius: 4px;
+    clip: true;
+    if root.data.has-thumb: Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.data.thumb;
+        image-fit: cover;
+    }
+    if !root.data.has-thumb: Text {
+        text: root.data.tag;
+        color: Tokens.text2;
+        font-family: Tokens.mono;
+        font-size: 16px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if root.chip && root.data.duration != "": Rectangle {
+        x: parent.width - self.width - 6px;
+        y: parent.height - self.height - 6px;
+        width: duration-label.preferred-width + 10px;
+        height: duration-label.preferred-height + 2px;
+        border-radius: 3px;
+        background: Tokens.overlay-pill;
+        duration-label := Text {
+            text: root.data.duration;
+            color: Tokens.on-overlay;
+            font-size: root.tag-size;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component CaptureCell inherits Rectangle {
+    in property <HistoryCellData> data;
+    callback select(int, bool, bool);
+    callback open(int);
+    width: 200px;
+    height: 205px;
+    border-radius: 6px;
+    background: root.data.selected ? Tokens.accent-soft : (ta.has-hover ? Tokens.card-alt : Tokens.card);
+    border-width: 1px;
+    border-color: root.data.selected ? Tokens.accent : Tokens.stroke;
+    ta := TouchArea {
+        property <bool> last-additive: false;
+        property <bool> last-shift: false;
+        pointer-event(event) => {
+            if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                self.last-additive = event.modifiers.control || event.modifiers.meta;
+                self.last-shift = event.modifiers.shift;
+            }
+        }
+        clicked => { root.select(root.data.id, self.last-additive, self.last-shift); }
+        double-clicked => {
+            if (!self.last-additive && !self.last-shift) {
+                root.open(root.data.id);
+            }
+        }
+    }
+    VerticalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        padding-top: 6px;
+        padding-bottom: 10px;
+        spacing: 8px;
+        alignment: start;
+        Thumb { height: (root.width - 14px) * 0.625; data: root.data; }
+        VerticalLayout {
+            padding-left: 4px;
+            padding-right: 4px;
+            spacing: 4px;
+            Text { text: root.data.name; color: Tokens.text; font-size: 12px; font-weight: 500; overflow: elide; }
+            HorizontalLayout {
+                spacing: 6px;
+                Text { text: root.data.meta; color: Tokens.text3; font-size: 11px; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; }
+                Badge { label: root.data.badge; tone: root.data.badge-tone; }
+            }
+            if root.data.show-progress: Progress { value: root.data.progress; }
+        }
+    }
+}
+
+component ListRow inherits Rectangle {
+    in property <HistoryCellData> data;
+    in property <bool> compact;
+    in property <bool> inline-size;
+    in property <bool> first;
+    callback select(int, bool, bool);
+    callback open(int);
+    callback cancel-upload(int);
+    height: 72px;
+    background: root.data.selected ? Tokens.accent-soft : (ta.has-hover ? Tokens.subtle : transparent);
+    if root.data.selected: Rectangle {
+        border-width: 1px;
+        border-color: Tokens.accent;
+    }
+    if !root.first: Rectangle { y: 0px; height: 1px; background: Tokens.stroke; }
+    ta := TouchArea {
+        property <bool> last-additive: false;
+        property <bool> last-shift: false;
+        pointer-event(event) => {
+            if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                self.last-additive = event.modifiers.control || event.modifiers.meta;
+                self.last-shift = event.modifiers.shift;
+            }
+        }
+        clicked => { root.select(root.data.id, self.last-additive, self.last-shift); }
+        double-clicked => {
+            if (!self.last-additive && !self.last-shift) {
+                root.open(root.data.id);
+            }
+        }
+    }
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 0px;
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            spacing: 10px;
+            padding-right: 16px;
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 0;
+                Thumb { width: 40px; height: 25px; data: root.data; tag-size: 10px; chip: false; }
+            }
+            VerticalLayout {
+                alignment: center;
+                spacing: 4px;
+                horizontal-stretch: 1;
+                Text { text: root.data.name; color: Tokens.text; font-size: 12px; overflow: elide; }
+                if root.compact: Text {
+                    text: root.data.type-label + " · " + root.data.captured + (root.data.timed != "" ? " · " + root.data.timed : "") + (root.inline-size ? " · " + root.data.size : "");
+                    color: Tokens.text3;
+                    font-size: 11px;
+                    overflow: elide;
+                }
+            }
+        }
+        if !root.compact: Text { width: 108px; text: root.data.type-label; color: Tokens.text2; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        if !root.inline-size: Text { width: 84px; text: root.data.size; color: Tokens.text2; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        if !root.compact: Text { width: 162px; text: root.data.captured + (root.data.timed != "" ? " · " + root.data.timed : ""); color: Tokens.text2; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        VerticalLayout {
+            width: 148px;
+            alignment: center;
+            spacing: 4px;
+            HorizontalLayout { alignment: start; Badge { label: root.data.badge; tone: root.data.badge-tone; } }
+            if root.data.show-progress || root.data.cancellable: HorizontalLayout {
+                spacing: 6px;
+                if root.data.show-progress: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Progress { value: root.data.progress; }
+                }
+                if root.data.cancellable: Rectangle {
+                    height: 24px;
+                    preferred-width: cancel-txt.preferred-width + 14px;
+                    horizontal-stretch: 0;
+                    border-radius: 4px;
+                    border-width: 1px;
+                    border-color: Tokens.stroke-hi;
+                    background: cancel-ta.has-hover ? Tokens.card-alt : Tokens.layer;
+                    cancel-txt := Text {
+                        text: "Cancel";
+                        color: Tokens.text;
+                        font-size: 11px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    cancel-ta := TouchArea {
+                        clicked => { root.cancel-upload(root.data.id); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component DayHeader inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> count;
+    spacing: 4px;
+    alignment: start;
+    Text { text: root.label; color: Tokens.text; font-size: 14px; font-weight: 600; vertical-alignment: center; }
+    Text { text: "· " + root.count; color: Tokens.text3; font-size: 14px; vertical-alignment: center; }
+}
+
+component IconButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> kind: "secondary";
+    in property <length> side: 34px;
+    in property <bool> filled: true;
+    in property <bool> disabled: false;
+    callback clicked();
+    width: root.side;
+    height: root.side;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.kind == "accent" ? Tokens.accent : (root.filled ? Tokens.stroke : transparent);
+    background: root.kind == "accent" ? Tokens.accent : (root.filled ? (ta.has-hover && !root.disabled ? Tokens.card-alt : Tokens.card) : (ta.has-hover && !root.disabled ? Tokens.subtle : transparent));
+    opacity: root.disabled ? 0.45 : 1.0;
+    Icon {
+        d: root.icon;
+        size: 14px;
+        sw: 1.8;
+        tint: root.kind == "accent" ? Tokens.on-accent : (root.kind == "danger" ? Tokens.err : Tokens.text);
+    }
+    ta := TouchArea {
+        enabled: !root.disabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+component SmallButton inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    in property <bool> disabled: false;
+    in property <length> btn-height: 34px;
+    callback clicked();
+    height: root.btn-height;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.primary ? Tokens.accent : Tokens.stroke;
+    background: root.primary ? Tokens.accent : (ta.has-hover && !root.disabled ? Tokens.card-alt : Tokens.card);
+    opacity: root.disabled ? 0.55 : 1.0;
+    preferred-width: row.preferred-width;
+    horizontal-stretch: 0;
+    row := HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 6px;
+        alignment: center;
+        if root.icon != "": VerticalLayout {
+            alignment: center;
+            Icon {
+                d: root.icon;
+                size: 14px;
+                sw: 1.8;
+                tint: root.primary ? Tokens.on-accent : (root.danger ? Tokens.err : Tokens.text);
+            }
+        }
+        Text {
+            text: root.label;
+            color: root.primary ? Tokens.on-accent : (root.danger ? Tokens.err : Tokens.text);
+            font-size: 12px;
+            font-weight: root.primary ? 600 : 400;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        enabled: !root.disabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+component UploadMenuButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> primary: false;
+    in property <bool> disabled: false;
+    height: 32px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.primary ? Tokens.accent : Tokens.stroke;
+    background: root.primary ? Tokens.accent : (ta.has-hover && !root.disabled ? Tokens.card-alt : Tokens.layer);
+    opacity: root.disabled ? 0.55 : 1.0;
+    preferred-width: txt.preferred-width + 24px;
+    horizontal-stretch: 0;
+    txt := Text {
+        text: root.label;
+        color: root.primary ? Tokens.on-accent : Tokens.text;
+        font-size: 12px;
+        font-weight: root.primary ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        enabled: !root.disabled;
+        clicked => {
+            HistoryState.ensure-destinations();
+            menu-popup.show();
+        }
+    }
+    menu-popup := PopupWindow {
+        x: 0px;
+        y: root.height + 4px;
+        width: 210px;
+        Rectangle {
+            width: parent.width;
+            height: menu-body.preferred-height;
+            background: Tokens.menu-layer;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: Tokens.stroke-hi;
+            drop-shadow-blur: 14px;
+            drop-shadow-color: Tokens.shadow;
+            drop-shadow-offset-y: 4px;
+            menu-body := VerticalLayout {
+                padding: 4px;
+                spacing: 2px;
+                if HistoryState.destinations.length == 0: Rectangle {
+                    height: 32px;
+                    Text {
+                        x: 8px;
+                        width: parent.width - 16px;
+                        height: parent.height;
+                        text: "No destinations configured.";
+                        color: Tokens.text3;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                }
+                for dest in HistoryState.destinations: Rectangle {
+                    height: 30px;
+                    border-radius: 4px;
+                    background: item-ta.has-hover ? Tokens.subtle : transparent;
+                    Text {
+                        x: 8px;
+                        width: parent.width - 16px;
+                        height: parent.height;
+                        text: dest.name;
+                        color: Tokens.text;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    item-ta := TouchArea {
+                        clicked => {
+                            menu-popup.close();
+                            HistoryState.upload-to(dest.id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component InfoRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    height: 31px;
+    Rectangle { y: parent.height - 1px; height: 1px; background: Tokens.stroke; }
+    HorizontalLayout {
+        spacing: 12px;
+        Text { text: root.label; color: Tokens.text3; font-size: 12px; vertical-alignment: center; }
+        Text { text: root.value; color: Tokens.text; font-size: 12px; horizontal-alignment: right; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+    }
+}
+
+component SharingBlock inherits Rectangle {
+    in property <bool> boxed;
+    preferred-height: col.preferred-height;
+    if root.boxed: Rectangle { y: 0px; height: 1px; background: Tokens.stroke; }
+    col := VerticalLayout {
+        padding-top: root.boxed ? 16px : 0px;
+        alignment: start;
+        spacing: 10px;
+        HorizontalLayout {
+            Text { text: "Sharing"; color: Tokens.text; font-size: 14px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+            Badge { label: HistoryState.share-label; tone: HistoryState.share-status == "uploaded" ? "ok" : HistoryState.share-status; }
+        }
+        if HistoryState.share-status == "uploaded": VerticalLayout {
+            spacing: 10px;
+            HorizontalLayout {
+                spacing: 6px;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 32px;
+                    border-radius: 4px;
+                    border-width: 1px;
+                    border-color: Tokens.stroke;
+                    background: Tokens.layer;
+                    Rectangle { y: parent.height - 2px; height: 1px; x: 3px; width: parent.width - 6px; background: Tokens.stroke-hi; }
+                    TextInput {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        read-only: true;
+                        single-line: true;
+                        text: HistoryState.share-url;
+                        color: Tokens.text;
+                        font-size: 12px;
+                        font-family: Tokens.mono;
+                    }
+                }
+                IconButton {
+                    icon: Icons.copy;
+                    side: 32px;
+                    clicked => { HistoryState.copy-share-link(HistoryState.share-url); }
+                }
+            }
+            HorizontalLayout {
+                alignment: start;
+                UploadMenuButton {
+                    label: "Upload elsewhere…";
+                    disabled: HistoryState.upload-busy || HistoryState.detail-missing;
+                }
+            }
+            if HistoryState.share-has-deletion-url || HistoryState.share-deletion != "": HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: HistoryState.share-deletion;
+                    color: Tokens.text3;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                if HistoryState.share-has-deletion-url: Rectangle {
+                    height: 28px;
+                    preferred-width: del-txt.preferred-width + 16px;
+                    horizontal-stretch: 0;
+                    border-radius: 4px;
+                    background: del-ta.has-hover ? Tokens.subtle : transparent;
+                    del-txt := Text {
+                        text: "Copy deletion link";
+                        color: Tokens.accent;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    del-ta := TouchArea {
+                        clicked => { HistoryState.copy-deletion-link(HistoryState.share-deletion-url); }
+                    }
+                }
+            }
+        }
+        if HistoryState.share-status == "failed": VerticalLayout {
+            spacing: 10px;
+            if HistoryState.share-note != "": Text { text: HistoryState.share-note; color: Tokens.text2; font-size: 12px; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                SmallButton {
+                    label: "Retry";
+                    primary: true;
+                    btn-height: 32px;
+                    disabled: HistoryState.upload-busy || HistoryState.detail-missing;
+                    clicked => { HistoryState.retry-upload(); }
+                }
+                UploadMenuButton {
+                    label: "Upload elsewhere…";
+                    disabled: HistoryState.detail-missing;
+                }
+            }
+        }
+        if HistoryState.share-status == "uploading": VerticalLayout {
+            spacing: 10px;
+            if HistoryState.share-uploading && HistoryState.share-note != "": Text {
+                text: HistoryState.share-note;
+                color: Tokens.text2;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            if HistoryState.share-uploading: Progress { value: HistoryState.share-progress; }
+            if HistoryState.share-cancellable: HorizontalLayout {
+                alignment: start;
+                SmallButton {
+                    label: "Cancel";
+                    btn-height: 32px;
+                    disabled: HistoryState.upload-busy;
+                    clicked => { HistoryState.cancel-upload(); }
+                }
+            }
+        }
+        if HistoryState.share-status == "local": VerticalLayout {
+            spacing: 10px;
+            if HistoryState.share-note != "": Text { text: HistoryState.share-note; color: Tokens.text2; font-size: 12px; wrap: word-wrap; }
+            if !HistoryState.detail-missing: HorizontalLayout {
+                alignment: start;
+                UploadMenuButton {
+                    label: "Upload…";
+                    primary: true;
+                    disabled: HistoryState.upload-busy;
+                }
+            }
+        }
+        if HistoryState.share-error != "": Text { text: HistoryState.share-error; color: Tokens.err; font-size: 12px; wrap: word-wrap; }
+    }
+}
+
+component DetailPane inherits Rectangle {
+    in property <bool> stacked;
+    background: Tokens.layer;
+    Rectangle { y: 0px; x: 0px; width: root.stacked ? parent.width : 1px; height: root.stacked ? 1px : parent.height; background: Tokens.stroke; }
+    Flickable {
+        width: parent.width;
+        height: parent.height;
+        content-height: body.preferred-height + 40px;
+        body := VerticalLayout {
+            x: root.stacked ? 24px : 20px;
+            y: root.stacked ? 12px : 20px;
+            width: parent.width - (root.stacked ? 48px : 40px);
+            spacing: root.stacked ? 12px : 18px;
+            alignment: start;
+            HorizontalLayout {
+                Text { text: "Details"; color: Tokens.text; font-size: 14px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                IconButton { icon: Icons.close; side: 30px; clicked => { HistoryState.close-details(); } }
+            }
+            if !root.stacked: Thumb {
+                height: parent.width * 0.625;
+                data: {
+                    id: 0,
+                    name: "",
+                    meta: "",
+                    tag: HistoryState.detail-tag,
+                    thumb: HistoryState.detail-thumb,
+                    has-thumb: HistoryState.detail-has-thumb,
+                    selected: false,
+                    index: 0,
+                    day: "",
+                    duration: HistoryState.detail-timed,
+                    badge: "",
+                    badge-tone: "",
+                    type-label: "",
+                    captured: "",
+                    size: "",
+                    timed: "",
+                    progress: -1,
+                    show-progress: false,
+                    cancellable: false,
+                };
+            }
+            HorizontalLayout {
+                spacing: 20px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: root.stacked ? 12px : 18px;
+                    alignment: start;
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text { text: HistoryState.detail-name; color: Tokens.text; font-size: 15px; font-weight: 600; wrap: word-wrap; }
+                        Text { text: HistoryState.detail-kind; color: Tokens.text3; font-size: 12px; wrap: word-wrap; }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        if HistoryState.detail-owned && !HistoryState.detail-missing: IconButton {
+                            icon: HistoryState.detail-timed != "" ? Icons.play : Icons.open;
+                            clicked => { HistoryState.open-file(HistoryState.selected-id); }
+                        }
+                        if HistoryState.detail-is-image: IconButton {
+                            icon: Icons.edit;
+                            kind: "accent";
+                            disabled: HistoryState.detail-missing;
+                            clicked => { HistoryState.annotate(HistoryState.selected-id); }
+                        }
+                        if HistoryState.detail-is-image: IconButton {
+                            icon: Icons.copy;
+                            disabled: HistoryState.detail-missing;
+                            clicked => { HistoryState.copy-image(HistoryState.selected-id); }
+                        }
+                        IconButton {
+                            icon: Icons.folder;
+                            disabled: HistoryState.detail-missing;
+                            clicked => { HistoryState.show-in-folder(HistoryState.selected-id); }
+                        }
+                        if HistoryState.detail-is-image: IconButton {
+                            icon: Icons.pin;
+                            disabled: HistoryState.detail-missing;
+                            clicked => { HistoryState.pin-capture(HistoryState.selected-id); }
+                        }
+                        IconButton {
+                            icon: Icons.trash;
+                            kind: "danger";
+                            disabled: HistoryState.deleting;
+                            clicked => { HistoryState.delete-capture(HistoryState.selected-id); }
+                        }
+                    }
+                    if !root.stacked && (HistoryState.share-status != "local" || !HistoryState.detail-owned): SharingBlock { boxed: true; }
+                }
+                if root.stacked && (HistoryState.share-status != "local" || !HistoryState.detail-owned): SharingBlock { horizontal-stretch: 1; }
+            }
+            VerticalLayout {
+                Text { text: "Info"; color: Tokens.text; font-size: 13px; font-weight: 600; height: 19px; }
+                Rectangle { height: 6px; }
+                InfoRow { label: "Dimensions"; value: HistoryState.detail-dimensions; }
+                if HistoryState.detail-missing: InfoRow { label: "Availability"; value: "Original file missing"; }
+                if HistoryState.detail-duration != "": InfoRow { label: "Duration"; value: HistoryState.detail-duration; }
+                InfoRow { label: "File size"; value: HistoryState.detail-size; }
+                InfoRow { label: "Captured from"; value: HistoryState.detail-source; }
+                InfoRow { label: "Destination"; value: HistoryState.detail-destination; }
+                InfoRow { label: "Saved to"; value: HistoryState.detail-folder; }
+            }
+        }
+    }
+}
+
+export component HistoryPage inherits Rectangle {
+    in property <bool> side;
+    in property <float> scroll-y;
+    property <bool> has-detail: HistoryState.has-selection;
+    property <length> detail-size: 320px;
+    property <length> main-width: root.side && root.has-detail ? root.width - root.detail-size : root.width;
+    property <length> main-height: !root.side && root.has-detail ? root.height * 0.66 : root.height;
+    property <length> scroll-width: root.main-width - 48px;
+    property <bool> inline-head: root.scroll-width >= 800px;
+    property <int> columns: HistoryState.grid-view ? max(1, floor((root.scroll-width / 1px + 12) / 212)) : 1;
+    property <length> head-height: root.inline-head ? 58px : 104px;
+
+    VerticalLayout {
+        x: 0px;
+        y: 0px;
+        width: root.main-width;
+        height: root.main-height;
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 20px;
+        spacing: 16px;
+
+        Rectangle {
+            vertical-stretch: 0;
+            height: root.head-height;
+            TouchArea {
+                clicked => { HistoryState.clear-selection(); }
+            }
+            Text {
+                x: 0px;
+                y: 0px;
+                text: "History";
+                color: Tokens.text;
+                font-size: 28px;
+                font-weight: 600;
+                height: 36px;
+                vertical-alignment: center;
+            }
+            Text {
+                x: 0px;
+                y: 40px;
+                text: HistoryState.stats-line;
+                color: Tokens.text3;
+                font-size: 12px;
+            }
+            controls-row := HorizontalLayout {
+                x: root.inline-head ? parent.width - self.preferred-width : 0px;
+                y: root.inline-head ? 22px : 68px;
+                width: self.preferred-width;
+                height: 34px;
+                alignment: start;
+                spacing: 8px;
+                SmallButton {
+                    label: "Upload file…";
+                    disabled: HistoryState.upload-busy;
+                    clicked => { HistoryState.upload-files(); }
+                }
+                Segmented {
+                    options: ["All", "Images", "Videos", "GIFs", "Files"];
+                    value <=> HistoryState.filter-label;
+                    picked(v) => { HistoryState.filter-changed(v == "All" ? 0 : (v == "Images" ? 1 : (v == "Videos" ? 2 : (v == "GIFs" ? 3 : 4)))); }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    IconButton { icon: Icons.grid; filled: HistoryState.grid-view; clicked => { HistoryState.set-grid(true); } }
+                    IconButton { icon: Icons.list; filled: !HistoryState.grid-view; clicked => { HistoryState.set-grid(false); } }
+                }
+            }
+        }
+
+        if HistoryState.message != "": Text {
+            vertical-stretch: 0;
+            text: HistoryState.message;
+            color: Tokens.err;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+
+        if HistoryState.selected-count > 1: Rectangle {
+            vertical-stretch: 0;
+            height: 48px;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: Tokens.stroke;
+            background: Tokens.card;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 8px;
+                padding-top: 6px;
+                padding-bottom: 6px;
+                spacing: 8px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: HistoryState.selected-count + " selected";
+                    color: Tokens.text;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                SmallButton {
+                    label: "Delete selected";
+                    icon: Icons.trash;
+                    danger: true;
+                    disabled: HistoryState.deleting;
+                    clicked => { HistoryState.delete-selected(); }
+                }
+                SmallButton {
+                    label: "Clear selection";
+                    clicked => { HistoryState.clear-selection(); }
+                }
+            }
+        }
+
+        key-scope := FocusScope {
+            vertical-stretch: 1;
+            key-pressed(event) => {
+                if (event.text == Key.Escape && (HistoryState.has-selection || HistoryState.selected-count > 0)) {
+                    HistoryState.clear-selection();
+                    return accept;
+                }
+                if (event.text == Key.RightArrow) {
+                    HistoryState.move-selection(1);
+                    return accept;
+                }
+                if (event.text == Key.LeftArrow) {
+                    HistoryState.move-selection(-1);
+                    return accept;
+                }
+                if (event.text == Key.DownArrow) {
+                    HistoryState.move-selection(HistoryState.grid-view ? root.columns : 1);
+                    return accept;
+                }
+                if (event.text == Key.UpArrow) {
+                    HistoryState.move-selection(HistoryState.grid-view ? -root.columns : -1);
+                    return accept;
+                }
+                if (event.text == Key.Return) {
+                    HistoryState.activate-selected();
+                    return accept;
+                }
+                if (event.text == Key.Delete) {
+                    HistoryState.delete-hotkey();
+                    return accept;
+                }
+                if ((event.modifiers.control || event.modifiers.meta) && (event.text == "c" || event.text == "C")) {
+                    HistoryState.copy-selected();
+                    return accept;
+                }
+                return reject;
+            }
+
+            scroller := Flickable {
+                width: parent.width;
+                height: parent.height;
+                content-y: -1px * root.scroll-y;
+                content-height: lists.preferred-height + 32px;
+                changed content-y => {
+                    if (HistoryState.has-more && !HistoryState.loading && self.height > 0px && self.content-height > self.height) {
+                        if (-self.content-y + self.height >= self.content-height - 480px) {
+                            HistoryState.load-more();
+                        }
+                    }
+                }
+                TouchArea {
+                    width: max(scroller.width, lists.preferred-width);
+                    height: max(scroller.height, lists.preferred-height + 32px);
+                    clicked => {
+                        key-scope.focus();
+                        HistoryState.clear-selection();
+                    }
+                }
+                lists := VerticalLayout {
+                    width: scroller.width;
+                    alignment: start;
+                    spacing: 12px;
+                    if HistoryState.is-empty: Rectangle {
+                        height: max(220px, scroller.height - 32px);
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 14px;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 4px;
+                                Text {
+                                    text: HistoryState.empty-filtered ? "No matching items" : "No captures yet";
+                                    color: Tokens.text;
+                                    font-size: 14px;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: HistoryState.empty-filtered ? "Clear the search or change the filter to see more of your history." : "Press PrtSc to capture a region.";
+                                    color: Tokens.text3;
+                                    font-size: 12px;
+                                    horizontal-alignment: center;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            if HistoryState.empty-filtered: HorizontalLayout {
+                                alignment: center;
+                                spacing: 8px;
+                                if HistoryState.can-clear-search: SmallButton {
+                                    label: "Clear search";
+                                    clicked => { HistoryState.clear-search(); }
+                                }
+                                if HistoryState.can-reset-filter: SmallButton {
+                                    label: "Reset filters";
+                                    clicked => { HistoryState.reset-filter(); }
+                                }
+                            }
+                            if !HistoryState.empty-filtered: HorizontalLayout {
+                                alignment: center;
+                                SmallButton {
+                                    label: "Upload file…";
+                                    primary: true;
+                                    disabled: HistoryState.upload-busy;
+                                    clicked => { HistoryState.upload-files(); }
+                                }
+                            }
+                        }
+                    }
+                    if HistoryState.grid-view && !HistoryState.is-empty: VerticalLayout {
+                        for group in HistoryState.rows: VerticalLayout {
+                            DayHeader { height: 46px; label: group.label; count: group.count; }
+                            Rectangle {
+                                height: ceil(group.size / root.columns) * 217px;
+                                for cell in group.cells: CaptureCell {
+                                    x: (cell.index - floor(cell.index / root.columns) * root.columns) * 212px;
+                                    y: floor(cell.index / root.columns) * 217px;
+                                    data: cell;
+                                    select(id, additive, range) => {
+                                        key-scope.focus();
+                                        HistoryState.select(id, additive, range);
+                                    }
+                                    open(id) => {
+                                        HistoryState.open-file(id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !HistoryState.grid-view && !HistoryState.is-empty && HistoryState.cells.length > 0: Rectangle {
+                        background: Tokens.card;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: Tokens.stroke;
+                        preferred-height: 38px + 1px + HistoryState.cells.length * 72px;
+                        VerticalLayout {
+                            alignment: start;
+                            Rectangle {
+                                height: 38px;
+                                HorizontalLayout {
+                                    padding-left: 16px;
+                                    padding-right: 16px;
+                                    Text { horizontal-stretch: 1; text: "File"; color: Tokens.text3; font-size: 12px; vertical-alignment: center; }
+                                    if root.scroll-width >= 740px: Text { width: 108px; text: "Type"; color: Tokens.text3; font-size: 12px; vertical-alignment: center; }
+                                    if root.scroll-width >= 460px: Text { width: 84px; text: "Size"; color: Tokens.text3; font-size: 12px; vertical-alignment: center; }
+                                    if root.scroll-width >= 740px: Text { width: 162px; text: "Captured"; color: Tokens.text3; font-size: 12px; vertical-alignment: center; }
+                                    Text { width: 148px; text: "Status"; color: Tokens.text3; font-size: 12px; vertical-alignment: center; }
+                                }
+                                Rectangle { y: parent.height - 1px; height: 1px; background: Tokens.stroke; }
+                            }
+                            for cell[i] in HistoryState.cells: ListRow {
+                                data: cell;
+                                first: i == 0;
+                                compact: root.scroll-width < 740px;
+                                inline-size: root.scroll-width < 460px;
+                                select(id, additive, range) => {
+                                    key-scope.focus();
+                                    HistoryState.select(id, additive, range);
+                                }
+                                open(id) => {
+                                    HistoryState.open-file(id);
+                                }
+                                cancel-upload(id) => {
+                                    HistoryState.cancel-row-upload(id);
+                                }
+                            }
+                        }
+                    }
+                    if HistoryState.has-more: HorizontalLayout {
+                        alignment: center;
+                        padding-top: 8px;
+                        SmallButton {
+                            label: HistoryState.loading ? "Loading…" : "Load more";
+                            disabled: HistoryState.loading;
+                            clicked => { HistoryState.load-more(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.has-detail: DetailPane {
+        stacked: !root.side;
+        x: root.side ? root.width - root.detail-size : 0px;
+        y: root.side ? 0px : root.height * 0.66;
+        width: root.side ? root.detail-size : root.width;
+        height: root.side ? root.height : root.height * 0.34;
+    }
+}

@@ -1,0 +1,343 @@
+import { Tokens } from "tokens.slint";
+import { Icons } from "icons.slint";
+import { Select, HotkeyField, Toggle, Row, Field, Button, Icon } from "widgets.slint";
+import { WorkflowsState, WorkflowItemData, EditorStepData } from "state.slint";
+
+// Workflows list and editor, mirroring ui/src/windows/main/workflows/WorkflowsPage.svelte, WorkflowEditor.svelte and StepEditor.svelte.
+
+global StepIcon {
+    pure public function of(key: string) -> string {
+    return key == "copy" ? Icons.copy
+        : key == "edit" ? Icons.edit
+        : key == "save" ? Icons.save
+        : key == "upload" ? Icons.upload
+        : key == "link" ? Icons.link
+        : key == "ocr" ? Icons.ocr
+        : key == "text" ? Icons.text
+        : key == "gif" ? Icons.gif
+        : key == "bell" ? Icons.bell
+        : key == "speaker" ? Icons.speaker
+        : key == "stop" ? Icons.stop
+        : key == "window" ? Icons.window
+        : key == "screen" ? Icons.screen
+        : key == "record" ? Icons.record
+        : key == "gif-mark" ? Icons.gif-mark
+        : Icons.region;
+    }
+}
+
+component WorkflowCard inherits Rectangle {
+    in property <WorkflowItemData> data;
+    callback edit(string);
+    callback toggle(string, bool);
+    vertical-stretch: 0;
+    background: Tokens.card;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Tokens.stroke;
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 16px;
+        padding-bottom: 16px;
+        spacing: 20px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 10px;
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Text { text: root.data.title; color: root.data.enabled ? Tokens.text : Tokens.text3; font-size: 14px; font-weight: 600; vertical-alignment: center; }
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        height: 21px;
+                        border-radius: 4px;
+                        border-width: 1px;
+                        border-color: root.data.chord-blocked ? Tokens.err : Tokens.stroke-hi;
+                        preferred-width: chord-text.preferred-width + 18px;
+                        horizontal-stretch: 0;
+                        chord-text := Text { text: root.data.chord; color: root.data.chord-blocked ? Tokens.err : Tokens.text2; font-size: 11px; font-family: Tokens.mono; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+            }
+            FlexboxLayout {
+                flex-wrap: wrap;
+                spacing: 6px;
+                alignment: start;
+                cross-axis-alignment: center;
+                for step[i] in root.data.step-list: HorizontalLayout {
+                    spacing: 6px;
+                    horizontal-stretch: 0;
+                    if i > 0: VerticalLayout { alignment: center; Icon { d: Icons.chevron-right; size: 12px; sw: 2; tint: Tokens.text3; } }
+                    Rectangle {
+                        height: 24px;
+                        border-radius: 12px;
+                        background: Tokens.subtle;
+                        preferred-width: step-text.preferred-width + 20px;
+                        horizontal-stretch: 0;
+                        step-text := Text { text: step; color: Tokens.text; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+            }
+            if root.data.clash != "": Text { text: root.data.clash; color: Tokens.err; font-size: 12px; wrap: word-wrap; }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            horizontal-stretch: 0;
+            VerticalLayout {
+                alignment: center;
+                Button { height: 32px; label: "Edit"; width: 53px; clicked => { root.edit(root.data.id); } }
+            }
+            VerticalLayout {
+                alignment: center;
+                Toggle {
+                    checked: root.data.enabled;
+                    disabled: root.data.is-default;
+                    toggled(v) => { if (!root.data.is-default) { root.toggle(root.data.id, v); } }
+                }
+            }
+        }
+    }
+}
+
+component StepEditorRow inherits VerticalLayout {
+    in property <EditorStepData> data;
+    in property <int> count;
+    in property <bool> first;
+    callback remove(int);
+    callback move(int, int);
+    callback choice(int, string);
+    if !root.first: Rectangle { height: 1px; background: Tokens.stroke; }
+    HorizontalLayout {
+        min-height: 52px;
+        padding-left: 6px;
+        padding-right: 12px;
+        spacing: 8px;
+        VerticalLayout {
+            alignment: center;
+            width: 28px;
+            Rectangle {
+                width: 28px;
+                height: 40px;
+                border-radius: 4px;
+                Icon { x: 7px; y: 13px; d: Icons.drag; size: 14px; sw: 3; tint: Tokens.text3; }
+                handle-scope := FocusScope {
+                    key-pressed(event) => {
+                        if (event.modifiers.alt && event.text == Key.UpArrow) {
+                            root.move(root.data.index, -1);
+                            return accept;
+                        }
+                        if (event.modifiers.alt && event.text == Key.DownArrow) {
+                            root.move(root.data.index, 1);
+                            return accept;
+                        }
+                        return reject;
+                    }
+                }
+                TouchArea {
+                    mouse-cursor: grab;
+                    property <length> start;
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down) {
+                            self.start = self.mouse-y;
+                            handle-scope.focus();
+                        }
+                        if (e.kind == PointerEventKind.up) {
+                            if (round((self.mouse-y - self.start) / 52px) != 0) {
+                                root.move(root.data.index, round((self.mouse-y - self.start) / 52px));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Text { width: 18px; text: root.data.index + 1; color: Tokens.text3; font-size: 12px; horizontal-alignment: right; vertical-alignment: center; }
+        VerticalLayout { alignment: center; Icon { d: StepIcon.of(root.data.icon); size: 18px; tint: Tokens.text2; } }
+        Text { horizontal-stretch: 1; text: root.data.label; color: Tokens.text; font-size: 13px; vertical-alignment: center; overflow: elide; }
+        if root.data.choices.length > 0: VerticalLayout {
+            alignment: center;
+            Select {
+                width: max(150px, root.data.choice.character-count * 7px + 48px);
+                height: 30px;
+                model: root.data.choices;
+                current-value: root.data.choice;
+                selected(v) => { root.choice(root.data.index, v); }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            HorizontalLayout {
+                spacing: 4px;
+                Rectangle {
+                    width: 24px;
+                    height: 24px;
+                    border-radius: 4px;
+                    background: up-ta.has-hover && root.data.index > 0 ? Tokens.subtle : Tokens.layer;
+                    opacity: root.data.index > 0 ? 1 : 0.4;
+                    Text { text: "↑"; color: root.data.index > 0 ? Tokens.text2 : Tokens.text3; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                    up-ta := TouchArea { enabled: root.data.index > 0; clicked => { root.move(root.data.index, -1); } }
+                }
+                Rectangle {
+                    width: 24px;
+                    height: 24px;
+                    border-radius: 4px;
+                    background: down-ta.has-hover && root.data.index < root.count - 1 ? Tokens.subtle : Tokens.layer;
+                    opacity: root.data.index < root.count - 1 ? 1 : 0.4;
+                    Text { text: "↓"; color: root.data.index < root.count - 1 ? Tokens.text2 : Tokens.text3; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                    down-ta := TouchArea { enabled: root.data.index < root.count - 1; clicked => { root.move(root.data.index, 1); } }
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 28px;
+                height: 28px;
+                border-radius: 4px;
+                background: rm.has-hover ? Tokens.subtle : transparent;
+                Icon { x: 7px; y: 7px; d: Icons.close; size: 14px; tint: Tokens.text3; }
+                rm := TouchArea { clicked => { root.remove(root.data.index); } }
+            }
+        }
+    }
+    if root.data.error != "": VerticalLayout {
+        padding-left: 60px;
+        padding-right: 16px;
+        padding-bottom: 8px;
+        Text { text: root.data.error; color: Tokens.err; font-size: 12px; wrap: word-wrap; }
+    }
+}
+
+export component WorkflowsPage inherits VerticalLayout {
+    spacing: 20px;
+    horizontal-stretch: 1;
+
+    HorizontalLayout {
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 4px;
+            Text { text: WorkflowsState.editing ? WorkflowsState.editor-title : "Workflows"; color: Tokens.text; font-size: 28px; font-weight: 600; height: 36px; vertical-alignment: center; }
+            Text {
+                text: WorkflowsState.editing ? "Steps run in order after the hotkey is pressed." : "A workflow is a hotkey plus the steps that run after the capture";
+                color: Tokens.text3; font-size: 12px;
+            }
+        }
+        if !WorkflowsState.editing: VerticalLayout {
+            alignment: end;
+            Button { kind: "accent"; icon: Icons.plus; label: "New workflow"; clicked => { WorkflowsState.new-workflow(); } }
+        }
+    }
+
+    if WorkflowsState.message != "": Text { text: WorkflowsState.message; color: Tokens.err; font-size: 12px; wrap: word-wrap; }
+
+    if !WorkflowsState.editing: VerticalLayout {
+        spacing: 10px;
+        if !WorkflowsState.has-workflows && WorkflowsState.items.length == 0: Text {
+            text: "No workflows yet";
+            color: Tokens.text3;
+            font-size: 13px;
+        }
+        if WorkflowsState.has-workflows && WorkflowsState.items.length == 0: VerticalLayout {
+            spacing: 4px;
+            Text { text: "No matching workflows"; color: Tokens.text; font-size: 14px; font-weight: 600; }
+            Text { text: "Try a different search."; color: Tokens.text3; font-size: 12px; }
+        }
+        for item in WorkflowsState.items: WorkflowCard {
+            data: item;
+            edit(id) => { WorkflowsState.edit(id); }
+            toggle(id, v) => { WorkflowsState.toggle(id, v); }
+        }
+    }
+
+    if WorkflowsState.editing: VerticalLayout {
+        spacing: 8px;
+        Row {
+            icon: Icons.workflows;
+            title: "Name";
+            Field {
+                width: 370px;
+                text: WorkflowsState.editor-name;
+                invalid: WorkflowsState.name-error != "";
+                disabled: WorkflowsState.editor-is-default;
+                edited(v) => { WorkflowsState.name-edited(v); }
+            }
+        }
+        if WorkflowsState.name-error != "": Text { text: WorkflowsState.name-error; color: Tokens.err; font-size: 12px; }
+        if !WorkflowsState.editor-is-default: Row {
+            icon: Icons.hotkeys;
+            title: "Hotkey";
+            HotkeyField {
+                width: 370px;
+                chord: WorkflowsState.editor-hotkey;
+                clash: WorkflowsState.editor-clash;
+                committed(v) => { WorkflowsState.hotkey-committed(v); }
+            }
+        }
+        if WorkflowsState.editor-clash != "" && !WorkflowsState.editor-is-default: Text { text: WorkflowsState.editor-clash; color: Tokens.err; font-size: 12px; }
+        Row {
+            icon: Icons.power;
+            title: "Enabled";
+            Toggle {
+                checked: WorkflowsState.editor-enabled;
+                disabled: WorkflowsState.editor-is-default;
+                toggled(v) => { if (!WorkflowsState.editor-is-default) { WorkflowsState.enabled-changed(v); } }
+            }
+        }
+        VerticalLayout {
+            padding-top: 12px;
+            spacing: 6px;
+            Text { text: "Steps"; color: Tokens.text; font-size: 14px; font-weight: 600; height: 21px; }
+            Rectangle {
+                background: Tokens.card;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: Tokens.stroke;
+                clip: true;
+                preferred-height: steps-box.preferred-height + 2px;
+                steps-box := VerticalLayout {
+                    padding: 1px;
+                    for step[i] in WorkflowsState.editor-steps: StepEditorRow {
+                        data: step;
+                        first: i == 0;
+                        count: WorkflowsState.editor-steps.length;
+                        remove(i) => { WorkflowsState.remove-step(i); }
+                        move(i, d) => { WorkflowsState.move-step(i, d); }
+                        choice(i, v) => { WorkflowsState.step-choice(i, v); }
+                    }
+                }
+            }
+            Rectangle { height: 4px; }
+            if WorkflowsState.list-error != "": Text { text: WorkflowsState.list-error; color: Tokens.err; font-size: 12px; wrap: word-wrap; }
+            HorizontalLayout {
+                alignment: start;
+                Select { width: 160px; height: 32px; model: WorkflowsState.add-choices; current-value: "Add step"; selected(v) => { WorkflowsState.add-step(v); } }
+            }
+        }
+        VerticalLayout {
+            padding-top: 4px;
+            Rectangle {
+                height: 1px;
+                background: Tokens.stroke;
+            }
+            Rectangle { height: 16px; }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { kind: "accent"; label: "Save"; width: 61px; clicked => { WorkflowsState.save(); } }
+                Button { label: "Cancel"; width: 72px; clicked => { WorkflowsState.back(); } }
+                Rectangle { horizontal-stretch: 1; }
+                if !WorkflowsState.is-new: Button { label: "Duplicate"; width: 88px; clicked => { WorkflowsState.duplicate(); } }
+                if !WorkflowsState.is-new: Button {
+                    kind: "danger";
+                    disabled: WorkflowsState.editor-is-default;
+                    label: WorkflowsState.confirm-delete ? "Confirm delete" : "Delete";
+                    clicked => {
+                        if (WorkflowsState.editor-is-default) { return; }
+                        if (WorkflowsState.confirm-delete) { WorkflowsState.delete(); } else { WorkflowsState.confirm-delete = true; }
+                    }
+                }
+            }
+        }
+    }
+}

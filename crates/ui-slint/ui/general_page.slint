@@ -1,0 +1,162 @@
+import { Tokens } from "tokens.slint";
+import { Icons } from "icons.slint";
+import { Toggle, Row, Section, Segmented, Select, Logo, PageHeader, Card, Button, Field, Range } from "widgets.slint";
+import { SettingsState } from "state.slint";
+import { DefaultWorkflowSection } from "workflow_section.slint";
+
+component TokenChip inherits Rectangle {
+    in property <string> token;
+    callback clicked();
+    height: 28px;
+    preferred-width: label.preferred-width + 20px;
+    horizontal-stretch: 0;
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: Tokens.stroke;
+    background: ta.has-hover ? Tokens.subtle : Tokens.layer;
+    label := Text { text: root.token; color: Tokens.text2; font-size: 12px; font-family: Tokens.mono; horizontal-alignment: center; vertical-alignment: center; }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+export component GeneralPage inherits VerticalLayout {
+    in property <string> filter;
+    horizontal-stretch: 1;
+    spacing: 28px;
+    vertical-stretch: 0;
+
+    property <bool> version-visible: SettingsState.text-matches("Snapline", "Version 0.1.0", root.filter);
+    property <bool> launch-visible: SettingsState.text-matches("Launch at sign-in", "Start Snapline in the tray when you sign in to Windows", root.filter);
+    property <bool> minimise-visible: SettingsState.text-matches("Start minimised to tray", "Don't open the main window on launch", root.filter);
+    property <bool> tray-click-visible: SettingsState.text-matches("Open capture on tray click", "When off, clicking the tray icon opens the Quick Panel", root.filter);
+    property <bool> notifications-visible: SettingsState.text-matches("Notifications", "Show a toast when an upload finishes or a link is copied", root.filter);
+    property <bool> show-startup: SettingsState.text-matches("Startup", "", root.filter)
+        || launch-visible || minimise-visible || tray-click-visible || notifications-visible;
+
+    property <bool> folder-visible: SettingsState.text-matches("Save captures to", "Captures are kept on this PC even after they are uploaded", root.filter);
+    property <bool> subfolders-visible: SettingsState.text-matches("Subfolders", "Organise saved files automatically", root.filter);
+    property <bool> format-visible: SettingsState.text-matches("Image format", "PNG is lossless; the others are smaller", root.filter);
+    property <bool> quality-visible: SettingsState.text-matches("Lossy quality", "Used for JPEG and WebP", root.filter);
+    property <bool> show-saving: SettingsState.text-matches("Saving", "", root.filter)
+        || folder-visible || subfolders-visible || format-visible || quality-visible;
+
+    property <bool> naming-visible: SettingsState.text-matches("File naming", "Click a token to add it. Tokens are filled in at the moment of capture.", root.filter)
+        || SettingsState.text-matches("Name pattern", "", root.filter)
+        || SettingsState.text-matches("Preview", "", root.filter);
+
+    PageHeader { title: "General"; }
+
+    if version-visible: Card {
+        HorizontalLayout {
+            padding-left: 20px;
+            padding-right: 20px;
+            padding-top: 16px;
+            padding-bottom: 16px;
+            spacing: 16px;
+            Logo { size: 48px; }
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                Text { text: "Snapline"; color: Tokens.text; font-size: 16px; font-weight: 600; }
+                Text { text: "Version 0.1.0"; color: Tokens.text3; font-size: 12px; }
+            }
+        }
+    }
+
+    if show-startup: Section {
+        heading: "Startup";
+        if launch-visible: Row { icon: Icons.power; title: "Launch at sign-in"; description: "Start Snapline in the tray when you sign in to Windows";
+            Toggle { checked: SettingsState.launch-at-sign-in; toggled(v) => { SettingsState.update-bool("general.launch_at_signin", v); } } }
+        if minimise-visible: Row { icon: Icons.tray; title: "Start minimised to tray"; description: "Don't open the main window on launch";
+            Toggle { checked: SettingsState.start-minimised; toggled(v) => { SettingsState.update-bool("general.start_minimised", v); } } }
+        if tray-click-visible: Row { icon: Icons.tray; title: "Open capture on tray click"; description: "When off, clicking the tray icon opens the Quick Panel";
+            Toggle { checked: SettingsState.tray-click-capture; toggled(v) => { SettingsState.update-bool("general.tray_click_capture", v); } } }
+        if notifications-visible: Row { icon: Icons.bell; title: "Notifications"; description: "Show a toast when an upload finishes or a link is copied";
+            Toggle { checked: SettingsState.notifications; toggled(v) => { SettingsState.update-bool("general.notifications", v); } } }
+    }
+
+    if show-saving: Section {
+        heading: "Saving";
+        if folder-visible: Row { icon: Icons.folder; title: "Save captures to"; description: "Captures are kept on this PC even after they are uploaded";
+            Field { width: 260px; mono: true; text <=> SettingsState.save-folder; edited(v) => { SettingsState.update-text("general.save_folder", v); } }
+            Button { label: "Browse…"; clicked => { SettingsState.browse-folder(); } } }
+        if subfolders-visible: Row { icon: Icons.tree; title: "Subfolders"; description: "Organise saved files automatically";
+            Select { model: SettingsState.subfolder-options; current-value: SettingsState.subfolders;
+                selected(v) => { SettingsState.update-choice("general.subfolders", v); } } }
+        if format-visible: Row { icon: Icons.image; title: "Image format"; description: "PNG is lossless; the others are smaller";
+            Segmented { options: SettingsState.image-format-options; value: SettingsState.image-format;
+                picked(v) => { SettingsState.update-choice("general.image_format", v); } } }
+        if quality-visible: Row { icon: Icons.gauge; title: "Lossy quality"; description: "Used for JPEG and WebP";
+            Range { lo: 40; hi: 100; unit: "%"; value: SettingsState.lossy-quality;
+                disabled: SettingsState.image-format == "PNG";
+                changed(v) => { SettingsState.update-number("general.lossy_quality", v); } } }
+    }
+
+    if naming-visible: Section {
+        heading: "File naming";
+        caption: "Click a token to add it. Tokens are filled in at the moment of capture.";
+        Card {
+            VerticalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                padding-top: 16px;
+                padding-bottom: 16px;
+                spacing: 12px;
+                VerticalLayout {
+                    spacing: 6px;
+                    Text { text: "Name pattern"; color: Tokens.text; font-size: 13px; }
+                    Field {
+                        mono: true;
+                        font-size: 13px;
+                        text <=> SettingsState.name-pattern;
+                        edited(v) => {
+                            SettingsState.update-text("general.name_pattern", v);
+                            SettingsState.preview-name-requested(v);
+                        }
+                    }
+                }
+                VerticalLayout {
+                    spacing: 6px;
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        for token in ["{app}", "{window}", "{yyyy}", "{MM}", "{dd}", "{HH}"]: TokenChip {
+                            token: token;
+                            clicked => {
+                                SettingsState.name-pattern = SettingsState.name-pattern + token;
+                                SettingsState.update-text("general.name_pattern", SettingsState.name-pattern);
+                                SettingsState.preview-name-requested(SettingsState.name-pattern);
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        for token in ["{mm}", "{ss}", "{rand}", "{n}", "{w}", "{h}"]: TokenChip {
+                            token: token;
+                            clicked => {
+                                SettingsState.name-pattern = SettingsState.name-pattern + token;
+                                SettingsState.update-text("general.name_pattern", SettingsState.name-pattern);
+                                SettingsState.preview-name-requested(SettingsState.name-pattern);
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 36px;
+                    background: Tokens.subtle;
+                    border-radius: 4px;
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 8px;
+                        alignment: start;
+                        Text { text: "Preview"; color: Tokens.text3; font-size: 12px; vertical-alignment: center; }
+                        Text { text: SettingsState.preview-name; color: Tokens.text; font-size: 12px; font-family: Tokens.mono; vertical-alignment: center; overflow: elide; }
+                    }
+                }
+            }
+        }
+    }
+
+    DefaultWorkflowSection { filter: root.filter; }
+}

@@ -1,0 +1,110 @@
+import { Tokens } from "tokens.slint";
+import { Icons } from "icons.slint";
+import { Button, Row, Section, Select } from "widgets.slint";
+import { SettingsState, WorkflowState, WorkflowRowData } from "state.slint";
+
+component StepRow inherits Rectangle {
+    in property <WorkflowRowData> data;
+    in property <int> index;
+    in property <int> count;
+    callback toggle(int);
+    callback move(int, int);
+    min-height: 52px;
+    background: Tokens.card;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Tokens.stroke;
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 10px;
+        spacing: 12px;
+        Rectangle {
+            width: 18px; height: 18px; border-radius: 4px;
+            y: (parent.height - self.height) / 2;
+            border-width: 1px;
+            border-color: root.data.checked ? Tokens.accent : Tokens.text3;
+            background: root.data.checked ? Tokens.accent : transparent;
+            Text { visible: root.data.checked; text: "✓"; color: Tokens.on-accent; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { root.toggle(root.index); } }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text { text: root.data.label; color: root.data.checked ? Tokens.text : Tokens.text3; font-size: 13px; overflow: elide; }
+            if root.data.note != "": Text { text: root.data.note; color: Tokens.text3; font-size: 12px; overflow: elide; }
+        }
+        VerticalLayout {
+            alignment: center;
+            HorizontalLayout {
+                alignment: end;
+                spacing: 4px;
+                Rectangle {
+                    width: 26px; height: 26px; border-radius: 4px; background: Tokens.layer;
+                    opacity: root.index > 0 ? 1 : 0.45;
+                    Text { text: "↑"; color: root.index > 0 ? Tokens.text : Tokens.text3; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { enabled: root.index > 0; clicked => { root.move(root.index, -1); } }
+                }
+                Rectangle {
+                    width: 26px; height: 26px; border-radius: 4px; background: Tokens.layer;
+                    opacity: root.index < root.count - 1 ? 1 : 0.45;
+                    Text { text: "↓"; color: root.index < root.count - 1 ? Tokens.text : Tokens.text3; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { enabled: root.index < root.count - 1; clicked => { root.move(root.index, 1); } }
+                }
+            }
+        }
+    }
+}
+
+export component DefaultWorkflowSection inherits VerticalLayout {
+    in property <string> filter;
+    vertical-stretch: 0;
+
+    property <bool> steps-visible: SettingsState.text-matches(
+        "Default workflow · PrtSc",
+        "What happens after a capture. Each hotkey can run its own workflow — this is the one PrtSc and the tray use.",
+        root.filter
+    ) || SettingsState.text-matches("Copy image to clipboard", "", root.filter)
+      || SettingsState.text-matches("Open in editor to annotate", "", root.filter)
+      || SettingsState.text-matches("Save to folder", "", root.filter)
+      || SettingsState.text-matches("Upload to default destination", "", root.filter)
+      || SettingsState.text-matches("Copy link to clipboard", "", root.filter)
+      || SettingsState.text-matches("Play a sound", "", root.filter);
+    property <bool> link-format-visible: SettingsState.text-matches("Copied link format", "What gets pasted when you press Ctrl+V", root.filter);
+    property <bool> other-workflows-visible: SettingsState.text-matches("Other workflows", "Per-hotkey workflows are edited in the app under Workflows", root.filter);
+
+    if steps-visible || link-format-visible || other-workflows-visible: Section {
+        heading: "Default workflow · PrtSc";
+        caption: "What happens after a capture. Each hotkey can run its own workflow — this is the one PrtSc and the tray use.";
+        if WorkflowState.message != "": Text { text: WorkflowState.message; color: Tokens.err; font-size: 12px; wrap: word-wrap; }
+        if steps-visible: VerticalLayout {
+            spacing: 4px;
+            for row[index] in WorkflowState.default-rows: StepRow {
+                data: row;
+                index: index;
+                count: WorkflowState.default-rows.length;
+                toggle(i) => { WorkflowState.toggle(i); }
+                move(i, d) => { WorkflowState.move(i, d); }
+            }
+        }
+        if link-format-visible: Row {
+            icon: Icons.code;
+            title: "Copied link format";
+            description: "What gets pasted when you press Ctrl+V";
+            Select {
+                model: SettingsState.link-format-options;
+                current-value: SettingsState.copied-link-format;
+                selected(v) => { SettingsState.update-choice("general.copied_link_format", v); }
+            }
+        }
+        if other-workflows-visible: Row {
+            icon: Icons.gear;
+            title: "Other workflows";
+            description: "Per-hotkey workflows are edited in the app under Workflows";
+            Button {
+                label: WorkflowState.workflow-count + " workflows";
+                clicked => { WorkflowState.open-workflows(); }
+            }
+        }
+    }
+}

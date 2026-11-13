@@ -1,0 +1,269 @@
+import { Tokens } from "tokens.slint";
+import { Icons } from "icons.slint";
+import { Toggle, Row, Section, Segmented, Select, PageHeader, Card, Button, Icon, Field } from "widgets.slint";
+import { SettingsState, UploadsState, DestinationRowData } from "state.slint";
+import { DestinationFormPanel } from "destination_forms.slint";
+
+component DestinationCard inherits Rectangle {
+    in property <DestinationRowData> data;
+    in property <bool> busy: false;
+    callback configure(string);
+    min-height: 64px;
+    background: transparent;
+    if root.data.index > 0: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: 1px;
+        background: Tokens.stroke;
+    }
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 16px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                horizontal-stretch: 0;
+                width: 36px;
+                height: 36px;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: Tokens.stroke;
+                background: Tokens.subtle;
+                VerticalLayout {
+                    alignment: center;
+                    HorizontalLayout {
+                        alignment: center;
+                        Icon {
+                            size: 18px;
+                            tint: Tokens.text2;
+                            d: root.data.kind == "s3" ? Icons.bucket : (root.data.kind == "gist" ? Icons.code : (root.data.kind == "sftp" ? Icons.server : (root.data.kind == "custom" ? Icons.cloud : Icons.image)));
+                        }
+                    }
+                }
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text { text: root.data.name; color: Tokens.text; font-size: 14px; }
+            Text { text: root.data.detail; color: Tokens.text3; font-size: 12px; }
+        }
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                horizontal-stretch: 0;
+                height: 22px;
+                border-radius: 11px;
+                background: root.data.configured ? Tokens.ok-soft : Tokens.subtle;
+                preferred-width: badge-row.preferred-width;
+                badge-row := HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 6px;
+                    alignment: center;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 6px;
+                            height: 6px;
+                            border-radius: 3px;
+                            background: root.data.configured ? Tokens.ok : Tokens.text3;
+                        }
+                    }
+                    Text {
+                        text: root.data.status;
+                        color: root.data.configured ? Tokens.ok : Tokens.text2;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                horizontal-stretch: 0;
+                width: 96px;
+                height: 32px;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: Tokens.stroke;
+                background: Tokens.layer;
+                opacity: root.busy ? 0.45 : 1;
+                Text { text: root.data.action; color: Tokens.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { enabled: !root.busy; clicked => { root.configure(root.data.id); } }
+            }
+        }
+    }
+}
+
+component AddMenuItem inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    callback clicked();
+    height: 34px;
+    border-radius: 4px;
+    background: ta.has-hover ? Tokens.subtle : transparent;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        VerticalLayout { alignment: center; Icon { d: root.icon; size: 16px; tint: Tokens.text; } }
+        Text { text: root.label; color: Tokens.text; font-size: 13px; vertical-alignment: center; }
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+export component UploadsPage inherits VerticalLayout {
+    in property <string> filter;
+    horizontal-stretch: 1;
+    spacing: 28px;
+    vertical-stretch: 0;
+
+    property <bool> images-visible: SettingsState.text-matches("Images", "", root.filter);
+    property <bool> videos-visible: SettingsState.text-matches("Videos and GIFs", "", root.filter);
+    property <bool> text-visible: SettingsState.text-matches("Text and code", "", root.filter);
+    property <bool> files-visible: SettingsState.text-matches("Other files", "", root.filter);
+    property <bool> shortener-visible: SettingsState.text-matches("Link shortener", "", root.filter);
+    property <bool> show-defaults: SettingsState.text-matches("Default destinations", "Where each kind of capture goes when “Upload” runs.", root.filter)
+        || images-visible || videos-visible || text-visible || files-visible || shortener-visible;
+
+    property <bool> accounts-visible: UploadsState.accounts-visible(root.filter);
+
+    property <bool> strip-visible: SettingsState.text-matches("Remove location and camera data", "Strip EXIF metadata before anything leaves your PC", root.filter);
+    property <bool> clipboard-visible: SettingsState.text-matches("Ask before uploading from the clipboard", "Avoid sending something you copied by mistake", root.filter);
+    property <bool> retry-visible: SettingsState.text-matches("Retry failed uploads", "", root.filter);
+    property <bool> timeout-visible: SettingsState.text-matches("Upload timeout", "", root.filter);
+    property <bool> history-visible: SettingsState.text-matches("Keep upload history", "Links and deletion links shown in History", root.filter);
+    property <bool> proxy-visible: SettingsState.text-matches("Proxy", "http://host:port", root.filter)
+        || SettingsState.text-matches("Custom proxy", "", root.filter);
+    property <bool> show-behaviour: SettingsState.text-matches("Upload behaviour", "", root.filter)
+        || strip-visible || clipboard-visible || retry-visible || timeout-visible || history-visible || proxy-visible;
+
+    PageHeader { title: "Upload destinations"; }
+
+    if show-defaults: Section {
+        heading: "Default destinations";
+        caption: "Where each kind of capture goes when “Upload” runs.";
+        if images-visible: Row { icon: Icons.image; title: "Images";
+            Select { model: UploadsState.images-options; current-value: UploadsState.images;
+                selected(v) => { UploadsState.update-choice("uploads.images", v); } } }
+        if videos-visible: Row { icon: Icons.film; title: "Videos and GIFs";
+            Select { model: UploadsState.videos-options; current-value: UploadsState.videos;
+                selected(v) => { UploadsState.update-choice("uploads.videos_and_gifs", v); } } }
+        if text-visible: Row { icon: Icons.text; title: "Text and code";
+            Select { model: UploadsState.text-options; current-value: UploadsState.text;
+                selected(v) => { UploadsState.update-choice("uploads.text_and_code", v); } } }
+        if files-visible: Row { icon: Icons.file; title: "Other files";
+            Select { model: UploadsState.other-options; current-value: UploadsState.other-files;
+                selected(v) => { UploadsState.update-choice("uploads.other_files", v); } } }
+        if shortener-visible: Row { icon: Icons.short; title: "Link shortener";
+            Select { model: UploadsState.shortener-options; current-value: UploadsState.link-shortener;
+                selected(v) => { UploadsState.update-choice("uploads.link_shortener", v); } } }
+    }
+
+    if accounts-visible: VerticalLayout {
+        spacing: 4px;
+        vertical-stretch: 0;
+        HorizontalLayout {
+            padding-bottom: 4px;
+            Text { horizontal-stretch: 1; text: "Accounts and uploaders"; color: Tokens.text; font-size: 14px; font-weight: 600; vertical-alignment: center; }
+            add-button := Rectangle {
+                width: 151px;
+                height: 32px;
+                border-radius: 4px;
+                background: Tokens.accent;
+                opacity: UploadsState.busy ? 0.45 : 1;
+                property <bool> menu-requested: UploadsState.add-open;
+                changed menu-requested => {
+                    if (self.menu-requested) { add-popup.show(); UploadsState.add-open = false; }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+                    VerticalLayout { alignment: center; Icon { d: Icons.plus; size: 16px; tint: Tokens.on-accent; } }
+                    Text { text: "Add destination"; color: Tokens.on-accent; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+                }
+                TouchArea { enabled: !UploadsState.busy; clicked => { add-popup.show(); } }
+                add-popup := PopupWindow {
+                    x: parent.width - 196px;
+                    y: parent.height + 4px;
+                    width: 196px;
+                    Rectangle {
+                        background: Tokens.menu-layer;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: Tokens.stroke-hi;
+                        height: 5 * 34px + 4 * 2px + 16px;
+                        VerticalLayout {
+                            padding: 8px;
+                            spacing: 2px;
+                            AddMenuItem { label: "Amazon S3"; icon: Icons.bucket; clicked => { add-popup.close(); UploadsState.add-destination("s3"); } }
+                            AddMenuItem { label: "GitHub Gist"; icon: Icons.code; clicked => { add-popup.close(); UploadsState.add-destination("gist"); } }
+                            AddMenuItem { label: "SFTP"; icon: Icons.server; clicked => { add-popup.close(); UploadsState.add-destination("sftp"); } }
+                            AddMenuItem { label: "Custom uploader"; icon: Icons.cloud; clicked => { add-popup.close(); UploadsState.add-destination("custom"); } }
+                            AddMenuItem { label: "Import ShareX .sxcu"; icon: Icons.cloud; clicked => { add-popup.close(); UploadsState.import-sxcu(); } }
+                        }
+                    }
+                }
+            }
+        }
+        if UploadsState.destinations.length == 0: Card {
+            height: 120px;
+            VerticalLayout {
+                alignment: center;
+                spacing: 4px;
+                Text { text: "No destinations yet"; color: Tokens.text; font-size: 13px; horizontal-alignment: center; }
+                Text { text: "Add a destination to upload captures."; color: Tokens.text3; font-size: 12px; horizontal-alignment: center; }
+            }
+        }
+        if UploadsState.destinations.length > 0: Card {
+            VerticalLayout {
+                for destination in UploadsState.destinations: DestinationCard {
+                    data: destination;
+                    busy: UploadsState.busy;
+                    configure(id) => { UploadsState.open-destination(id); }
+                }
+            }
+        }
+        if UploadsState.destination-error != "": Text { text: UploadsState.destination-error; color: Tokens.err; font-size: 12px; wrap: word-wrap; }
+        if UploadsState.import-warning != "": Text { text: UploadsState.import-warning; color: Tokens.text3; font-size: 12px; wrap: word-wrap; }
+        if UploadsState.active-id != "": DestinationFormPanel {}
+    }
+
+    if show-behaviour: Section {
+        heading: "Upload behaviour";
+        if strip-visible: Row { icon: Icons.shield; title: "Remove location and camera data"; description: "Strip EXIF metadata before anything leaves your PC";
+            Toggle { checked: UploadsState.strip-exif; toggled(v) => { UploadsState.update-bool("uploads.strip_exif", v); } } }
+        if clipboard-visible: Row { icon: Icons.clip; title: "Ask before uploading from the clipboard"; description: "Avoid sending something you copied by mistake";
+            Toggle { checked: UploadsState.ask-clipboard; toggled(v) => { UploadsState.update-bool("uploads.ask_before_clipboard_upload", v); } } }
+        if retry-visible: Row { icon: Icons.redo; title: "Retry failed uploads";
+            Select { model: UploadsState.retry-options; current-value: UploadsState.retry;
+                selected(v) => { UploadsState.update-choice("uploads.retry", v); } } }
+        if timeout-visible: Row { icon: Icons.timer; title: "Upload timeout";
+            Segmented { options: UploadsState.timeout-options; value: UploadsState.timeout;
+                picked(v) => { UploadsState.update-choice("uploads.timeout", v); } } }
+        if history-visible: Row { icon: Icons.history; title: "Keep upload history"; description: "Links and deletion links shown in History";
+            Select { model: UploadsState.keep-history-options; current-value: UploadsState.keep-history;
+                selected(v) => { UploadsState.update-choice("uploads.keep_history", v); } } }
+        if proxy-visible: Row { icon: Icons.globe; title: "Proxy";
+            Select { model: UploadsState.proxy-options; current-value: UploadsState.proxy;
+                selected(v) => { UploadsState.update-choice("uploads.proxy", v); } } }
+        if proxy-visible && UploadsState.proxy == "Custom proxy…": Row {
+            icon: Icons.globe;
+            title: "Custom proxy";
+            Field {
+                width: 320px;
+                mono: true;
+                placeholder: "http://host:port";
+                text <=> UploadsState.custom-proxy;
+                edited(v) => { UploadsState.update-text("uploads.proxy_url", v); }
+            }
+        }
+    }
+}
