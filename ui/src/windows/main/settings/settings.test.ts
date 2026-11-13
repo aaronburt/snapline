@@ -49,7 +49,7 @@ describe('toView', () => {
     expect(view.uploads.proxy).toBe('Use system proxy');
     expect(view.hotkeys.captureRegion).toBe('PrtSc');
     expect(view.hotkeys.takeOverPrtSc).toBe(true);
-    expect(view.general.trayClickCapture).toBe(false);
+    expect(view.general.trayClickCapture).toBe(true);
   });
 
   it('keeps a missing optional path empty', () => {
