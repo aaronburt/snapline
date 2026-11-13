@@ -108,6 +108,10 @@ export component Button inherits Rectangle {
     in property <string> icon;
     in property <bool> disabled: false;
     callback clicked();
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: !root.disabled;
+    accessible-action-default => { root.clicked(); }
     height: 34px;
     border-radius: 4px;
     border-width: 1px;

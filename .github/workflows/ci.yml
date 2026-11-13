@@ -48,6 +48,25 @@ jobs:
       - name: Test
         run: cargo test --workspace -- --skip crash::tests::panic_child_process
 
+  ui-e2e:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-build
+      - name: Build app
+        run: cargo build -p snapline
+      - name: Drive the UI and screenshot every stage
+        shell: pwsh
+        run: ./tests/ui-e2e/run.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-e2e-screenshots
+          path: target/ui-e2e/
+          if-no-files-found: warn
+          retention-days: 14
+
   package:
     runs-on: windows-latest
     steps:
