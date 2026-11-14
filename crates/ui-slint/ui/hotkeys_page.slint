@@ -16,6 +16,7 @@ component HotkeyRowView inherits Rectangle {
         : root.data.owner == "tool_colour" ? Icons.palette
         : root.data.owner == "tool_ruler" ? Icons.ruler
         : root.data.owner == "upload_clipboard" ? Icons.clip : Icons.hotkeys;
+    property <length> field-width: max(170px, min(354px, root.width * 0.46));
     min-height: 68px;
     vertical-stretch: 0;
     background: Tokens.card;
@@ -33,14 +34,17 @@ component HotkeyRowView inherits Rectangle {
             horizontal-stretch: 1;
             alignment: center;
             spacing: 2px;
-            Text { text: root.data.label; color: Tokens.text; font-size: 14px; }
-            if root.data.description != "": Text { text: root.data.description; color: Tokens.text3; font-size: 12px; }
+            Text { text: root.data.label; color: Tokens.text; font-size: 14px; overflow: elide; }
+            if root.data.description != "": Text { text: root.data.description; color: Tokens.text3; font-size: 12px; wrap: word-wrap; }
             if root.data.clash != "": Text { text: root.data.clash; color: Tokens.err; font-size: 12px; wrap: word-wrap; }
         }
         VerticalLayout {
             alignment: center;
+            horizontal-stretch: 0;
+            min-width: root.field-width;
+            preferred-width: root.field-width;
+            max-width: root.field-width;
             HotkeyField {
-                width: 354px;
                 chord: root.data.chord;
                 clash: root.data.clash;
                 committed(value) => { root.chord-committed(root.data.owner, value); }
