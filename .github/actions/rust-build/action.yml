@@ -1,6 +1,11 @@
 name: Rust build setup
 description: Install the toolchain, restore the Rust and FFmpeg caches and fetch FFmpeg
 
+inputs:
+  cache-key:
+    description: Extra Rust cache key that keeps builds with different cargo profiles apart
+    default: ''
+
 runs:
   using: composite
   steps:
@@ -11,6 +16,7 @@ runs:
     - uses: Swatinem/rust-cache@v2
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
+        key: ${{ inputs.cache-key }}
     - name: Cache FFmpeg
       id: ffmpeg
       uses: actions/cache@v6
