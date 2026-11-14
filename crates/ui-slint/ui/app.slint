@@ -15,8 +15,10 @@ component NavItem inherits Rectangle {
     in property <string> icon;
     in property <string> count;
     in property <bool> selected;
+    in property <bool> collapsed;
     in property <length> row-height: 38px;
     callback clicked();
+    callback hover-changed(bool, length);
     accessible-role: button;
     accessible-label: root.label;
     accessible-action-default => { root.clicked(); }
@@ -32,14 +34,18 @@ component NavItem inherits Rectangle {
         background: Tokens.accent;
     }
     HorizontalLayout {
-        padding-left: 16px;
-        padding-right: 12px;
+        padding-left: root.collapsed ? 0px : 16px;
+        padding-right: root.collapsed ? 0px : 12px;
         spacing: 12px;
+        alignment: root.collapsed ? center : stretch;
         VerticalLayout { alignment: center; Icon { d: root.icon; size: 16px; tint: Tokens.text; } }
-        Text { horizontal-stretch: 1; text: root.label; color: Tokens.text; font-size: 13px; vertical-alignment: center; overflow: elide; }
-        if root.count != "": Text { text: root.count; color: Tokens.text3; font-size: 12px; vertical-alignment: center; }
+        if !root.collapsed: Text { horizontal-stretch: 1; text: root.label; color: Tokens.text; font-size: 13px; vertical-alignment: center; overflow: elide; }
+        if !root.collapsed && root.count != "": Text { text: root.count; color: Tokens.text3; font-size: 12px; vertical-alignment: center; }
     }
-    ta := TouchArea { clicked => { root.clicked(); } }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+        changed has-hover => { root.hover-changed(self.has-hover, root.absolute-position.y); }
+    }
 }
 
 export component SnaplineWindow inherits Window {
@@ -47,7 +53,7 @@ export component SnaplineWindow inherits Window {
     icon: @image-url("../../../apps/snapline/icons/icon.png");
     preferred-width: 1000px;
     preferred-height: 700px;
-    min-width: 900px;
+    min-width: 700px;
     min-height: 600px;
     background: Tokens.mica;
     default-font-family: "Segoe UI Variable Text";
@@ -56,6 +62,14 @@ export component SnaplineWindow inherits Window {
     in-out property <int> page: 0;
     in-out property <float> scroll-y: 0;
     in-out property <length> nav-width: 248px;
+    in-out property <int> nav-override: 0;
+    in-out property <string> nav-tip;
+    in-out property <length> nav-tip-y: 0px;
+    property <bool> narrow: false;
+    property <bool> medium: false;
+    property <bool> nav-collapsed: root.nav-override == 1 || (root.nav-override == 0 && root.narrow);
+    property <length> nav-current-width: root.nav-collapsed ? 56px : root.nav-width;
+    property <length> page-pad: (root.page == 4 || root.page == 6 || root.medium) ? 24px : 40px;
     in-out property <string> find;
     in-out property <string> settings-find;
     in-out property <string> history-find;
@@ -91,6 +105,27 @@ export component SnaplineWindow inherits Window {
         }
     }
 
+    function nav-hover(on: bool, text: string, y: length) {
+        if (on) {
+            root.nav-tip = text;
+            root.nav-tip-y = y;
+        } else if (root.nav-tip == text) {
+            root.nav-tip = "";
+        }
+    }
+
+    function track-width() {
+        root.narrow = root.width < 820px;
+        root.medium = root.width < 900px;
+    }
+
+    init => { root.track-width(); }
+    changed width => { root.track-width(); }
+
+    changed nav-collapsed => {
+        root.nav-tip = "";
+    }
+
     changed page => {
         root.scroll-y = 0;
         root.sync-find-for-page();
@@ -115,14 +150,29 @@ export component SnaplineWindow inherits Window {
         }
     HorizontalLayout {
         VerticalLayout {
-            width: root.nav-width;
-            padding-left: 12px;
-            padding-right: 12px;
+            width: root.nav-current-width;
+            padding-left: root.nav-collapsed ? 8px : 12px;
+            padding-right: root.nav-collapsed ? 8px : 12px;
             padding-top: 4px;
-            padding-bottom: 16px;
+            padding-bottom: 12px;
             spacing: 2px;
             Rectangle { height: 6px; }
-            Rectangle {
+            if root.nav-collapsed: Rectangle {
+                height: 34px;
+                background: Tokens.card;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: Tokens.stroke;
+                accessible-role: button;
+                accessible-label: "Search";
+                accessible-action-default => { root.nav-override = 2; }
+                Icon { x: (parent.width - 14px) / 2; y: (parent.height - 14px) / 2; d: Icons.search; size: 14px; tint: root.find != "" ? Tokens.accent : Tokens.text3; sw: 2; }
+                search-ta := TouchArea {
+                    clicked => { root.nav-override = 2; }
+                    changed has-hover => { root.nav-hover(self.has-hover, "Search", parent.absolute-position.y); }
+                }
+            }
+            if !root.nav-collapsed: Rectangle {
                 height: 34px;
                 background: Tokens.card;
                 border-radius: 4px;
@@ -176,20 +226,24 @@ export component SnaplineWindow inherits Window {
             }
             Rectangle { height: 11px; }
             HorizontalLayout {
-                padding-left: 4px;
-                padding-right: 4px;
+                padding-left: root.nav-collapsed ? 0px : 4px;
+                padding-right: root.nav-collapsed ? 0px : 4px;
                 Rectangle {
                     height: 40px;
                     background: Tokens.accent;
                     border-radius: 6px;
                     opacity: nc-ta.pressed ? 0.85 : (nc-ta.has-hover ? 0.92 : 1.0);
+                    accessible-role: button;
+                    accessible-label: "New capture";
+                    accessible-action-default => { SettingsState.run-capture(); }
                     HorizontalLayout {
-                        padding-left: 12px;
-                        padding-right: 12px;
+                        padding-left: root.nav-collapsed ? 0px : 12px;
+                        padding-right: root.nav-collapsed ? 0px : 12px;
                         spacing: 10px;
+                        alignment: root.nav-collapsed ? center : stretch;
                         VerticalLayout { alignment: center; Icon { d: Icons.region; size: 16px; tint: Tokens.on-accent; sw: 1.8; } }
-                        Text { horizontal-stretch: 1; text: "New capture"; color: Tokens.on-accent; font-size: 13px; font-weight: 600; vertical-alignment: center; }
-                        if SettingsState.capture-hotkey != "": Text {
+                        if !root.nav-collapsed: Text { horizontal-stretch: 1; text: "New capture"; color: Tokens.on-accent; font-size: 13px; font-weight: 600; vertical-alignment: center; overflow: elide; }
+                        if !root.nav-collapsed && SettingsState.capture-hotkey != "": Text {
                             text: SettingsState.capture-hotkey;
                             color: Tokens.on-accent;
                             font-size: 11px;
@@ -198,22 +252,38 @@ export component SnaplineWindow inherits Window {
                             vertical-alignment: center;
                         }
                     }
-                    nc-ta := TouchArea { clicked => { SettingsState.run-capture(); } }
+                    nc-ta := TouchArea {
+                        clicked => { SettingsState.run-capture(); }
+                        changed has-hover => {
+                            root.nav-hover(self.has-hover, SettingsState.capture-hotkey != "" ? "New capture (" + SettingsState.capture-hotkey + ")" : "New capture", parent.absolute-position.y);
+                        }
+                    }
                 }
             }
             Rectangle { height: 7px; }
-            NavItem { label: "History"; icon: Icons.history; count: root.history-count; selected: root.page == 3; clicked => { root.page = 3; } }
-            NavItem { label: "Workflows"; icon: Icons.workflows; selected: root.page == 4; clicked => { root.page = 4; } }
-            NavItem { label: "Tools"; icon: Icons.tools; selected: root.page == 6; clicked => { root.page = 6; } }
+            NavItem { collapsed: root.nav-collapsed; label: "History"; icon: Icons.history; count: root.history-count; selected: root.page == 3; clicked => { root.page = 3; } hover-changed(on, y) => { root.nav-hover(on, "History", y); } }
+            NavItem { collapsed: root.nav-collapsed; label: "Workflows"; icon: Icons.workflows; selected: root.page == 4; clicked => { root.page = 4; } hover-changed(on, y) => { root.nav-hover(on, "Workflows", y); } }
+            NavItem { collapsed: root.nav-collapsed; label: "Tools"; icon: Icons.tools; selected: root.page == 6; clicked => { root.page = 6; } hover-changed(on, y) => { root.nav-hover(on, "Tools", y); } }
             Rectangle { vertical-stretch: 1; }
-            HorizontalLayout { padding-left: 12px; padding-top: 8px; padding-bottom: 4px; Text { text: "Settings"; color: Tokens.text3; font-size: 12px; font-weight: 600; } }
-            NavItem { row-height: 40px; label: "General"; icon: Icons.gear; selected: root.page == 0; clicked => { root.page = 0; } }
-            NavItem { row-height: 40px; label: "Capture"; icon: Icons.region; selected: root.page == 1; clicked => { root.page = 1; } }
-            NavItem { row-height: 40px; label: "Hotkeys"; icon: Icons.grid; selected: root.page == 2; clicked => { root.page = 2; } }
-            NavItem { row-height: 40px; label: "Upload destinations"; icon: Icons.cloud; selected: root.page == 5; clicked => { root.page = 5; } }
+            if !root.nav-collapsed: HorizontalLayout { padding-left: 12px; padding-top: 8px; padding-bottom: 4px; Text { text: "Settings"; color: Tokens.text3; font-size: 12px; font-weight: 600; } }
+            if root.nav-collapsed: Rectangle { height: 13px; Rectangle { y: 6px; height: 1px; background: Tokens.stroke; } }
+            NavItem { collapsed: root.nav-collapsed; row-height: 40px; label: "General"; icon: Icons.gear; selected: root.page == 0; clicked => { root.page = 0; } hover-changed(on, y) => { root.nav-hover(on, "General", y); } }
+            NavItem { collapsed: root.nav-collapsed; row-height: 40px; label: "Capture"; icon: Icons.region; selected: root.page == 1; clicked => { root.page = 1; } hover-changed(on, y) => { root.nav-hover(on, "Capture", y); } }
+            NavItem { collapsed: root.nav-collapsed; row-height: 40px; label: "Hotkeys"; icon: Icons.grid; selected: root.page == 2; clicked => { root.page = 2; } hover-changed(on, y) => { root.nav-hover(on, "Hotkeys", y); } }
+            NavItem { collapsed: root.nav-collapsed; row-height: 40px; label: "Upload destinations"; icon: Icons.cloud; selected: root.page == 5; clicked => { root.page = 5; } hover-changed(on, y) => { root.nav-hover(on, "Upload destinations", y); } }
+            Rectangle { height: 6px; }
+            NavItem {
+                collapsed: root.nav-collapsed;
+                row-height: 36px;
+                label: root.nav-collapsed ? "Expand sidebar" : "Collapse sidebar";
+                icon: Icons.sidebar;
+                clicked => { root.nav-override = root.nav-collapsed ? 2 : 1; }
+                hover-changed(on, y) => { root.nav-hover(on, root.nav-collapsed ? "Expand sidebar" : "Collapse sidebar", y); }
+            }
         }
         Rectangle {
-            width: 6px;
+            width: root.nav-collapsed ? 0px : 6px;
+            visible: !root.nav-collapsed;
             background: (div-ta.has-hover || div-ta.pressed) ? Tokens.stroke : transparent;
             div-ta := TouchArea {
                 property <length> drag-start-x: 0px;
@@ -267,9 +337,9 @@ export component SnaplineWindow inherits Window {
                     self.content-y = 0px;
                 }
                 content := VerticalLayout {
-                    x: root.page == 4 || root.page == 6 ? 24px : 40px;
+                    x: root.page-pad;
                     y: 20px;
-                    width: parent.width - (root.page == 4 || root.page == 6 ? 48px : 80px);
+                    width: parent.width - root.page-pad * 2;
                     alignment: start;
                     if root.page == 0: GeneralPage { filter: root.settings-find; }
                     if root.page == 1: CapturePage { filter: root.settings-find; }
@@ -280,6 +350,20 @@ export component SnaplineWindow inherits Window {
                 }
             }
         }
+    }
+    if root.nav-collapsed && root.nav-tip != "": Rectangle {
+        x: 60px;
+        y: root.nav-tip-y + 4px;
+        height: 28px;
+        width: tip-text.preferred-width + 20px;
+        background: Tokens.menu-layer;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: Tokens.stroke-hi;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: Tokens.shadow;
+        drop-shadow-offset-y: 2px;
+        tip-text := Text { x: 10px; width: parent.width - 20px; height: parent.height; text: root.nav-tip; color: Tokens.text; font-size: 12px; vertical-alignment: center; }
     }
     }
 }
