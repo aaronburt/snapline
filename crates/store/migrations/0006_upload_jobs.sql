@@ -33,3 +33,8 @@ CREATE TABLE upload_job (
 CREATE INDEX upload_job_state ON upload_job(state, id);
 CREATE INDEX upload_job_capture ON upload_job(capture_id, id DESC);
 CREATE INDEX upload_job_operation ON upload_job(operation_id) WHERE operation_id IS NOT NULL;
+CREATE TABLE upload_queue_state (
+  id     INTEGER PRIMARY KEY CHECK (id = 1),
+  paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0, 1))
+);
+INSERT INTO upload_queue_state (id, paused) VALUES (1, 0);

@@ -383,6 +383,35 @@ impl HistoryRepo {
         )?)
     }
 
+    pub fn queue_paused(&self) -> Result<bool, HistoryError> {
+        Ok(self.conn.query_row(
+            "SELECT paused FROM upload_queue_state WHERE id = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )? != 0)
+    }
+
+    pub fn set_queue_paused(&mut self, paused: bool) -> Result<(), HistoryError> {
+        self.conn.execute(
+            "UPDATE upload_queue_state SET paused = ?1 WHERE id = 1",
+            [i64::from(paused)],
+        )?;
+        Ok(())
+    }
+
+    pub fn rebind_job(
+        &mut self,
+        id: JobId,
+        fingerprint: &str,
+        now: i64,
+    ) -> Result<bool, HistoryError> {
+        let changed = self.conn.execute(
+            "UPDATE upload_job SET config_fingerprint = ?2, updated_at = ?3 WHERE id = ?1 AND state NOT IN ('complete', 'uploading')",
+            params![id, fingerprint, now],
+        )?;
+        Ok(changed == 1)
+    }
+
     pub fn prune_jobs(&mut self, cutoff: i64) -> Result<Vec<Job>, HistoryError> {
         let transaction = self.conn.transaction()?;
         let pruned = {
@@ -681,6 +710,38 @@ mod tests {
             .interrupted_jobs(OWNER)
             .expect("interrupted")
             .is_empty());
+    }
+
+    #[test]
+    fn the_queue_pause_flag_persists_across_reopening() {
+        let (directory, mut repo) = repo();
+        assert!(!repo.queue_paused().expect("read"));
+        repo.set_queue_paused(true).expect("pause");
+        drop(repo);
+        let mut reopened =
+            HistoryRepo::open_write(&directory.path().join("history.db")).expect("reopen");
+        assert!(reopened.queue_paused().expect("read"));
+        reopened.set_queue_paused(false).expect("resume");
+        assert!(!reopened.queue_paused().expect("read"));
+    }
+
+    #[test]
+    fn rebinding_changes_the_fingerprint_only_while_the_job_is_not_running_or_complete() {
+        let (_directory, mut repo) = repo();
+        let capture_id = capture(&mut repo);
+        let job = repo
+            .create_job(new_job(Some(capture_id), JobState::Queued))
+            .expect("create");
+        assert!(repo.rebind_job(job.id, "fp-2", NOW + 1).expect("rebind"));
+        assert_eq!(
+            repo.job(job.id)
+                .expect("read")
+                .expect("job")
+                .config_fingerprint,
+            "fp-2"
+        );
+        repo.claim_job(job.id, OWNER, NOW + 2).expect("claim");
+        assert!(!repo.rebind_job(job.id, "fp-3", NOW + 3).expect("rebind"));
     }
 
     #[test]

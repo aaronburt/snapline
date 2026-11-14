@@ -432,6 +432,12 @@ mod tests {
             .query_row("SELECT count(*) FROM upload_job", [], |row| row.get(0))
             .expect("jobs");
         assert_eq!((uploads, jobs), (1, 0));
+        let paused: i64 = upgraded
+            .query_row("SELECT paused FROM upload_queue_state", [], |row| {
+                row.get(0)
+            })
+            .expect("queue state");
+        assert_eq!(paused, 0);
         let rejected = upgraded.execute(
             "INSERT INTO upload_job (dest_id, config_fingerprint, file_name, content_type, file_path, file_len, file_modified_ms, state, created_at, updated_at) VALUES ('d', 'f', 'a', 'x', 'p', 1, 1, 'bogus', 1, 1)",
             [],
