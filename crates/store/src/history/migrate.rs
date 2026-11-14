@@ -6,7 +6,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 
 use super::HistoryError;
 
-pub const CURRENT_VERSION: u32 = 5;
+pub const CURRENT_VERSION: u32 = 6;
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(5000);
 
 const MIGRATIONS: &[&str] = &[
@@ -15,6 +15,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0003_capture_sequence.sql"),
     include_str!("../../migrations/0004_files.sql"),
     include_str!("../../migrations/0005_revisions.sql"),
+    include_str!("../../migrations/0006_upload_jobs.sql"),
 ];
 static MIGRATION_LOCK: Mutex<()> = Mutex::new(());
 
@@ -402,6 +403,46 @@ mod tests {
                  INSERT INTO capture (id, kind, path, bytes, created_at) VALUES (4, 'image', 'd.png', 1, 1);",
             )
             .expect("captures without an operation are unconstrained");
+    }
+
+    #[test]
+    fn migration_six_adds_the_job_table_without_touching_existing_rows() {
+        let (_directory, path) = database();
+        let connection = Connection::open(&path).expect("open version five");
+        for migration in &MIGRATIONS[..5] {
+            connection.execute_batch(migration).expect("seed schema");
+        }
+        connection
+            .pragma_update(None, "user_version", 5)
+            .expect("version");
+        connection
+            .execute_batch(
+                "INSERT INTO capture (id, kind, path, bytes, created_at) VALUES (7, 'image', 'shot.png', 10, 1);
+                 INSERT INTO upload (id, capture_id, dest_id, state, updated_at) VALUES (9, 7, 'sftp', 'done', 2);",
+            )
+            .expect("seed history");
+        drop(connection);
+
+        let upgraded = open_write(&path).expect("upgrade");
+        assert_eq!(schema_version(&upgraded).expect("version"), CURRENT_VERSION);
+        let uploads: i64 = upgraded
+            .query_row("SELECT count(*) FROM upload", [], |row| row.get(0))
+            .expect("uploads");
+        let jobs: i64 = upgraded
+            .query_row("SELECT count(*) FROM upload_job", [], |row| row.get(0))
+            .expect("jobs");
+        assert_eq!((uploads, jobs), (1, 0));
+        let paused: i64 = upgraded
+            .query_row("SELECT paused FROM upload_queue_state", [], |row| {
+                row.get(0)
+            })
+            .expect("queue state");
+        assert_eq!(paused, 0);
+        let rejected = upgraded.execute(
+            "INSERT INTO upload_job (dest_id, config_fingerprint, file_name, content_type, file_path, file_len, file_modified_ms, state, created_at, updated_at) VALUES ('d', 'f', 'a', 'x', 'p', 1, 1, 'bogus', 1, 1)",
+            [],
+        );
+        assert!(rejected.is_err());
     }
 
     #[test]
