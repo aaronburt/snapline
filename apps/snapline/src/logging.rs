@@ -8,6 +8,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
 const KEEP: usize = 7;
+const LOG_BUFFER_LINES: usize = 1024;
 const FILE_PREFIX: &str = "snapline.";
 const FILE_SUFFIX: &str = ".log";
 
@@ -85,7 +86,9 @@ pub fn init() {
             return;
         }
     };
-    let (writer, guard) = tracing_appender::non_blocking(appender);
+    let (writer, guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
+        .buffered_lines_limit(LOG_BUFFER_LINES)
+        .finish(appender);
     let _ = GUARD.set(guard);
     let subscriber = tracing_subscriber::fmt()
         .with_max_level(Level::INFO)
