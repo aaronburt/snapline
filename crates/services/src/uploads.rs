@@ -1,7 +1,8 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{unbounded, Receiver};
+use crossbeam_channel::{bounded, unbounded, Receiver, RecvTimeoutError};
 use serde::{Deserialize, Serialize};
 use snapline_core::actions::ActionId;
 use snapline_core::media::MediaKind;
@@ -386,6 +387,7 @@ pub struct UploadRuntime {
     pub(crate) queue: queue::Handle,
     pub(crate) files: Arc<dyn FileSource>,
     pub(crate) destinations: Arc<dyn DestinationSource>,
+    pub(crate) waiting: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -511,6 +513,22 @@ impl UploadService {
                     .map_err(queue_error)?;
                 Ok(UploadResp::Accepted { id: id.get() })
             }
+            UploadReq::HoldForHistory {
+                operation_id,
+                path,
+                dest,
+            } => {
+                let runtime = self.runtime()?;
+                let id = crate::upload_journal::hold_for_history(
+                    &self.services,
+                    runtime.destinations.as_ref(),
+                    &operation_id,
+                    std::path::Path::new(&path),
+                    &dest,
+                )?;
+                runtime.waiting.store(true, Ordering::SeqCst);
+                Ok(UploadResp::Accepted { id })
+            }
             UploadReq::Destination(req) => self.handle_destination(req),
         }
     }
@@ -619,6 +637,43 @@ pub struct UploaderThread {
     events: Option<Receiver<AppEvent>>,
     service: UploadService,
     runtime: UploadRuntime,
+    stop: Option<crossbeam_channel::Sender<()>>,
+    releaser: Option<std::thread::JoinHandle<()>>,
+}
+
+const RELEASE_INTERVAL: Duration = if cfg!(test) {
+    Duration::from_millis(40)
+} else {
+    Duration::from_secs(2)
+};
+
+fn spawn_releaser(
+    services: Services,
+    runtime: UploadRuntime,
+    stopped: Receiver<()>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        while let Err(RecvTimeoutError::Timeout) = stopped.recv_timeout(RELEASE_INTERVAL) {
+            if !runtime.waiting.swap(false, Ordering::SeqCst) {
+                continue;
+            }
+            match crate::upload_journal::release_ready(
+                &services,
+                &runtime.queue,
+                runtime.destinations.as_ref(),
+            ) {
+                Ok(still_waiting) => {
+                    if still_waiting {
+                        runtime.waiting.store(true, Ordering::SeqCst);
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "uploads waiting for History could not be released");
+                    runtime.waiting.store(true, Ordering::SeqCst);
+                }
+            }
+        }
+    })
 }
 
 impl UploaderThread {
@@ -675,8 +730,11 @@ impl UploaderThread {
             queue: queue.handle(),
             files,
             destinations,
+            waiting: Arc::new(AtomicBool::new(true)),
         };
         let service = UploadService::with_runtime(services, runtime.clone());
+        let (stop, stopped) = bounded::<()>(0);
+        let releaser = spawn_releaser(services.clone(), runtime.clone(), stopped);
         Ok(Self {
             owner,
             services: services.clone(),
@@ -684,6 +742,8 @@ impl UploaderThread {
             events: None,
             service,
             runtime,
+            stop: Some(stop),
+            releaser: Some(releaser),
         })
     }
 
@@ -726,7 +786,11 @@ impl UploaderThread {
             .map_err(queue_error)
     }
 
-    pub fn join(self) -> Result<(), ServiceError> {
+    pub fn join(mut self) -> Result<(), ServiceError> {
+        drop(self.stop.take());
+        if let Some(releaser) = self.releaser.take() {
+            let _ = releaser.join();
+        }
         self.queue.join().map_err(queue_error)
     }
 }

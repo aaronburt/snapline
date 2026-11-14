@@ -375,11 +375,20 @@ impl HistoryRepo {
         operation_id: &str,
         capture_id: CaptureId,
         revision: i64,
+        file: &JobFile,
         now: i64,
     ) -> Result<usize, HistoryError> {
         Ok(self.conn.execute(
-            "UPDATE upload_job SET capture_id = ?2, revision = ?3, state = 'queued', updated_at = ?4 WHERE operation_id = ?1 AND state = 'waiting_history'",
-            params![operation_id, capture_id, revision, now],
+            "UPDATE upload_job SET capture_id = ?2, revision = ?3, state = 'queued', file_path = ?4, file_len = ?5, file_modified_ms = ?6, updated_at = ?7 WHERE operation_id = ?1 AND state = 'waiting_history'",
+            params![
+                operation_id,
+                capture_id,
+                revision,
+                file.path,
+                file.len,
+                file.modified_ms,
+                now
+            ],
         )?)
     }
 
@@ -536,12 +545,17 @@ mod tests {
         let job = repo.create_job(input).expect("create");
         assert_eq!(repo.claim_job(job.id, OWNER, NOW).expect("claim"), None);
         let capture_id = capture(&mut repo);
+        let mut moved = job.file.clone();
+        moved.path = "moved.png".to_owned();
+        moved.len = 99;
         assert_eq!(
-            repo.attach_operation("op-1", capture_id, 2, NOW + 1)
+            repo.attach_operation("op-1", capture_id, 2, &moved, NOW + 1)
                 .expect("attach"),
             1
         );
         let attached = repo.job(job.id).expect("read").expect("job");
+        assert_eq!(attached.file.path, moved.path);
+        assert_eq!(attached.file.len, 99);
         assert_eq!(attached.state, JobState::Queued);
         assert_eq!(attached.capture_id, Some(capture_id));
         assert_eq!(attached.revision, Some(2));

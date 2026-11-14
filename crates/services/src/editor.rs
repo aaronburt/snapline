@@ -103,6 +103,15 @@ pub trait EditorSaver: Send + Sync {
 
 pub trait EditorUploader: Send + Sync {
     fn enqueue(&self, capture_id: i64, destination: &str) -> Result<u64, ServiceError>;
+
+    fn hold(
+        &self,
+        _operation_id: &str,
+        _path: &Path,
+        _destination: &str,
+    ) -> Result<u64, ServiceError> {
+        Err(ServiceError::NotYet)
+    }
 }
 
 pub trait EditorPin: Send + Sync {
@@ -120,6 +129,25 @@ impl EditorSaver for crate::worker::Handle {
 }
 
 impl EditorUploader for UploadService {
+    fn hold(
+        &self,
+        operation_id: &str,
+        path: &Path,
+        destination: &str,
+    ) -> Result<u64, ServiceError> {
+        let response = self.handle(crate::dto::upload::UploadReq::HoldForHistory {
+            operation_id: operation_id.to_owned(),
+            path: path.to_string_lossy().into_owned(),
+            dest: destination.to_owned(),
+        })?;
+        match response {
+            UploadResp::Accepted { id } => Ok(id),
+            _ => Err(ServiceError::Internal(
+                "The upload could not be held.".to_owned(),
+            )),
+        }
+    }
+
     fn enqueue(&self, capture_id: i64, destination: &str) -> Result<u64, ServiceError> {
         let response = self.handle(crate::dto::upload::UploadReq::UploadElsewhere {
             capture_id,
@@ -292,7 +320,22 @@ impl EditorService {
             }
             EditorAction::Upload => {
                 let saved = ports.saver.save(image, title.to_owned())?;
-                let capture_id = saved.capture_id.ok_or_else(|| not_saved(&saved))?;
+                if saved.history_pending {
+                    let destination = self.default_destination()?;
+                    let (Some(operation_id), Some(path)) =
+                        (saved.operation_id.as_deref(), saved.path.as_deref())
+                    else {
+                        return Err(not_saved());
+                    };
+                    ports.uploader.hold(operation_id, path, &destination)?;
+                    return Ok(EditorOutcome {
+                        action: Some(EditorAction::Upload),
+                        capture_id: None,
+                        path: saved.path,
+                        cancelled: false,
+                    });
+                }
+                let capture_id = saved.capture_id.ok_or_else(|| not_saved())?;
                 let destination = self.default_destination()?;
                 let _id = ports.uploader.enqueue(capture_id, &destination)?;
                 Ok(EditorOutcome {
@@ -354,7 +397,7 @@ fn saved_outcome(action: EditorAction, saved: SaveOutcome) -> Result<EditorOutco
             cancelled: false,
         });
     }
-    let capture_id = saved.capture_id.ok_or_else(|| not_saved(&saved))?;
+    let capture_id = saved.capture_id.ok_or_else(|| not_saved())?;
     Ok(EditorOutcome {
         action: Some(action),
         capture_id: Some(capture_id),
@@ -363,12 +406,7 @@ fn saved_outcome(action: EditorAction, saved: SaveOutcome) -> Result<EditorOutco
     })
 }
 
-fn not_saved(saved: &SaveOutcome) -> ServiceError {
-    if saved.history_pending {
-        return ServiceError::Invalid(
-            "Saved locally; History pending. The upload was not started.".to_owned(),
-        );
-    }
+fn not_saved() -> ServiceError {
     ServiceError::Invalid("The image could not be saved.".to_owned())
 }
 
@@ -425,7 +463,7 @@ fn is_image(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
 
     use snapline_core::image::ImageFormat;
@@ -559,6 +597,7 @@ mod tests {
         calls: Mutex<Vec<(u32, u32, String)>>,
         capture_id: Mutex<Option<i64>>,
         path: Mutex<Option<PathBuf>>,
+        pending: AtomicBool,
     }
 
     impl EditorSaver for FakeSaver {
@@ -569,8 +608,9 @@ mod tests {
                 .push((image.width(), image.height(), title));
             let capture_id = *self.capture_id.lock().expect("capture");
             let path = self.path.lock().expect("path").clone();
+            let pending = self.pending.load(Ordering::SeqCst);
             Ok(SaveOutcome {
-                capture_id,
+                capture_id: if pending { None } else { capture_id },
                 path: path.clone(),
                 file_name: path
                     .as_ref()
@@ -580,8 +620,9 @@ mod tests {
                 width: image.width(),
                 height: image.height(),
                 copied: false,
-                saved: capture_id.is_some(),
-                history_pending: false,
+                saved: capture_id.is_some() || pending,
+                history_pending: pending,
+                operation_id: pending.then(|| "op-5".to_owned()),
                 next_counter: None,
             })
         }
@@ -590,9 +631,24 @@ mod tests {
     #[derive(Default)]
     struct FakeUploader {
         calls: Mutex<Vec<(i64, String)>>,
+        held: Mutex<Vec<(String, PathBuf, String)>>,
     }
 
     impl EditorUploader for FakeUploader {
+        fn hold(
+            &self,
+            operation_id: &str,
+            path: &Path,
+            destination: &str,
+        ) -> Result<u64, ServiceError> {
+            self.held.lock().expect("held").push((
+                operation_id.to_owned(),
+                path.to_path_buf(),
+                destination.to_owned(),
+            ));
+            Ok(8)
+        }
+
         fn enqueue(&self, capture_id: i64, destination: &str) -> Result<u64, ServiceError> {
             self.calls
                 .lock()
@@ -919,6 +975,35 @@ mod tests {
             fixture.editor(&ports).open_clipboard(),
             Err(ServiceError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn an_editor_upload_waiting_for_history_is_held_not_dropped() {
+        let fixture = fixture();
+        let mut ports = Ports::default();
+        *ports.source.content.lock().expect("content") =
+            Some(EditorClipboardContent::Image(image(3, 4)));
+        *ports.saver.path.lock().expect("path") = Some(PathBuf::from("held.png"));
+        ports.saver.pending.store(true, Ordering::SeqCst);
+        fixture
+            .services
+            .update_settings(&serde_json::json!({
+                "uploads": { "images": "imgur" }
+            }))
+            .expect("settings");
+        ports.host = Arc::new(FakeHost::with_result(EditorAction::Upload, image(3, 4)));
+        let outcome = fixture.editor(&ports).open_clipboard().expect("held");
+        assert_eq!(outcome.capture_id, None);
+        assert_eq!(outcome.path, Some(PathBuf::from("held.png")));
+        assert!(ports.uploader.calls.lock().expect("calls").is_empty());
+        assert_eq!(
+            *ports.uploader.held.lock().expect("held"),
+            vec![(
+                "op-5".to_owned(),
+                PathBuf::from("held.png"),
+                "imgur".to_owned()
+            )]
+        );
     }
 
     #[test]
