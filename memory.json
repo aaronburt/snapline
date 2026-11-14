@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "runs": [
+    {
+      "version": "0.27",
+      "commit": "a70cd6bbe2e6a147a0012e9df644d5b1c8ef675c",
+      "date": "2026-11-14",
+      "profile": "release (LTO)",
+      "runner": {
+        "os": "Microsoft Windows Server 2025 Datacenter 10.0.26100",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+        "logical_cpus": 4,
+        "ram_gb": 16.0,
+        "screen": "1024x768"
+      },
+      "method": "median of 5 readings 1 s apart per stage; Win32_PerfFormattedData_PerfProc_Process of the snapline.exe process",
+      "stages": {
+        "idle": {
+          "private_ws": 6631424,
+          "private_bytes": 7622656,
+          "working_set": 22237184
+        },
+        "main_open": {
+          "private_ws": 11505664,
+          "private_bytes": 12877824,
+          "working_set": 39366656
+        },
+        "main_closed": {
+          "private_ws": 278528,
+          "private_bytes": 10043392,
+          "working_set": 548864
+        },
+        "overlay": {
+          "private_ws": 9371648,
+          "private_bytes": 17686528,
+          "working_set": 19775488
+        },
+        "overlay_closed": {
+          "private_ws": 9424896,
+          "private_bytes": 17641472,
+          "working_set": 19918848
+        }
+      },
+      "notes": [
+        "main window did not close",
+        "overlay did not close on Esc"
+      ]
+    }
+  ]
+}
