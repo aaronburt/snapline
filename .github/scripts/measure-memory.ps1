@@ -94,7 +94,7 @@ function Visible-Windows($procId) { @([Wnd]::Visible([uint32]$procId)) }
 function Wait-Windows($procId, [bool]$want, $timeoutSec) {
     $end = (Get-Date).AddSeconds($timeoutSec)
     while ((Get-Date) -lt $end) {
-        $has = (Visible-Windows $procId).Count -gt 0
+        $has = @(Visible-Windows $procId | Where-Object { [Wnd]::Describe($_) -ne "Window Class ''" }).Count -gt 0
         if ($has -eq $want) { return $true }
         Start-Sleep -Milliseconds 250
     }
@@ -106,7 +106,15 @@ function Log-Windows($procId, $label) {
     Log ("{0}: {1} visible window(s): {2}" -f $label, $w.Count, (($w | ForEach-Object { [Wnd]::Describe($_) }) -join "; "))
 }
 
-function Close-Windows($procId) { foreach ($h in (Visible-Windows $procId)) { [Wnd]::Close($h) } }
+# Closes the app's real windows. The hidden "Winit Thread Event Target" window
+# belongs to the UI toolkit's event loop; closing it stops the running app from
+# answering later commands, so it is left alone.
+function Close-Windows($procId) {
+    foreach ($h in (Visible-Windows $procId)) {
+        if ([Wnd]::Describe($h) -eq "Window Class ''") { continue }
+        [Wnd]::Close($h)
+    }
+}
 
 function Shot($name) {
     try {
@@ -115,7 +123,7 @@ function Shot($name) {
         $bmp = New-Object Drawing.Bitmap $b.Width, $b.Height
         $g = [Drawing.Graphics]::FromImage($bmp)
         $g.CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size)
-        $dir = Split-Path -Parent $Out
+        $dir = Split-Path -Parent ([IO.Path]::GetFullPath($Out))
         $bmp.Save((Join-Path $dir "memory-$name.png"), [Drawing.Imaging.ImageFormat]::Png)
         $g.Dispose(); $bmp.Dispose()
     } catch { Log "screenshot failed: $_" }
@@ -168,10 +176,19 @@ try {
         Log "overlay_closed: $($stages['overlay_closed'].private_ws)"
     } else {
         $notes += "capture overlay did not appear"
+        Log-Windows $proc.Id "after capture_region"
+        Shot "overlay-missing"
+        $logs = Join-Path $env:LOCALAPPDATA "SnapLine\logs"
+        $newest = Get-ChildItem $logs -Filter *.log -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+        if ($newest) {
+            Log "tail of $($newest.FullName):"
+            Get-Content $newest.FullName -Tail 40 | ForEach-Object { Write-Host "    $_" }
+        } else { Log "no app log found in $logs" }
     }
 } finally {
     Start-Process $app -ArgumentList "--action", "app_exit" | Out-Null
     if (-not $proc.WaitForExit(10000)) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+    Get-Process snapline -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $app } | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
 $os = Get-CimInstance Win32_OperatingSystem
