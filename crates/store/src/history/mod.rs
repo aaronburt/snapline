@@ -1,8 +1,10 @@
 use thiserror::Error;
 
+mod jobs;
 mod migrate;
 mod repo;
 
+pub use jobs::{Job, JobBatch, JobFile, JobId, JobResult, JobState, NewJob};
 pub use migrate::{open_read, open_write, schema_version, CURRENT_VERSION};
 pub use repo::{week_start_millis, HistoryRepo};
 
