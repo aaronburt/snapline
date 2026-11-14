@@ -571,13 +571,15 @@ impl Uploader for SftpUploader {
         }
         let mut source = file.open()?;
         let mut connection = self.connect(secrets)?;
-        let remote_path = connection.write_file(
-            &self.config.remote_folder,
-            &file_name,
-            source.as_mut(),
-            file.len,
-            control,
-        )?;
+        let remote_path = connection
+            .write_file(
+                &self.config.remote_folder,
+                &file_name,
+                source.as_mut(),
+                file.len,
+                control,
+            )
+            .map_err(UploadError::into_uncertain)?;
         let uploaded_name = remote_path
             .rsplit('/')
             .next()

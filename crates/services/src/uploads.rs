@@ -29,6 +29,9 @@ pub enum Event {
 
 pub const TEST_RUN_ID: &str = "snapline-destination-test";
 
+pub const OUTCOME_UNKNOWN_NOTE: &str =
+    "The file may have reached the destination. Retrying could create another copy.";
+
 pub const UPLOAD_COMPLETE_TITLE: &str = "Upload complete";
 
 pub struct LocalCapture {
@@ -94,6 +97,8 @@ fn open_label(file_name: &str) -> &'static str {
 
 pub const UPLOAD_FAILED_TITLE: &str = "Upload failed";
 
+pub const UPLOAD_UNKNOWN_TITLE: &str = "Upload outcome unknown";
+
 pub fn upload_failed_notice(
     state: &UploadState,
     local: Option<&LocalCapture>,
@@ -101,11 +106,18 @@ pub fn upload_failed_notice(
     use crate::saver::file_url;
     use snapline_core::ports::{NoticeButton, RichNotice};
 
-    if state.status != UploadStatus::Failed
-        || !notifies_for(snapline_core::media::classify(&state.file_name, &[]))
+    if !matches!(
+        state.status,
+        UploadStatus::Failed | UploadStatus::OutcomeUnknown
+    ) || !notifies_for(snapline_core::media::classify(&state.file_name, &[]))
     {
         return None;
     }
+    let title = if state.status == UploadStatus::OutcomeUnknown {
+        UPLOAD_UNKNOWN_TITLE
+    } else {
+        UPLOAD_FAILED_TITLE
+    };
     let reason = state
         .error
         .clone()
@@ -125,7 +137,7 @@ pub fn upload_failed_notice(
         open = Some(image_url);
     }
     Some(RichNotice {
-        title: UPLOAD_FAILED_TITLE.to_owned(),
+        title: title.to_owned(),
         lines: vec![state.file_name.clone(), reason],
         image: local.and_then(|local| local.thumbnail.clone()),
         open,
@@ -139,7 +151,10 @@ fn notify_uploaded(services: &Services, state: &UploadState) {
         return;
     };
     let local = state.capture_id.and_then(|id| local_capture(services, id));
-    let notice = if state.status == UploadStatus::Failed {
+    let notice = if matches!(
+        state.status,
+        UploadStatus::Failed | UploadStatus::OutcomeUnknown
+    ) {
         upload_failed_notice(state, local.as_ref())
     } else {
         upload_notice(state, local.as_ref())
@@ -271,7 +286,10 @@ impl PersistGate {
     fn should_persist_at(&mut self, state: &UploadState, now: Instant) -> bool {
         let finished = matches!(
             state.status,
-            UploadStatus::Done | UploadStatus::Failed | UploadStatus::Cancelled
+            UploadStatus::Done
+                | UploadStatus::Failed
+                | UploadStatus::OutcomeUnknown
+                | UploadStatus::Cancelled
         );
         let write = match self.last.get(&state.id) {
             Some((status, at)) => {
@@ -323,7 +341,7 @@ pub fn persist(services: &Services, state: &UploadState) {
             UploadStatus::Queued => HistoryUploadState::Queued,
             UploadStatus::Uploading | UploadStatus::BackingOff => HistoryUploadState::Uploading,
             UploadStatus::Done => HistoryUploadState::Done,
-            UploadStatus::Failed => HistoryUploadState::Failed,
+            UploadStatus::Failed | UploadStatus::OutcomeUnknown => HistoryUploadState::Failed,
             UploadStatus::Cancelled => HistoryUploadState::Cancelled,
         },
         url: state.link.clone(),
@@ -590,7 +608,10 @@ impl UploaderThread {
         let sink_services = services.clone();
         let sink = move |event: queue::UploadEvent| {
             let state = UploadState::from(&event.0);
-            if state.status == UploadStatus::Failed && state.run_id.as_deref() != Some(TEST_RUN_ID)
+            if matches!(
+                state.status,
+                UploadStatus::Failed | UploadStatus::OutcomeUnknown
+            ) && state.run_id.as_deref() != Some(TEST_RUN_ID)
             {
                 notify_uploaded(&sink_services, &state);
             }
@@ -682,6 +703,7 @@ impl From<&queue::Status> for UploadStatus {
             queue::Status::BackingOff { .. } => Self::BackingOff,
             queue::Status::Done => Self::Done,
             queue::Status::Failed => Self::Failed,
+            queue::Status::OutcomeUnknown => Self::OutcomeUnknown,
             queue::Status::Cancelled => Self::Cancelled,
         }
     }
@@ -715,7 +737,10 @@ impl From<&queue::UploadSnapshot> for UploadState {
             link: snapshot.link.clone(),
             page_link: snapshot.page_link.clone(),
             deletion_link: snapshot.deletion_link.clone(),
-            error: snapshot.error.as_ref().map(ToString::to_string),
+            error: snapshot.error.as_ref().map(|error| match snapshot.status {
+                queue::Status::OutcomeUnknown => format!("{error} {OUTCOME_UNKNOWN_NOTE}"),
+                _ => error.to_string(),
+            }),
             retry_in_ms,
         }
     }
@@ -784,6 +809,36 @@ mod tests {
         assert!(gate.should_persist_at(&state(UploadStatus::Done, 100), later));
         assert!(gate.last.is_empty());
     }
+    #[test]
+    fn an_unknown_outcome_explains_the_risk_of_retrying_and_notifies() {
+        let snapshot = queue::UploadSnapshot {
+            id: queue::UploadId::new(4),
+            capture_id: Some(9),
+            file_name: "shot.png".to_owned(),
+            dest: "dest".to_owned(),
+            run_id: None,
+            status: queue::Status::OutcomeUnknown,
+            cancellable: false,
+            progress_available: false,
+            sent: 3,
+            total: 3,
+            link_batch: None,
+            attempts: 1,
+            link: None,
+            page_link: None,
+            deletion_link: None,
+            error: Some(UploadError::Uncertain("The request timed out.".to_owned())),
+        };
+        let state = UploadState::from(&snapshot);
+        assert_eq!(state.status, UploadStatus::OutcomeUnknown);
+        let message = state.error.clone().expect("error");
+        assert!(message.starts_with("The request timed out."));
+        assert!(message.contains("another copy"));
+        let notice = upload_failed_notice(&state, None).expect("notice");
+        assert_eq!(notice.title, UPLOAD_UNKNOWN_TITLE);
+        assert!(upload_notice(&state, None).is_none());
+    }
+
     use std::path::PathBuf;
     use std::sync::Mutex;
     use std::time::Duration;

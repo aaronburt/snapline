@@ -382,7 +382,9 @@ fn response_error(
         .filter(|message| !message.is_empty());
     match message {
         Some(message) => match reply.status {
-            408 | 429 | 500..=599 => UploadError::Retryable(message),
+            408 | 429 | 500..=599 => {
+                UploadError::transient_status(reply.status, reply.retry_after(), Some(message))
+            }
             413 => UploadError::TooLarge,
             401 | 403 => UploadError::Auth,
             _ => UploadError::Permanent(message),
@@ -708,10 +710,25 @@ mod tests {
     }
 
     #[test]
-    fn a_server_error_message_stays_retryable() {
+    fn a_server_error_message_without_a_retry_after_is_uncertain() {
         let reply = HttpReply {
             status: 503,
             headers: Vec::new(),
+            body: br#"{"error":"Try again later."}"#.to_vec(),
+        };
+        let (uploader, _) = uploader(config(BodyType::Binary), vec![reply]);
+        let error = match uploader.upload(&file(), &FakeSecrets::with_authorization()) {
+            Ok(_) => panic!("the upload should have failed"),
+            Err(error) => error,
+        };
+        assert_eq!(error, UploadError::Uncertain("Try again later.".to_owned()));
+    }
+
+    #[test]
+    fn a_server_error_message_with_a_retry_after_is_safe_to_retry() {
+        let reply = HttpReply {
+            status: 503,
+            headers: vec![("Retry-After".to_owned(), "3".to_owned())],
             body: br#"{"error":"Try again later."}"#.to_vec(),
         };
         let (uploader, _) = uploader(config(BodyType::Binary), vec![reply]);

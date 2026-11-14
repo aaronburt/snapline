@@ -310,6 +310,10 @@ impl S3Uploader {
 }
 
 impl Uploader for S3Uploader {
+    fn idempotent(&self) -> bool {
+        true
+    }
+
     fn upload(
         &self,
         file: &UploadFile,
@@ -857,9 +861,9 @@ mod tests {
             (403, "auth"),
             (404, "permanent"),
             (413, "too large"),
-            (429, "retryable"),
-            (500, "retryable"),
-            (503, "retryable"),
+            (429, "uncertain"),
+            (500, "uncertain"),
+            (503, "uncertain"),
             (400, "permanent"),
         ] {
             let transport = Arc::new(FakeTransport::new(vec![S3Response {
@@ -874,6 +878,7 @@ mod tests {
                 UploadError::TooLarge => "too large",
                 UploadError::Cancelled => "cancelled",
                 UploadError::Retryable(_) => "retryable",
+                UploadError::Uncertain(_) => "uncertain",
                 UploadError::Permanent(_) => "permanent",
             };
             assert_eq!(kind, expected, "{status}");

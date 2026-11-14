@@ -1301,7 +1301,7 @@ impl IntakeLinkBatches {
                 page_url: state.page_link.clone(),
                 capture_id: state.capture_id,
             }),
-            UploadStatus::Failed | UploadStatus::Cancelled => None,
+            UploadStatus::Failed | UploadStatus::OutcomeUnknown | UploadStatus::Cancelled => None,
             _ => return,
         };
         let completed = self.0.entry(batch.id.clone()).or_default();

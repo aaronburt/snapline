@@ -8,6 +8,7 @@ pub enum UploadStatus {
     BackingOff,
     Done,
     Failed,
+    OutcomeUnknown,
     Cancelled,
 }
 
