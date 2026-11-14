@@ -1,5 +1,12 @@
 # Snapline
 
+[![CI](https://img.shields.io/github/actions/workflow/status/aaronburt/snapline/ci.yml?branch=main&label=CI)](https://github.com/aaronburt/snapline/actions/workflows/ci.yml?query=branch%3Amain)
+[![Latest release](https://img.shields.io/github/v/release/aaronburt/snapline?label=release)](https://github.com/aaronburt/snapline/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/aaronburt/snapline/total?label=downloads)](https://github.com/aaronburt/snapline/releases)
+[![Licence: GPL-3.0-or-later](https://img.shields.io/github/license/aaronburt/snapline)](LICENSE)
+![Platform: Windows 10/11 x64](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20(x64)-0078D4)
+[![Last commit](https://img.shields.io/github/last-commit/aaronburt/snapline/main)](https://github.com/aaronburt/snapline/commits/main)
+
 A lightweight Windows tray app for screenshots and screen recordings. Capture a region, window or screen, annotate it, save it, upload it and copy the link.
 
 - Screenshots and recordings (video or GIF through FFmpeg)
