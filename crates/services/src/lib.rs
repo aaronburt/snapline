@@ -15,6 +15,7 @@ pub mod capture;
 pub mod clipboard_upload;
 pub mod destinations;
 pub mod dto;
+pub mod durable;
 pub mod editor;
 pub mod event;
 pub mod history;

@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
-use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
+use crossbeam_channel::{bounded, unbounded, Receiver, RecvTimeoutError, Sender};
 use snapline_core::actions::ActionId;
 use snapline_store::history::HistoryRepo;
 use snapline_store::io::Paths;
@@ -12,6 +13,8 @@ use crate::{
     actions, app, history, hotkeys, recording, settings, tools, uploads, workflows, AppEvent,
     AreaJob, Job, ServiceError, Services,
 };
+
+const PENDING_RETRY: Duration = Duration::from_secs(30);
 
 enum Command {
     Job(Job),
@@ -91,6 +94,7 @@ impl Worker {
         let repo = HistoryRepo::open_write(&paths.history_file)
             .map_err(|error| ServiceError::Io(error.to_string()))?;
         let thumbs_dir = paths.thumbs_dir.clone();
+        let pending_dir = paths.pending_dir.clone();
         let profile = user_profile(&paths);
         let (commands, inbox) = unbounded();
         let (outbox, events) = unbounded();
@@ -106,7 +110,7 @@ impl Worker {
                     }
                 };
                 let settings: Arc<dyn SettingsAccess> = Arc::new(services.clone());
-                let saver = Saver::new(settings, ports, thumbs_dir, profile);
+                let saver = Saver::new(settings, ports, thumbs_dir, pending_dir, profile);
                 if ready_tx.send(Ok(())).is_err() {
                     return;
                 }
@@ -154,7 +158,23 @@ fn run(
     saver: Saver,
     mut repo: HistoryRepo,
 ) {
-    while let Ok(command) = inbox.recv() {
+    reconcile_saves(&saver, &mut repo, &events);
+    loop {
+        let command = if saver.pending_saves() > 0 {
+            match inbox.recv_timeout(PENDING_RETRY) {
+                Ok(command) => command,
+                Err(RecvTimeoutError::Timeout) => {
+                    reconcile_saves(&saver, &mut repo, &events);
+                    continue;
+                }
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            match inbox.recv() {
+                Ok(command) => command,
+                Err(_) => break,
+            }
+        };
         match command {
             Command::Job(job) => handle_job(job, &services, &events),
             Command::Action { action, reply } => {
@@ -188,6 +208,12 @@ fn run(
             }
             Command::Shutdown => break,
         }
+    }
+}
+
+fn reconcile_saves(saver: &Saver, repo: &mut HistoryRepo, events: &Sender<AppEvent>) {
+    for id in saver.reconcile(repo) {
+        let _ = events.send(AppEvent::History(history::Event::Added { id }));
     }
 }
 
@@ -389,6 +415,50 @@ mod tests {
             Some(&toml::Value::Integer(1))
         );
         assert!(matches!(worker.events.try_recv(), Err(TryRecvError::Empty)));
+        worker.join();
+    }
+
+    #[test]
+    fn an_interrupted_save_is_registered_when_the_worker_starts() {
+        use crate::durable::{Journal, Manifest, MANIFEST_VERSION};
+
+        let directory = tempdir().expect("temp");
+        let paths = test_paths(directory.path());
+        let folder = directory.path().join("shots");
+        std::fs::create_dir_all(&folder).expect("folder");
+        std::fs::create_dir_all(&paths.pending_dir).expect("pending");
+        let final_path = folder.join("recovered.png");
+        std::fs::write(&final_path, b"image").expect("image");
+        let manifest = Manifest {
+            version: MANIFEST_VERSION,
+            operation_id: "op-1".to_owned(),
+            final_path: final_path.to_string_lossy().into_owned(),
+            staged_path: Journal::staged_path(&final_path, "op-1")
+                .to_string_lossy()
+                .into_owned(),
+            bytes: 5,
+            width: 4,
+            height: 3,
+            source_app: None,
+            created_at: 1,
+        };
+        std::fs::write(
+            paths.pending_dir.join("op-1.json"),
+            serde_json::to_vec(&manifest).expect("json"),
+        )
+        .expect("manifest");
+
+        let worker = Worker::start(services(directory.path()), || Ok(ports())).expect("worker");
+        let id = match event(&worker) {
+            AppEvent::History(history::Event::Added { id }) => id,
+            other => panic!("unexpected event: {other:?}"),
+        };
+        let repo = HistoryRepo::open_read(&paths.history_file).expect("read");
+        assert_eq!(
+            repo.capture_for_operation("op-1").expect("lookup"),
+            Some(id)
+        );
+        assert!(!paths.pending_dir.join("op-1.json").exists());
         worker.join();
     }
 
