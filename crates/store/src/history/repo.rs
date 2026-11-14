@@ -82,7 +82,7 @@ WHERE id = ?1
 ";
 
 pub struct HistoryRepo {
-    conn: Connection,
+    pub(super) conn: Connection,
 }
 
 impl HistoryRepo {
