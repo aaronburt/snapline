@@ -2676,7 +2676,7 @@ mod tests {
 
     #[test]
     fn jobs_the_journal_declines_use_ephemeral_ids() {
-        let (uploader, _journal, queue, events, handle) = durable(Vec::new(), RetryPolicy::new(0));
+        let (uploader, journal, queue, events, handle) = durable(Vec::new(), RetryPolicy::new(0));
         let mut ephemeral = job(uploader.clone(), "test.png");
         ephemeral.run_id = Some("ephemeral".to_owned());
         let id = handle.enqueue(ephemeral).expect("enqueue");
