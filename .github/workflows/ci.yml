@@ -69,6 +69,22 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  # PR builds are never shipped, so they skip LTO and use more codegen units.
+  # They use their own Rust cache ('fast'); this job keeps it warm from main.
+  warm-fast-cache:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.deleted
+    runs-on: windows-latest
+    env:
+      CARGO_PROFILE_RELEASE_LTO: 'off'
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-build
+        with:
+          cache-key: fast
+      - name: Build the fast release profile
+        run: cargo build --release -p snapline
+
   package:
     runs-on: windows-latest
     permissions:
@@ -86,6 +102,15 @@ jobs:
           fetch-depth: ${{ github.event_name == 'push' && 0 || 1 }}
           persist-credentials: false
       - uses: ./.github/actions/rust-build
+        with:
+          cache-key: ${{ github.event_name == 'pull_request' && 'fast' || '' }}
+      # Set after the cache restore so it does not change the cache key.
+      - name: Skip LTO on PR builds
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          echo 'CARGO_PROFILE_RELEASE_LTO=off' >> "$GITHUB_ENV"
+          echo 'CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16' >> "$GITHUB_ENV"
       # Runs after the cache restore so the stamped Cargo.toml does not change the cache key.
       - name: Select release version
         id: version
