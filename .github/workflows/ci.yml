@@ -8,12 +8,11 @@ on:
 permissions:
   contents: read
 
-# A new push to a PR cancels that PR's older runs. Runs on main are never
-# cancelled (they queue) because they can publish a release.
+# A new push to a PR cancels that PR's older runs. A run that is already
+# executing on main is never cancelled because it can publish a release.
 concurrency:
   group: ${{ github.event_name == 'push' && 'snapline-main' || format('snapline-pr-{0}', github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-  queue: max
 
 env:
   CARGO_PROFILE_DEV_DEBUG: 0
