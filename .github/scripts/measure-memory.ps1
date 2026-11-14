@@ -108,7 +108,7 @@ function Shot($name) {
         $bmp = New-Object Drawing.Bitmap $b.Width, $b.Height
         $g = [Drawing.Graphics]::FromImage($bmp)
         $g.CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size)
-        $dir = Split-Path -Parent $Out
+        $dir = Split-Path -Parent ([IO.Path]::GetFullPath($Out))
         $bmp.Save((Join-Path $dir "memory-$name.png"), [Drawing.Imaging.ImageFormat]::Png)
         $g.Dispose(); $bmp.Dispose()
     } catch { Log "screenshot failed: $_" }
@@ -158,6 +158,14 @@ try {
         Log "overlay_closed: $($stages['overlay_closed'].private_ws)"
     } else {
         $notes += "capture overlay did not appear"
+        Log-Windows $proc.Id "after capture_region"
+        Shot "overlay-missing"
+        $logs = Join-Path $env:LOCALAPPDATA "SnapLine\logs"
+        $newest = Get-ChildItem $logs -Filter *.log -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+        if ($newest) {
+            Log "tail of $($newest.FullName):"
+            Get-Content $newest.FullName -Tail 40 | ForEach-Object { Write-Host "    $_" }
+        } else { Log "no app log found in $logs" }
     }
 } finally {
     Start-Process $app -ArgumentList "--action", "app_exit" | Out-Null
