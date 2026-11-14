@@ -29,3 +29,6 @@ slint-build = "1.18.1"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+i-slint-backend-testing = "=1.18.1"

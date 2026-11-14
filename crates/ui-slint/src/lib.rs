@@ -1593,3 +1593,6 @@ mod tests {
         assert!(!hotkey_group_visible("tools", "nonexistent-xyz"));
     }
 }
+
+#[cfg(test)]
+mod view_tests;
