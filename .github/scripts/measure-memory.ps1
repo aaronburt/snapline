@@ -131,11 +131,24 @@ function Shot($name) {
 
 $stages = [ordered]@{}
 $notes = @()
-$proc = Start-Process $app -ArgumentList "--budget-run" -PassThru
-Log "started pid $($proc.Id)"
-try {
+
+function Start-App {
+    $p = Start-Process $app -ArgumentList "--budget-run" -PassThru
+    Log "started pid $($p.Id)"
     Start-Sleep -Seconds 20
-    if ($proc.HasExited) { throw "app exited during startup (code $($proc.ExitCode))" }
+    if ($p.HasExited) { throw "app exited during startup (code $($p.ExitCode))" }
+    return $p
+}
+
+function Stop-App($p) {
+    Start-Process $app -ArgumentList "--action", "app_exit" | Out-Null
+    if (-not $p.WaitForExit(10000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+    Get-Process snapline -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $app } | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+# Run 1: tray idle, then the main window. Fresh process, so nothing else has been loaded.
+$proc = Start-App
+try {
     $stages["idle"] = Sample $proc.Id
     Log "idle: $($stages['idle'].private_ws)"
     Breakdown $proc.Id "idle"
@@ -158,6 +171,22 @@ try {
     Log "main_closed: $($stages['main_closed'].private_ws)"
     Breakdown $proc.Id "main_closed"
 
+    # The running app must still answer a second launch after its window closed.
+    Start-Process $app -ArgumentList "--budget-open", "main" | Out-Null
+    if (Wait-Windows $proc.Id $true 15) {
+        Log "reopen: the running app answered a second launch after its window closed"
+    } else {
+        $notes += "after its window closed, the running app did not answer a second launch"
+        Log-Windows $proc.Id "after reopen attempt"
+    }
+} finally {
+    Stop-App $proc
+}
+
+# Run 2: a second fresh process for the capture overlay, so the figures above do not
+# include anything the overlay loaded.
+$proc = Start-App
+try {
     Start-Process $app -ArgumentList "--action", "capture_region" | Out-Null
     if (Wait-Windows $proc.Id $true 15) {
         Start-Sleep -Seconds 2
@@ -186,9 +215,7 @@ try {
         } else { Log "no app log found in $logs" }
     }
 } finally {
-    Start-Process $app -ArgumentList "--action", "app_exit" | Out-Null
-    if (-not $proc.WaitForExit(10000)) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-    Get-Process snapline -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $app } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Stop-App $proc
 }
 
 $os = Get-CimInstance Win32_OperatingSystem
@@ -206,7 +233,7 @@ $run = [ordered]@{
         ram_gb       = [Math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
         screen       = "$($screen.Width)x$($screen.Height)"
     }
-    method  = "median of 5 readings 1 s apart per stage; Win32_PerfFormattedData_PerfProc_Process of the snapline.exe process"
+    method  = "median of 5 readings 1 s apart per stage; idle and main window in one fresh process, capture overlay in a second fresh process; Win32_PerfFormattedData_PerfProc_Process of the snapline.exe process"
     stages  = $stages
     notes   = $notes
 }
