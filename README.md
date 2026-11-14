@@ -9,6 +9,12 @@ A lightweight Windows tray app for screenshots and screen recordings. Capture a 
 
 Windows 10 or 11 (x64) only. Releases are on the GitHub releases page; the installer is not code signed, so SmartScreen may warn.
 
+## Screenshots
+
+![Capture settings](docs/screenshots/capture.png)
+![Hotkeys](docs/screenshots/hotkeys.png)
+![Upload destinations](docs/screenshots/upload-destinations.png)
+
 ## Build
 
 Needs the Rust toolchain in `rust-toolchain.toml`, and NSIS (`winget install NSIS.NSIS`) for the installer.
