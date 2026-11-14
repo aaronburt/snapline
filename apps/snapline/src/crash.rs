@@ -10,8 +10,11 @@ use windows::Win32::System::Registry::{
     RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    MessageBoxW, MB_ICONERROR, MB_OK, MB_SETFOREGROUND, MB_TOPMOST,
+    MessageBoxW, IDYES, MB_ICONERROR, MB_ICONQUESTION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST,
+    MB_YESNO,
 };
+
+use crate::crash_report;
 
 const EXIT_CODE: i32 = 101;
 
@@ -124,6 +127,12 @@ fn report_text(
         "Backtrace:\n{}",
         std::backtrace::Backtrace::force_capture()
     );
+    if let Some(directory) = crate::logging::log_directory() {
+        let log = crash_report::recent_log_lines(&directory);
+        if !log.is_empty() {
+            let _ = writeln!(text, "Recent log:\n{log}");
+        }
+    }
     text
 }
 
@@ -194,6 +203,60 @@ fn registry_u32(subkey: PCWSTR, value: PCWSTR) -> Option<u32> {
         )
     };
     result.is_ok().then_some(data)
+}
+
+/// On launch, offers to report the newest crash from an earlier run.
+/// The person picks Yes to open a prefilled GitHub issue in the browser, then reviews it and submits.
+/// Either answer marks the report as handled so it is not offered again.
+pub fn offer_previous_report() {
+    if test_mode() {
+        return;
+    }
+    let Some(directory) = crash_directory() else {
+        return;
+    };
+    let Some(path) = crash_report::pending_report(&directory) else {
+        return;
+    };
+    crash_report::mark_older_reported(&directory, &path);
+    let user_name = std::env::var("USERNAME").ok();
+    let url = match crash_report::issue_url_for(&path, user_name.as_deref()) {
+        Ok(url) => url,
+        Err(error) => {
+            tracing::warn!(%error, "could not read the crash report to offer it");
+            return;
+        }
+    };
+    if let Err(error) = crash_report::mark_reported(&path) {
+        tracing::warn!(%error, "could not mark the crash report as handled");
+    }
+    if ask_to_report(&directory) {
+        if let Err(error) = snapline_win::shell::open_url(&url) {
+            tracing::warn!(%error, "could not open the GitHub issue page");
+        }
+    }
+}
+
+fn ask_to_report(directory: &Path) -> bool {
+    let text = format!(
+        "Snapline stopped because of a problem last time.\n\nOpen a prefilled GitHub issue? Your browser will show it first and nothing is sent until you press Submit. Personal paths and your user name are removed.\n\nThe full report is in {}.",
+        directory.display()
+    );
+    let text: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    let caption: Vec<u16> = "Snapline"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: both buffers are null-terminated UTF-16 arrays that outlive the call.
+    let answer = unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(text.as_ptr()),
+            PCWSTR(caption.as_ptr()),
+            MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST,
+        )
+    };
+    answer == IDYES
 }
 
 fn show_message(path: &Path) {

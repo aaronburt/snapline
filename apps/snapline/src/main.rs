@@ -3,6 +3,7 @@
 
 mod cli;
 mod crash;
+mod crash_report;
 mod history_host;
 mod logging;
 mod main_loop;
@@ -1024,6 +1025,7 @@ fn main() -> anyhow::Result<()> {
         single_instance::Outcome::First(guard) => guard,
         single_instance::Outcome::HandedOff => return Ok(()),
     };
+    std::thread::spawn(crash::offer_previous_report);
     let apartment = snapline_win::apartment::init_ui_thread();
     if apartment != snapline_win::apartment::UiApartment::Ready {
         tracing::warn!(
