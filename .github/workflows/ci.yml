@@ -71,9 +71,28 @@ jobs:
 
   package:
     runs-on: windows-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      package_version: ${{ steps.version.outputs.package_version }}
+      resume_draft: ${{ steps.version.outputs.resume_draft }}
+      mark_latest: ${{ steps.version.outputs.mark_latest }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: ${{ github.event_name == 'push' && 0 || 1 }}
+          persist-credentials: false
       - uses: ./.github/actions/rust-build
+      # Runs after the cache restore so the stamped Cargo.toml does not change the cache key.
+      - name: Select release version
+        id: version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.deleted
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./.github/scripts/prepare-release.ps1
       - name: Install NSIS
         run: choco install nsis --no-progress -y
       - name: Package Windows build
@@ -84,56 +103,32 @@ jobs:
         with:
           name: snapline-windows
           path: |
+            target/release/snapline.exe
             target/release/bundle/nsis/*-setup.exe
             target/portable/*.zip
           if-no-files-found: error
           retention-days: 7
 
   release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.deleted
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.deleted && needs.package.outputs.tag != ''
     needs: [lint, clippy, test, package]
     runs-on: windows-latest
     permissions:
       contents: write
-      pull-requests: read
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
           persist-credentials: false
-      - name: Select release version
-        id: version
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: ./.github/scripts/prepare-release.ps1
-      - uses: dtolnay/rust-toolchain@stable
-        if: steps.version.outputs.tag != ''
+      - uses: actions/download-artifact@v4
         with:
-          targets: x86_64-pc-windows-msvc
-      - uses: Swatinem/rust-cache@v2
-        if: steps.version.outputs.tag != ''
-      - name: Install NSIS
-        if: steps.version.outputs.tag != ''
-        run: choco install nsis --no-progress -y
-      - name: Restore FFmpeg
-        if: steps.version.outputs.tag != ''
-        uses: actions/cache/restore@v6
-        with:
-          path: third_party/ffmpeg
-          key: ffmpeg-${{ hashFiles('xtask/ffmpeg.lock') }}
-      - name: Package Windows release
-        if: steps.version.outputs.tag != ''
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          cargo xtask fetch-ffmpeg
-          cargo xtask package
+          name: snapline-windows
+          path: target
       - name: Publish GitHub release
-        if: steps.version.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-          PACKAGE_VERSION: ${{ steps.version.outputs.package_version }}
-          RESUME_DRAFT: ${{ steps.version.outputs.resume_draft }}
-          MARK_LATEST: ${{ steps.version.outputs.mark_latest }}
+          RELEASE_TAG: ${{ needs.package.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.package.outputs.version }}
+          PACKAGE_VERSION: ${{ needs.package.outputs.package_version }}
+          RESUME_DRAFT: ${{ needs.package.outputs.resume_draft }}
+          MARK_LATEST: ${{ needs.package.outputs.mark_latest }}
         run: ./.github/scripts/publish-release.ps1
