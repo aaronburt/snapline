@@ -338,7 +338,7 @@ pub fn persist(services: &Services, state: &UploadState) {
         capture_id,
         dest_id: state.dest.clone(),
         state: match state.status {
-            UploadStatus::Queued => HistoryUploadState::Queued,
+            UploadStatus::Queued | UploadStatus::Paused => HistoryUploadState::Queued,
             UploadStatus::Uploading | UploadStatus::BackingOff => HistoryUploadState::Uploading,
             UploadStatus::Done => HistoryUploadState::Done,
             UploadStatus::Failed | UploadStatus::OutcomeUnknown => HistoryUploadState::Failed,
@@ -370,6 +370,10 @@ pub trait DestinationSource: Send + Sync {
 
     fn streams_files(&self, _dest: &str) -> bool {
         false
+    }
+
+    fn fingerprint(&self, _dest: &str) -> Option<String> {
+        None
     }
 
     fn operations(&self) -> Option<Arc<dyn DestinationOperations>> {
@@ -431,6 +435,38 @@ impl UploadService {
                     .retry(queue::UploadId::new(id))
                     .map_err(queue_error)?;
                 Ok(UploadResp::Retried { id })
+            }
+            UploadReq::Pause { id } => {
+                self.runtime()?
+                    .queue
+                    .pause(queue::UploadId::new(id))
+                    .map_err(queue_error)?;
+                Ok(UploadResp::Paused { id })
+            }
+            UploadReq::Resume { id } => {
+                self.runtime()?
+                    .queue
+                    .resume(queue::UploadId::new(id))
+                    .map_err(queue_error)?;
+                Ok(UploadResp::Resumed { id })
+            }
+            UploadReq::SetQueuePaused { paused } => {
+                let runtime = self.runtime()?;
+                let path = self.services.paths()?.history_file;
+                let mut repo = HistoryRepo::open_write(&path)
+                    .map_err(|error| ServiceError::Io(error.to_string()))?;
+                repo.set_queue_paused(paused)
+                    .map_err(|error| ServiceError::Io(error.to_string()))?;
+                runtime.queue.set_paused(paused).map_err(queue_error)?;
+                Ok(UploadResp::QueuePaused { paused })
+            }
+            UploadReq::QueueState => {
+                let path = self.services.paths()?.history_file;
+                let paused = path.is_file()
+                    && HistoryRepo::open_read(&path)
+                        .and_then(|repo| repo.queue_paused())
+                        .map_err(|error| ServiceError::Io(error.to_string()))?;
+                Ok(UploadResp::QueuePaused { paused })
             }
             UploadReq::List => {
                 let snapshots = self.runtime()?.queue.list().map_err(queue_error)?;
@@ -577,6 +613,8 @@ impl UploadService {
 }
 
 pub struct UploaderThread {
+    owner: String,
+    services: Services,
     queue: queue::Queue,
     events: Option<Receiver<AppEvent>>,
     service: UploadService,
@@ -608,6 +646,10 @@ impl UploaderThread {
         let sink_services = services.clone();
         let sink = move |event: queue::UploadEvent| {
             let state = UploadState::from(&event.0);
+            if event.0.restored {
+                let _ = events.send(AppEvent::Upload(Event::StateChanged(state)));
+                return;
+            }
             if matches!(
                 state.status,
                 UploadStatus::Failed | UploadStatus::OutcomeUnknown
@@ -620,8 +662,15 @@ impl UploaderThread {
             }
             let _ = events.send(AppEvent::Upload(Event::StateChanged(state)));
         };
-        let queue = queue::Queue::start_with_sink(Arc::new(CoreSecrets(secrets)), policy, sink)
-            .map_err(|error| ServiceError::Internal(error.to_string()))?;
+        let owner = crate::upload_journal::run_owner();
+        let journal = Arc::new(crate::upload_journal::StoreJournal::new(
+            services,
+            Arc::clone(&destinations),
+            owner.clone(),
+        ));
+        let queue =
+            queue::Queue::start_durable(Arc::new(CoreSecrets(secrets)), policy, journal, sink)
+                .map_err(|error| ServiceError::Internal(error.to_string()))?;
         let runtime = UploadRuntime {
             queue: queue.handle(),
             files,
@@ -629,11 +678,22 @@ impl UploaderThread {
         };
         let service = UploadService::with_runtime(services, runtime.clone());
         Ok(Self {
+            owner,
+            services: services.clone(),
             queue,
             events: None,
             service,
             runtime,
         })
+    }
+
+    pub fn recover(&self) -> Result<crate::upload_journal::Recovery, ServiceError> {
+        crate::upload_journal::recover(
+            &self.services,
+            &self.queue.handle(),
+            self.runtime.destinations.as_ref(),
+            &self.owner,
+        )
     }
 
     pub fn service(&self) -> UploadService {
@@ -687,9 +747,11 @@ fn queue_error(error: queue::QueueError) -> ServiceError {
     let message = error.to_string();
     match error {
         queue::QueueError::NotFound => ServiceError::NotFound,
-        queue::QueueError::NotCancellable | queue::QueueError::NotRetryable => {
-            ServiceError::Invalid(message)
-        }
+        queue::QueueError::NotCancellable
+        | queue::QueueError::NotRetryable
+        | queue::QueueError::NotPausable
+        | queue::QueueError::NotPaused => ServiceError::Invalid(message),
+        queue::QueueError::Storage => ServiceError::Io(message),
         queue::QueueError::Spawn => ServiceError::Internal(message),
         queue::QueueError::Closed => ServiceError::Busy,
     }
@@ -701,6 +763,7 @@ impl From<&queue::Status> for UploadStatus {
             queue::Status::Queued => Self::Queued,
             queue::Status::Uploading => Self::Uploading,
             queue::Status::BackingOff { .. } => Self::BackingOff,
+            queue::Status::Paused => Self::Paused,
             queue::Status::Done => Self::Done,
             queue::Status::Failed => Self::Failed,
             queue::Status::OutcomeUnknown => Self::OutcomeUnknown,
@@ -828,6 +891,7 @@ mod tests {
             page_link: None,
             deletion_link: None,
             error: Some(UploadError::Uncertain("The request timed out.".to_owned())),
+            restored: false,
         };
         let state = UploadState::from(&snapshot);
         assert_eq!(state.status, UploadStatus::OutcomeUnknown);

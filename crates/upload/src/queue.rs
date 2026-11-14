@@ -359,6 +359,7 @@ pub struct UploadSnapshot {
     pub page_link: Option<String>,
     pub deletion_link: Option<String>,
     pub error: Option<UploadError>,
+    pub restored: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -886,6 +887,7 @@ impl JobRecord {
             page_link: None,
             deletion_link: None,
             error: self.error.clone(),
+            restored: false,
         }
     }
 }
@@ -966,6 +968,9 @@ impl State {
     }
 
     fn journal(&self, id: UploadId, change: &Change<'_>) -> Result<(), QueueError> {
+        if id.get() >= EPHEMERAL_ID_BASE {
+            return Ok(());
+        }
         let Some(journal) = &self.journal else {
             return Ok(());
         };
@@ -1128,7 +1133,10 @@ impl State {
             }
         }
         self.records.insert(id, record);
-        self.emit(id);
+        if let Some(mut snapshot) = self.snapshot(id) {
+            snapshot.restored = true;
+            self.listener.emit(UploadEvent(snapshot));
+        }
     }
 
     fn handle(&mut self, command: Command) -> Control {
@@ -1344,7 +1352,12 @@ fn run_job(
     if !state.records.contains_key(&id) {
         return true;
     }
-    if let Some(journal) = state.journal.clone() {
+    let durable = if id.get() >= EPHEMERAL_ID_BASE {
+        None
+    } else {
+        state.journal.clone()
+    };
+    if let Some(journal) = durable {
         match journal.start(id) {
             Ok(true) => {}
             Ok(false) => {
@@ -2669,6 +2682,7 @@ mod tests {
         let id = handle.enqueue(ephemeral).expect("enqueue");
         assert!(id.get() >= EPHEMERAL_ID_BASE);
         wait_logged(&events, id, &Status::Done);
+        assert!(journal.log().is_empty());
         queue.join().expect("join");
     }
 

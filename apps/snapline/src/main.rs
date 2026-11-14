@@ -1060,6 +1060,10 @@ fn main() -> anyhow::Result<()> {
         registry,
     )?;
     let upload_events = uploader.events();
+    match uploader.recover() {
+        Ok(summary) => tracing::info!(?summary, "the upload queue was recovered"),
+        Err(error) => tracing::warn!(%error, "the upload queue could not be recovered"),
+    }
     let services = services
         .with_codec_factory(codec_factory())
         .with_history_host(Arc::new(history_host::WindowsHistoryHost::new(Arc::new(

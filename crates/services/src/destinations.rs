@@ -721,6 +721,11 @@ impl DestinationSource for Registry {
         matches!(self.resolve(dest), Some(DestinationConfig::Sftp { .. }))
     }
 
+    fn fingerprint(&self, dest: &str) -> Option<String> {
+        self.resolve(dest)
+            .map(|config| crate::upload_journal::fingerprint_for(&config))
+    }
+
     fn operations(&self) -> Option<Arc<dyn DestinationOperations>> {
         Some(Arc::new(self.clone()))
     }

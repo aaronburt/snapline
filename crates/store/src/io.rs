@@ -13,6 +13,7 @@ pub struct Paths {
     pub history_file: PathBuf,
     pub thumbs_dir: PathBuf,
     pub pending_dir: PathBuf,
+    pub upload_staging_dir: PathBuf,
     pub logs_dir: PathBuf,
     pub crashes_dir: PathBuf,
     pub webview2_dir: PathBuf,
@@ -66,6 +67,11 @@ impl Paths {
         } else {
             local_dir.join("pending")
         };
+        let upload_staging_dir = if portable {
+            data_dir.join("upload-staging")
+        } else {
+            local_dir.join("upload-staging")
+        };
         let logs_dir = if portable {
             data_dir.join("logs")
         } else {
@@ -79,6 +85,7 @@ impl Paths {
             history_file,
             thumbs_dir,
             pending_dir,
+            upload_staging_dir,
             logs_dir,
             crashes_dir: local_dir.join("crashes"),
             webview2_dir: local_dir.join("WebView2"),
@@ -184,6 +191,10 @@ mod tests {
         assert_eq!(paths.thumbs_dir, exe.join("data").join("thumbs"));
         assert_eq!(paths.logs_dir, exe.join("data").join("logs"));
         assert_eq!(paths.pending_dir, exe.join("data").join("pending"));
+        assert_eq!(
+            paths.upload_staging_dir,
+            exe.join("data").join("upload-staging")
+        );
         assert!(paths.portable);
     }
 
