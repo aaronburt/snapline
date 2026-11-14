@@ -1302,6 +1302,17 @@ impl HistoryHandle {
         }
     }
 
+    pub fn select_all(&self) {
+        let mut ctrl = self.lock();
+        if ctrl.items.is_empty() {
+            return;
+        }
+        ctrl.selected_ids = ctrl.items.iter().map(|item| item.id).collect();
+        ctrl.anchor_id = ctrl.items.first().map(|item| item.id);
+        ctrl.focus_id = ctrl.items.last().map(|item| item.id);
+        ctrl.sync_ui();
+    }
+
     pub fn clear_selection(&self) {
         let mut ctrl = self.lock();
         if ctrl.selected_ids.is_empty() {
@@ -1999,6 +2010,11 @@ pub fn wire(app: &SnaplineWindow, backend: Rc<Backend>, cache: Arc<ThumbCache>) 
         h.move_selection(delta);
     });
 
+    let h = handle.clone();
+    s.on_select_all(move || {
+        h.select_all();
+    });
+
     let (b, h) = (backend.clone(), handle.clone());
     s.on_activate_selected(move || {
         h.activate_selected(&b);
@@ -2165,6 +2181,21 @@ mod tests {
         assert_eq!(host_label("s3", &[]), "Amazon S3");
         assert_eq!(host_label("custom-1", &[dest]), "My CDN");
         assert_eq!(host_label("unknown-dest", &[]), "unknown-dest");
+    }
+
+    #[test]
+    fn select_all_selects_every_loaded_item_and_clear_empties_it() {
+        let handle = HistoryHandle::new(Weak::default(), Arc::new(ThumbCache::default()));
+        handle.select_all();
+        assert!(handle.lock().selected_ids.is_empty());
+        handle.lock().items = [10, 20, 30]
+            .into_iter()
+            .map(|id| sample_capture(id, CaptureKindDto::Image, "shot.png", None))
+            .collect();
+        handle.select_all();
+        assert_eq!(handle.lock().selected_ids, HashSet::from([10, 20, 30]));
+        handle.clear_selection();
+        assert!(handle.lock().selected_ids.is_empty());
     }
 
     #[test]

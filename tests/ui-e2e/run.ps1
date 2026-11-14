@@ -240,6 +240,17 @@ if (Press "Add destination" "add-menu-open") {
 Press "Workflows" "workflows-again" | Out-Null
 if (Press "New workflow") { if (Find "Cancel" 3) { Press "Cancel" "workflow-editor-cancelled" | Out-Null } }
 
+# --- History: Ctrl+A on the (empty) page must not crash; Escape clears ---
+if (Press "History" "history-select-all-start") {
+    try {
+        [Win]::SetForegroundWindow([IntPtr]$script:win.Current.NativeWindowHandle) | Out-Null
+        [Windows.Forms.SendKeys]::SendWait("^a"); Start-Sleep -Milliseconds 500
+        Shot "history-select-all"
+        [Windows.Forms.SendKeys]::SendWait("{ESC}"); Start-Sleep -Milliseconds 300
+        Alive | Out-Null
+    } catch { Log "history select-all failed: $_" }
+}
+
 # --- Tools page ---
 Press "Tools" "tools-again" | Out-Null
 Shot "tools-final"
