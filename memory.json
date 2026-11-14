@@ -29,21 +29,10 @@
           "private_ws": 278528,
           "private_bytes": 10043392,
           "working_set": 548864
-        },
-        "overlay": {
-          "private_ws": 9371648,
-          "private_bytes": 17686528,
-          "working_set": 19775488
-        },
-        "overlay_closed": {
-          "private_ws": 9424896,
-          "private_bytes": 17641472,
-          "working_set": 19918848
         }
       },
       "notes": [
-        "main window did not close",
-        "overlay did not close on Esc"
+        "overlay stages removed: the measuring script of this run could not tell whether a capture overlay was open, so those two figures were invalid"
       ]
     }
   ]

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 380" width="800" height="380" role="img" aria-labelledby="t d">
 <title id="t">Snapline memory use by release</title>
-<desc id="d">Private working set per release. Version 0.27: tray idle 6.3 MB, main window open 11.0 MB, capture overlay open 8.9 MB.</desc>
+<desc id="d">Private working set per release. Version 0.27: tray idle 6.3 MB, main window open 11.0 MB.</desc>
 <style>
 svg{--bg:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--grid:#e6e5e1;--s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
 @media (prefers-color-scheme:dark){svg{--bg:#1a1a19;--ink:#f0efec;--ink2:#c3c2b7;--grid:#383835;--s1:#3987e5;--s2:#d95926;--s3:#199e70}}
@@ -30,8 +30,6 @@ svg{--bg:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--grid:#e6e5e1;--s1:#2a78d6;--s2:#
 <text class="ink" x="343.0" y="185.4" font-size="12">11.0 MB</text>
 <rect x="634" y="83" width="10" height="10" rx="2" style="fill:var(--s2)"/>
 <text class="ink2" x="650" y="92" font-size="11">Main window open</text>
-<circle class="dot" cx="333.0" cy="207.8" r="4.5" style="fill:var(--s3)"><title>Capture overlay open, 0.27: 8.9 MB</title></circle>
-<text class="ink" x="343.0" y="211.8" font-size="12">8.9 MB</text>
 <rect x="634" y="103" width="10" height="10" rx="2" style="fill:var(--s3)"/>
 <text class="ink2" x="650" y="112" font-size="11">Capture overlay open</text>
 </svg>
