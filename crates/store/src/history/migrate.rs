@@ -6,7 +6,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 
 use super::HistoryError;
 
-pub const CURRENT_VERSION: u32 = 4;
+pub const CURRENT_VERSION: u32 = 5;
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(5000);
 
 const MIGRATIONS: &[&str] = &[
@@ -14,6 +14,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0002_upload_etag.sql"),
     include_str!("../../migrations/0003_capture_sequence.sql"),
     include_str!("../../migrations/0004_files.sql"),
+    include_str!("../../migrations/0005_revisions.sql"),
 ];
 static MIGRATION_LOCK: Mutex<()> = Mutex::new(());
 
@@ -306,6 +307,101 @@ mod tests {
             .query_row("SELECT count(*) FROM upload", [], |row| row.get(0))
             .expect("backup uploads");
         assert_eq!(uploads, 1);
+    }
+
+    #[test]
+    fn migration_five_gives_every_existing_capture_a_first_revision() {
+        let (_directory, path) = database();
+        let connection = Connection::open(&path).expect("open version four");
+        for migration in &MIGRATIONS[..4] {
+            connection.execute_batch(migration).expect("seed schema");
+        }
+        connection
+            .pragma_update(None, "user_version", 4)
+            .expect("version");
+        connection
+            .execute_batch(
+                "INSERT INTO capture (id, kind, path, bytes, width, height, created_at) VALUES (7, 'image', 'shot.png', 10, 4, 3, 1);
+                 INSERT INTO capture (id, kind, path, bytes, created_at) VALUES (8, 'video', 'clip.mp4', 20, 2);
+                 INSERT INTO upload (id, capture_id, dest_id, state, updated_at) VALUES (9, 7, 'sftp', 'done', 2);
+                 INSERT INTO capture_sequence (last_id) VALUES (8);",
+            )
+            .expect("seed history");
+        drop(connection);
+
+        let upgraded = open_write(&path).expect("upgrade");
+        let mut statement = upgraded
+            .prepare(
+                "SELECT c.id, c.current_revision, c.operation_id, r.revision, r.path, r.bytes, r.width, r.height
+                 FROM capture c JOIN capture_revision r ON r.capture_id = c.id ORDER BY c.id",
+            )
+            .expect("prepare");
+        let rows: Vec<(
+            i64,
+            i64,
+            Option<String>,
+            i64,
+            String,
+            i64,
+            Option<i64>,
+            Option<i64>,
+        )> = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            })
+            .expect("query")
+            .map(|row| row.expect("row"))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (7, 1, None, 1, "shot.png".to_owned(), 10, Some(4), Some(3)),
+                (8, 1, None, 1, "clip.mp4".to_owned(), 20, None, None),
+            ]
+        );
+        let uploads: i64 = upgraded
+            .query_row("SELECT count(*) FROM upload", [], |row| row.get(0))
+            .expect("uploads");
+        assert_eq!(uploads, 1);
+        let backup = Connection::open_with_flags(
+            path.with_extension("db.bak"),
+            OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .expect("open backup");
+        assert_eq!(schema_version(&backup).expect("backup version"), 4);
+    }
+
+    #[test]
+    fn two_captures_cannot_share_an_operation_identifier() {
+        let (_directory, path) = database();
+        let connection = open_write(&path).expect("open");
+        connection
+            .execute(
+                "INSERT INTO capture (id, kind, path, bytes, created_at, operation_id) VALUES (1, 'image', 'a.png', 1, 1, 'op')",
+                [],
+            )
+            .expect("first");
+        assert!(connection
+            .execute(
+                "INSERT INTO capture (id, kind, path, bytes, created_at, operation_id) VALUES (2, 'image', 'b.png', 1, 1, 'op')",
+                [],
+            )
+            .is_err());
+        connection
+            .execute_batch(
+                "INSERT INTO capture (id, kind, path, bytes, created_at) VALUES (3, 'image', 'c.png', 1, 1);
+                 INSERT INTO capture (id, kind, path, bytes, created_at) VALUES (4, 'image', 'd.png', 1, 1);",
+            )
+            .expect("captures without an operation are unconstrained");
     }
 
     #[test]

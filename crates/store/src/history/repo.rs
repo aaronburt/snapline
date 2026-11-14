@@ -5,8 +5,8 @@ use time::{Duration, OffsetDateTime, PrimitiveDateTime, Time};
 
 use super::{
     capture_name, BorrowedFile, Capture, CaptureId, CaptureKind, Cursor, DeletedCapture,
-    HistoryError, HistoryFilter, HistoryPage, HistoryStats, NewCapture, Origin, UploadRecord,
-    UploadState, UploadUpdate,
+    HistoryError, HistoryFilter, HistoryPage, HistoryStats, NewCapture, Origin, RecordedCapture,
+    Revision, UploadRecord, UploadState, UploadUpdate,
 };
 
 const PAGE_SIZE: usize = 60;
@@ -57,8 +57,13 @@ AND c.id IN (SELECT rowid FROM capture_fts WHERE capture_fts MATCH ?4)
 ";
 
 const INSERT_CAPTURE: &str = "
-INSERT INTO capture (kind, path, bytes, width, height, duration_ms, source_app, created_at, ocr_text, id)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+INSERT INTO capture (kind, path, bytes, width, height, duration_ms, source_app, created_at, ocr_text, id, operation_id)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+";
+
+const INSERT_REVISION: &str = "
+INSERT INTO capture_revision (capture_id, revision, path, bytes, width, height, created_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
 ";
 
 const INSERT_FTS: &str = "
@@ -95,37 +100,71 @@ impl HistoryRepo {
 
     pub fn record(&mut self, capture: NewCapture) -> Result<CaptureId, HistoryError> {
         let transaction = self.conn.transaction()?;
-        let id: CaptureId = transaction.query_row(
-            "UPDATE capture_sequence SET last_id = last_id + 1 RETURNING last_id",
-            [],
-            |row| row.get(0),
-        )?;
-        transaction.execute(
-            INSERT_CAPTURE,
-            params![
-                capture.kind.as_str(),
-                capture.path,
-                capture.bytes,
-                capture.width,
-                capture.height,
-                capture.duration_ms,
-                capture.source_app,
-                capture.created_at,
-                capture.ocr_text,
-                id,
-            ],
-        )?;
-        transaction.execute(
-            INSERT_FTS,
-            params![
-                id,
-                capture_name(&capture.path),
-                capture.source_app,
-                capture.ocr_text,
-            ],
-        )?;
+        let id = insert_capture(&transaction, None, &capture)?;
         transaction.commit()?;
         Ok(id)
+    }
+
+    pub fn record_operation(
+        &mut self,
+        operation_id: &str,
+        capture: NewCapture,
+    ) -> Result<RecordedCapture, HistoryError> {
+        let transaction = self.conn.transaction()?;
+        let existing: Option<CaptureId> = transaction
+            .query_row(
+                "SELECT id FROM capture WHERE operation_id = ?1",
+                [operation_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(id) = existing {
+            return Ok(RecordedCapture { id, created: false });
+        }
+        let id = insert_capture(&transaction, Some(operation_id), &capture)?;
+        transaction.commit()?;
+        Ok(RecordedCapture { id, created: true })
+    }
+
+    pub fn capture_for_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<CaptureId>, HistoryError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id FROM capture WHERE operation_id = ?1",
+                [operation_id],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn current_revision(&self, id: CaptureId) -> Result<Option<Revision>, HistoryError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT r.capture_id, r.revision, r.path, r.bytes, r.width, r.height, r.created_at
+                 FROM capture c
+                 JOIN capture_revision r ON r.capture_id = c.id AND r.revision = c.current_revision
+                 WHERE c.id = ?1",
+                [id],
+                revision_from_row,
+            )
+            .optional()?)
+    }
+
+    pub fn revisions(&self, id: CaptureId) -> Result<Vec<Revision>, HistoryError> {
+        let mut statement = self.conn.prepare(
+            "SELECT capture_id, revision, path, bytes, width, height, created_at
+             FROM capture_revision WHERE capture_id = ?1 ORDER BY revision",
+        )?;
+        let rows = statement.query_map([id], revision_from_row)?;
+        let mut revisions = Vec::new();
+        for row in rows {
+            revisions.push(row?);
+        }
+        Ok(revisions)
     }
 
     pub fn record_borrowed_files(
@@ -151,6 +190,18 @@ impl HistoryRepo {
                     capture_name(&file.path),
                     Option::<String>::None,
                     Option::<String>::None
+                ],
+            )?;
+            transaction.execute(
+                INSERT_REVISION,
+                params![
+                    id,
+                    1_i64,
+                    file.path,
+                    file.bytes,
+                    None::<i64>,
+                    None::<i64>,
+                    file.created_at
                 ],
             )?;
             ids.push(id);
@@ -431,6 +482,68 @@ impl HistoryRepo {
     }
 }
 
+fn insert_capture(
+    transaction: &rusqlite::Transaction<'_>,
+    operation_id: Option<&str>,
+    capture: &NewCapture,
+) -> Result<CaptureId, HistoryError> {
+    let id: CaptureId = transaction.query_row(
+        "UPDATE capture_sequence SET last_id = last_id + 1 RETURNING last_id",
+        [],
+        |row| row.get(0),
+    )?;
+    transaction.execute(
+        INSERT_CAPTURE,
+        params![
+            capture.kind.as_str(),
+            capture.path,
+            capture.bytes,
+            capture.width,
+            capture.height,
+            capture.duration_ms,
+            capture.source_app,
+            capture.created_at,
+            capture.ocr_text,
+            id,
+            operation_id,
+        ],
+    )?;
+    transaction.execute(
+        INSERT_FTS,
+        params![
+            id,
+            capture_name(&capture.path),
+            capture.source_app,
+            capture.ocr_text,
+        ],
+    )?;
+    transaction.execute(
+        INSERT_REVISION,
+        params![
+            id,
+            1_i64,
+            capture.path,
+            capture.bytes,
+            capture.width,
+            capture.height,
+            capture.created_at,
+        ],
+    )?;
+    Ok(id)
+}
+
+fn revision_from_row(row: &Row<'_>) -> rusqlite::Result<Revision> {
+    Ok(Revision {
+        capture_id: row.get(0)?,
+        revision: row.get(1)?,
+        path: row.get(2)?,
+        bytes: row.get(3)?,
+        width: row.get(4)?,
+        height: row.get(5)?,
+        created_at: row.get(6)?,
+    })
+}
+
 pub fn week_start_millis(now: OffsetDateTime) -> i64 {
     let days = i64::from(now.weekday().number_days_from_monday());
     let monday = now.date() - Duration::days(days);
@@ -547,6 +660,89 @@ mod tests {
             attempts: 1,
             updated_at,
         }
+    }
+
+    #[test]
+    fn recording_an_operation_twice_returns_the_same_capture() {
+        let (_directory, mut repo) = repo();
+        let first = repo
+            .record_operation("op-1", capture(CaptureKind::Image, "a.png", 10))
+            .expect("first");
+        let second = repo
+            .record_operation("op-1", capture(CaptureKind::Image, "a.png", 10))
+            .expect("second");
+        assert!(first.created);
+        assert!(!second.created);
+        assert_eq!(first.id, second.id);
+        assert_eq!(repo.stats().expect("stats").count, 1);
+        assert_eq!(
+            repo.capture_for_operation("op-1").expect("lookup"),
+            Some(first.id)
+        );
+        assert_eq!(repo.capture_for_operation("op-2").expect("lookup"), None);
+    }
+
+    #[test]
+    fn different_operations_create_different_captures() {
+        let (_directory, mut repo) = repo();
+        let first = repo
+            .record_operation("op-1", capture(CaptureKind::Image, "a.png", 10))
+            .expect("first");
+        let second = repo
+            .record_operation("op-2", capture(CaptureKind::Image, "b.png", 11))
+            .expect("second");
+        assert_ne!(first.id, second.id);
+        assert_eq!(repo.stats().expect("stats").count, 2);
+    }
+
+    #[test]
+    fn a_new_capture_starts_at_revision_one_with_its_rendered_file() {
+        let (_directory, mut repo) = repo();
+        let id = repo
+            .record(capture(CaptureKind::Image, "a.png", 10))
+            .expect("record");
+        let revision = repo
+            .current_revision(id)
+            .expect("revision")
+            .expect("present");
+        assert_eq!(revision.revision, 1);
+        assert_eq!(revision.path, "a.png");
+        assert_eq!(revision.capture_id, id);
+        assert_eq!(repo.revisions(id).expect("revisions"), vec![revision]);
+    }
+
+    #[test]
+    fn borrowed_files_also_get_a_first_revision() {
+        let (_directory, mut repo) = repo();
+        let ids = repo
+            .record_borrowed_files(&[BorrowedFile {
+                kind: CaptureKind::File,
+                origin: Origin::File,
+                path: "notes.txt".to_owned(),
+                bytes: 5,
+                source_modified_ms: 1,
+                created_at: 2,
+            }])
+            .expect("borrow");
+        let revision = repo
+            .current_revision(ids[0])
+            .expect("revision")
+            .expect("present");
+        assert_eq!(
+            (revision.revision, revision.path.as_str()),
+            (1, "notes.txt")
+        );
+    }
+
+    #[test]
+    fn deleting_a_capture_removes_its_revisions_and_operation() {
+        let (_directory, mut repo) = repo();
+        let recorded = repo
+            .record_operation("op-1", capture(CaptureKind::Image, "a.png", 10))
+            .expect("record");
+        repo.delete(recorded.id).expect("delete");
+        assert!(repo.revisions(recorded.id).expect("revisions").is_empty());
+        assert_eq!(repo.capture_for_operation("op-1").expect("lookup"), None);
     }
 
     #[test]

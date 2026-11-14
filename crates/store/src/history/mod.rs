@@ -126,6 +126,23 @@ pub struct NewCapture {
     pub ocr_text: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecordedCapture {
+    pub id: CaptureId,
+    pub created: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Revision {
+    pub capture_id: CaptureId,
+    pub revision: i64,
+    pub path: String,
+    pub bytes: i64,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub created_at: i64,
+}
+
 pub struct BorrowedFile {
     pub kind: CaptureKind,
     pub origin: Origin,
