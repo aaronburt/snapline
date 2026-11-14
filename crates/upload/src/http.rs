@@ -784,13 +784,13 @@ c4oPTMupbl8Tg8oYB46V5Cg=
     }
 
     #[test]
-    fn server_error_is_retryable() {
+    fn server_error_is_uncertain() {
         let (url, handle) =
             serve(|_| StubResponse::from_string("unavailable").with_status_code(503));
         let client = HttpClient::with_duration(Duration::from_secs(5));
         let error = client.get(&url).expect_err("503");
         handle.join().expect("server");
-        assert!(error.is_retryable());
+        assert!(error.is_uncertain());
     }
 
     #[test]
@@ -804,7 +804,7 @@ c4oPTMupbl8Tg8oYB46V5Cg=
         handle.join().expect("server");
         assert_eq!(
             error,
-            UploadError::Retryable("The request timed out.".to_owned())
+            UploadError::Uncertain("The request timed out.".to_owned())
         );
     }
 

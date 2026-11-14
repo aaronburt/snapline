@@ -296,6 +296,7 @@ fn card_badge_for(
             ),
             UploadStatus::Done => ("Link", "ok", false, false, -1.0),
             UploadStatus::Failed => ("Failed", "failed", false, false, -1.0),
+            UploadStatus::OutcomeUnknown => ("Unknown", "failed", false, false, -1.0),
             UploadStatus::Cancelled => ("Local", "local", false, false, -1.0),
         };
     }
@@ -406,6 +407,7 @@ fn share_status_from_live(status: UploadStatus) -> (&'static str, &'static str) 
     match status {
         UploadStatus::Done => ("uploaded", "Uploaded"),
         UploadStatus::Failed => ("failed", "Upload failed"),
+        UploadStatus::OutcomeUnknown => ("failed", "Outcome unknown"),
         UploadStatus::Queued => ("uploading", "Queued"),
         UploadStatus::Uploading => ("uploading", "Uploading"),
         UploadStatus::BackingOff => ("uploading", "Waiting to retry"),
@@ -521,7 +523,7 @@ fn upload_dto_from_state(state: &UploadState) -> Option<UploadDto> {
         UploadStatus::Queued => UploadStateDto::Queued,
         UploadStatus::Uploading | UploadStatus::BackingOff => UploadStateDto::Uploading,
         UploadStatus::Done => UploadStateDto::Done,
-        UploadStatus::Failed => UploadStateDto::Failed,
+        UploadStatus::Failed | UploadStatus::OutcomeUnknown => UploadStateDto::Failed,
         UploadStatus::Cancelled => UploadStateDto::Cancelled,
     };
     Some(UploadDto {
@@ -1204,6 +1206,7 @@ impl HistoryHandle {
             UploadStatus::Queued
                 | UploadStatus::Done
                 | UploadStatus::Failed
+                | UploadStatus::OutcomeUnknown
                 | UploadStatus::Cancelled
         );
         {

@@ -483,10 +483,10 @@ mod tests {
     }
 
     #[test]
-    fn too_many_requests_and_server_errors_are_retryable() {
-        assert!(upload_status(429, "").is_retryable());
+    fn too_many_requests_and_server_errors_are_transient_but_uncertain() {
+        assert!(upload_status(429, "").is_uncertain());
         for status in [500, 502, 503, 599] {
-            assert!(upload_status(status, "").is_retryable(), "{status}");
+            assert!(upload_status(status, "").is_uncertain(), "{status}");
         }
     }
 

@@ -285,6 +285,10 @@ pub trait Uploader: Send + Sync {
         false
     }
 
+    fn idempotent(&self) -> bool {
+        false
+    }
+
     fn reports_progress(&self) -> bool {
         false
     }
@@ -323,12 +327,16 @@ pub enum Status {
     BackingOff { retry_in: Duration },
     Done,
     Failed,
+    OutcomeUnknown,
     Cancelled,
 }
 
 impl Status {
     pub fn terminal(&self) -> bool {
-        matches!(self, Self::Done | Self::Failed | Self::Cancelled)
+        matches!(
+            self,
+            Self::Done | Self::Failed | Self::OutcomeUnknown | Self::Cancelled
+        )
     }
 }
 
@@ -445,7 +453,7 @@ impl RetryPolicy {
 }
 
 pub fn retry_after(error: &UploadError) -> Option<Duration> {
-    let UploadError::Retryable(message) = error else {
+    let (UploadError::Retryable(message) | UploadError::Uncertain(message)) = error else {
         return None;
     };
     let marker = "retry after ";
@@ -467,7 +475,7 @@ pub enum QueueError {
     NotFound,
     #[error("The upload cannot be cancelled.")]
     NotCancellable,
-    #[error("Only failed or cancelled uploads can be retried.")]
+    #[error("Only failed, cancelled or uncertain uploads can be retried.")]
     NotRetryable,
 }
 
@@ -703,7 +711,7 @@ impl JobRecord {
             cancellable: match &self.status {
                 Status::Queued | Status::BackingOff { .. } => true,
                 Status::Uploading => self.job.uploader.supports_in_flight_cancel(),
-                Status::Done | Status::Failed | Status::Cancelled => false,
+                Status::Done | Status::Failed | Status::OutcomeUnknown | Status::Cancelled => false,
             },
             progress_available: self.job.uploader.reports_progress(),
             sent,
@@ -901,7 +909,7 @@ impl State {
             Command::Retry { id, reply } => {
                 let retryable = matches!(
                     self.records.get(&id).map(|record| &record.status),
-                    Some(Status::Failed | Status::Cancelled)
+                    Some(Status::Failed | Status::OutcomeUnknown | Status::Cancelled)
                 );
                 if retryable {
                     if let Some(record) = self.records.get_mut(&id) {
@@ -1010,6 +1018,7 @@ fn run_job(
     record.status = Status::Uploading;
     record.error = None;
     let uploader = Arc::clone(&record.job.uploader);
+    let idempotent = uploader.idempotent();
     let file = record.job.file.clone();
     let attempts = record.attempts;
     let progress = Arc::clone(&record.progress);
@@ -1085,7 +1094,16 @@ fn run_job(
                 state.emit(id);
                 return true;
             }
-            let retryable = error.is_retryable() && attempts <= policy.max_retries();
+            let outcome_unknown = error.is_uncertain() && !idempotent;
+            if outcome_unknown {
+                if let Some(record) = state.records.get_mut(&id) {
+                    record.status = Status::OutcomeUnknown;
+                    record.error = Some(error);
+                }
+                state.emit(id);
+                return true;
+            }
+            let retryable = error.is_transient() && attempts <= policy.max_retries();
             if !retryable {
                 if let Some(record) = state.records.get_mut(&id) {
                     record.status = Status::Failed;
@@ -1502,6 +1520,7 @@ mod tests {
                 Status::BackingOff { .. } => "backing-off",
                 Status::Done => "done",
                 Status::Failed => "failed",
+                Status::OutcomeUnknown => "outcome-unknown",
                 Status::Cancelled => "cancelled",
             };
             seen.push(label);
@@ -1965,5 +1984,132 @@ mod tests {
         let error = reader.read_to_end(&mut bytes).expect_err("short file");
         assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
         assert_eq!(error.to_string(), SHORTER);
+    }
+
+    struct Idempotent(Arc<FakeUploader>);
+
+    impl Uploader for Idempotent {
+        fn upload(
+            &self,
+            file: &UploadFile,
+            secrets: &dyn SecretStore,
+        ) -> Result<Uploaded, UploadError> {
+            self.0.upload(file, secrets)
+        }
+
+        fn idempotent(&self) -> bool {
+            true
+        }
+
+        fn delete(
+            &self,
+            link: &DeletionLink,
+            secrets: &dyn SecretStore,
+        ) -> Result<(), UploadError> {
+            self.0.delete(link, secrets)
+        }
+    }
+
+    #[test]
+    fn an_uncertain_failure_is_never_retried_automatically() {
+        let (uploader, queue, events, handle) = queue(
+            vec![Err(UploadError::Uncertain(
+                "The request timed out.".to_owned(),
+            ))],
+            RetryPolicy::with_backoff(5, vec![Duration::ZERO]),
+        );
+        let id = handle
+            .enqueue(job(uploader.clone(), "maybe.png"))
+            .expect("enqueue");
+        let finished = wait_terminal(&events, id);
+        assert_eq!(finished.status, Status::OutcomeUnknown);
+        assert_eq!(finished.attempts, 1);
+        assert_eq!(
+            finished.error,
+            Some(UploadError::Uncertain("The request timed out.".to_owned()))
+        );
+        assert!(!finished.cancellable);
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(uploader.calls().len(), 1);
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn an_outcome_unknown_upload_retries_only_when_asked() {
+        let (uploader, queue, events, handle) = queue(
+            vec![Err(UploadError::Uncertain(
+                "The connection failed.".to_owned(),
+            ))],
+            RetryPolicy::new(3),
+        );
+        let id = handle
+            .enqueue(job(uploader.clone(), "maybe.png"))
+            .expect("enqueue");
+        assert_eq!(wait_terminal(&events, id).status, Status::OutcomeUnknown);
+        handle.retry(id).expect("explicit retry");
+        let finished = wait_terminal(&events, id);
+        assert_eq!(finished.status, Status::Done);
+        assert_eq!(finished.attempts, 1);
+        assert_eq!(uploader.calls().len(), 2);
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn an_idempotent_destination_retries_an_uncertain_failure() {
+        let inner = FakeUploader::new(vec![Err(UploadError::Uncertain(
+            "The request timed out.".to_owned(),
+        ))]);
+        let (queue, events) = Queue::start(
+            Arc::new(TestSecrets),
+            RetryPolicy::with_backoff(2, vec![Duration::ZERO]),
+        )
+        .expect("queue");
+        let handle = queue.handle();
+        let id = handle
+            .enqueue(job(Arc::new(Idempotent(inner.clone())), "same-key.png"))
+            .expect("enqueue");
+        let finished = wait_terminal(&events, id);
+        assert_eq!(finished.status, Status::Done);
+        assert_eq!(finished.attempts, 2);
+        assert_eq!(inner.calls().len(), 2);
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn an_idempotent_destination_still_respects_the_retry_limit() {
+        let inner = FakeUploader::new(vec![
+            Err(UploadError::Uncertain("one".to_owned())),
+            Err(UploadError::Uncertain("two".to_owned())),
+        ]);
+        let (queue, events) = Queue::start(
+            Arc::new(TestSecrets),
+            RetryPolicy::with_backoff(1, vec![Duration::ZERO]),
+        )
+        .expect("queue");
+        let handle = queue.handle();
+        let id = handle
+            .enqueue(job(Arc::new(Idempotent(inner.clone())), "same-key.png"))
+            .expect("enqueue");
+        let finished = wait_terminal(&events, id);
+        assert_eq!(finished.status, Status::Failed);
+        assert_eq!(finished.attempts, 2);
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn a_safe_retry_still_backs_off_and_retries() {
+        let (uploader, queue, events, handle) = queue(
+            vec![Err(UploadError::Retryable(
+                "The connection failed.".to_owned(),
+            ))],
+            RetryPolicy::with_backoff(2, vec![Duration::ZERO]),
+        );
+        let id = handle
+            .enqueue(job(uploader.clone(), "safe.png"))
+            .expect("enqueue");
+        let finished = wait_terminal(&events, id);
+        assert_eq!(finished.status, Status::Done);
+        assert_eq!(finished.attempts, 2);
+        queue.join().expect("join");
     }
 }
