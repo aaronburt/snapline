@@ -201,12 +201,29 @@ jobs:
           foreach ($s in $run.stages.PSObject.Properties) {
             "| $($s.Name) | {0:N1} MB | {1:N1} MB |" -f ($s.Value.private_ws / 1MB), ($s.Value.private_bytes / 1MB) | Add-Content $env:GITHUB_STEP_SUMMARY
           }
+          foreach ($f in Get-ChildItem memory-breakdown-*.json -ErrorAction SilentlyContinue) {
+            $b = Get-Content $f.FullName -Raw | ConvertFrom-Json
+            "" | Add-Content $env:GITHUB_STEP_SUMMARY
+            "#### Where the private working set sits: $($b.stage)" | Add-Content $env:GITHUB_STEP_SUMMARY
+            "| Kind | Private WS |" | Add-Content $env:GITHUB_STEP_SUMMARY
+            "|---|---|" | Add-Content $env:GITHUB_STEP_SUMMARY
+            foreach ($k in $b.by_kind.PSObject.Properties) {
+              "| $($k.Name) | {0:N2} MB |" -f ($k.Value.private_ws / 1MB) | Add-Content $env:GITHUB_STEP_SUMMARY
+            }
+            "" | Add-Content $env:GITHUB_STEP_SUMMARY
+            "| Top owners | Kind | Private WS |" | Add-Content $env:GITHUB_STEP_SUMMARY
+            "|---|---|---|" | Add-Content $env:GITHUB_STEP_SUMMARY
+            foreach ($t in ($b.top | Select-Object -First 12)) {
+              "| $($t.name) | $($t.kind) | {0:N2} MB |" -f ($t.private_ws / 1MB) | Add-Content $env:GITHUB_STEP_SUMMARY
+            }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: memory-run
           path: |
             memory-run.json
             memory-*.png
+            memory-breakdown-*.json
           if-no-files-found: error
           retention-days: 30
 

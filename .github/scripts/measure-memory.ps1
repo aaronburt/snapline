@@ -27,6 +27,13 @@ $app = "$stage\snapline.exe"
 
 function Log($m) { Write-Host ("[{0}] {1}" -f (Get-Date -Format HH:mm:ss), $m) }
 
+# Diagnostic only: where the private working set sits. A failure here never affects the run.
+function Breakdown($procId, $name) {
+    try {
+        & "$PSScriptRoot/memory-breakdown.ps1" -ProcessId $procId -Stage $name -OutDir (Split-Path -Parent ([IO.Path]::GetFullPath($Out, (Get-Location).Path)))
+    } catch { Log "breakdown $name failed: $_" }
+}
+
 function Read-Once($procId) {
     $row = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -Filter "IDProcess=$procId"
     if (-not $row) { return $null }
@@ -123,6 +130,7 @@ try {
     if ($proc.HasExited) { throw "app exited during startup (code $($proc.ExitCode))" }
     $stages["idle"] = Sample $proc.Id
     Log "idle: $($stages['idle'].private_ws)"
+    Breakdown $proc.Id "idle"
 
     Log-Windows $proc.Id "before opening anything"
     Start-Process $app -ArgumentList "--budget-open", "main" | Out-Null
@@ -132,6 +140,7 @@ try {
     Shot "main-open"
     $stages["main_open"] = Sample $proc.Id
     Log "main_open: $($stages['main_open'].private_ws)"
+    Breakdown $proc.Id "main_open"
 
     Close-Windows $proc.Id
     if (-not (Wait-Windows $proc.Id $false 15)) { $notes += "main window did not close" }
@@ -139,6 +148,7 @@ try {
     Log-Windows $proc.Id "main closed"
     $stages["main_closed"] = Sample $proc.Id
     Log "main_closed: $($stages['main_closed'].private_ws)"
+    Breakdown $proc.Id "main_closed"
 
     Start-Process $app -ArgumentList "--action", "capture_region" | Out-Null
     if (Wait-Windows $proc.Id $true 15) {
