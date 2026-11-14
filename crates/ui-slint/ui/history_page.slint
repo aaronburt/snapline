@@ -786,6 +786,10 @@ export component HistoryPage inherits Rectangle {
                     HistoryState.delete-hotkey();
                     return accept;
                 }
+                if ((event.modifiers.control || event.modifiers.meta) && (event.text == "a" || event.text == "A")) {
+                    HistoryState.select-all();
+                    return accept;
+                }
                 if ((event.modifiers.control || event.modifiers.meta) && (event.text == "c" || event.text == "C")) {
                     HistoryState.copy-selected();
                     return accept;
