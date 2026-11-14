@@ -6,7 +6,7 @@ use snapline_core::naming::{self, NameContext, NameFormat, TokenSource};
 use snapline_core::ports::{
     Clipboard, Clock, CodecError, ImageCodec, Notice, NoticeButton, Notifier, RichNotice, Sound,
 };
-use snapline_store::history::{CaptureId, CaptureKind, HistoryRepo, NewCapture};
+use snapline_store::history::{CaptureId, HistoryRepo};
 use snapline_store::io;
 use snapline_store::settings::general::{
     General, ImageFormat as SettingsImageFormat, Subfolders, WorkflowStep, WorkflowStepKind,
@@ -15,11 +15,13 @@ use snapline_store::settings::Settings;
 use thiserror::Error;
 use time::OffsetDateTime;
 
+use crate::durable::{DurableError, Journal, Manifest, Registration, MANIFEST_VERSION};
 use crate::ServiceError;
 
 pub const THUMBNAIL_WIDTH: u32 = 320;
 pub const COUNTER_KEY: &str = "counter";
 pub const SAVED_TITLE: &str = "Screenshot saved";
+pub const HISTORY_PENDING_TITLE: &str = "Saved locally; History pending";
 
 #[derive(Clone)]
 pub struct ServicePorts {
@@ -127,6 +129,7 @@ pub struct SaveOutcome {
     pub height: u32,
     pub copied: bool,
     pub saved: bool,
+    pub history_pending: bool,
     pub next_counter: Option<u32>,
 }
 
@@ -141,6 +144,7 @@ impl SaveOutcome {
             height,
             copied,
             saved: false,
+            history_pending: false,
             next_counter: None,
         }
     }
@@ -173,6 +177,7 @@ pub struct Saver {
     settings: Arc<dyn SettingsAccess>,
     ports: ServicePorts,
     thumbs_dir: PathBuf,
+    journal: Journal,
     user_profile: PathBuf,
     random: Arc<dyn RandomSource>,
 }
@@ -182,15 +187,51 @@ impl Saver {
         settings: Arc<dyn SettingsAccess>,
         ports: ServicePorts,
         thumbs_dir: impl Into<PathBuf>,
+        pending_dir: impl Into<PathBuf>,
         user_profile: impl Into<PathBuf>,
     ) -> Self {
         Self {
             settings,
             ports,
             thumbs_dir: thumbs_dir.into(),
+            journal: Journal::new(pending_dir),
             user_profile: user_profile.into(),
             random: Arc::new(ThreadRandomSource),
         }
+    }
+
+    pub fn with_journal(mut self, journal: Journal) -> Self {
+        self.journal = journal;
+        self
+    }
+
+    pub fn pending_saves(&self) -> usize {
+        self.journal.pending_count()
+    }
+
+    pub fn reconcile(&self, repo: &mut HistoryRepo) -> Vec<CaptureId> {
+        let report = self.journal.reconcile(repo);
+        if report.abandoned > 0 || report.rejected > 0 {
+            tracing::warn!(
+                abandoned = report.abandoned,
+                rejected = report.rejected,
+                "some interrupted saves could not be recovered"
+            );
+        }
+        let mut ids = Vec::new();
+        for (id, path) in report.registered {
+            if let Err(error) = crate::thumbs::write_thumbnail(
+                &path,
+                &self.thumbs_dir,
+                id,
+                crate::thumbs::THUMBNAIL_QUALITY,
+                self.ports.codec.as_ref(),
+            ) {
+                tracing::warn!(%error, "the thumbnail of a recovered capture could not be written");
+            }
+            ids.push(id);
+        }
+        ids
     }
 
     pub fn with_random_source(mut self, random: Arc<dyn RandomSource>) -> Self {
@@ -260,35 +301,44 @@ impl Saver {
             .map_err(|error| SaveError::Codec(error.to_string()))?;
         let bytes = i64::try_from(encoded.len())
             .map_err(|_| SaveError::Io("The encoded image is too large.".to_owned()))?;
-        io::write_atomic(&path, &encoded)
-            .map_err(|error| SaveError::Io(save_folder_message(&folder, &error)))?;
+        let created_at = now.unix_timestamp().saturating_mul(1000) + i64::from(now.millisecond());
+        let operation_id = Journal::operation_id(created_at, counter, &self.random.chars());
+        let manifest = Manifest {
+            version: MANIFEST_VERSION,
+            operation_id: operation_id.clone(),
+            final_path: path.to_string_lossy().into_owned(),
+            staged_path: Journal::staged_path(&path, &operation_id)
+                .to_string_lossy()
+                .into_owned(),
+            bytes,
+            width: i64::from(image.width()),
+            height: i64::from(image.height()),
+            source_app: request.source_app.clone(),
+            created_at,
+        };
+        let committed =
+            self.journal
+                .commit(repo, &manifest, &encoded)
+                .map_err(|error| match error {
+                    DurableError::Write(error) => {
+                        SaveError::Io(save_folder_message(&folder, &error))
+                    }
+                    DurableError::Crashed(point) => {
+                        SaveError::Io(format!("The save was interrupted at {point:?}."))
+                    }
+                })?;
 
         let next_counter = counter;
         if let Err(error) = self.settings.set_counter(next_counter) {
             tracing::warn!(%error, "the capture counter could not be saved");
         }
 
-        let created_at = now.unix_timestamp().saturating_mul(1000) + i64::from(now.millisecond());
-        let id = repo.record(NewCapture {
-            kind: CaptureKind::Image,
-            path: path.to_string_lossy().into_owned(),
-            bytes,
-            width: Some(i64::from(image.width())),
-            height: Some(i64::from(image.height())),
-            duration_ms: None,
-            source_app: request.source_app.clone(),
-            created_at,
-            ocr_text: None,
-        });
-        let id = match id {
-            Ok(id) => id,
-            Err(error) => {
-                // The image is already on disk. Keep it, and tell the user where it is, rather
-                // than failing as if nothing had been saved.
-                tracing::warn!(%error, "the capture could not be added to History");
+        let id = match committed.registration {
+            Registration::Registered(id) => id,
+            Registration::Pending => {
                 if general.notifications && !request.quiet {
                     self.ports.notifier.toast(Notice::new(
-                        "Saved, but not added to History",
+                        HISTORY_PENDING_TITLE,
                         format!("{} is in {}", file_name, folder.display()),
                     ));
                 }
@@ -301,6 +351,7 @@ impl Saver {
                     height: image.height(),
                     copied,
                     saved: true,
+                    history_pending: true,
                     next_counter: Some(next_counter),
                 });
             }
@@ -336,6 +387,7 @@ impl Saver {
             height: image.height(),
             copied,
             saved: true,
+            history_pending: false,
             next_counter: Some(next_counter),
         })
     }
@@ -558,7 +610,7 @@ mod tests {
     use std::sync::Mutex;
 
     use snapline_core::ports::{ClipboardError, Notice};
-    use snapline_store::history::{HistoryFilter, HistoryRepo};
+    use snapline_store::history::{CaptureKind, HistoryFilter, HistoryRepo};
     use tempfile::TempDir;
     use time::macros::datetime;
 
@@ -724,6 +776,7 @@ mod tests {
         sound: Arc<FakeSound>,
         repo: HistoryRepo,
         thumbs: PathBuf,
+        pending: PathBuf,
         profile: PathBuf,
     }
 
@@ -749,6 +802,7 @@ mod tests {
                 HistoryRepo::open_write(&directory.path().join("history.db")).expect("history");
             let profile = directory.path().join("Profile");
             let thumbs = directory.path().join("thumbs");
+            let pending = directory.path().join("pending");
             let settings = Arc::new(FakeSettings::new(settings));
             let codec = Arc::new(FakeCodec::new());
             let clipboard = Arc::new(FakeClipboard::default());
@@ -763,6 +817,7 @@ mod tests {
                 sound,
                 repo,
                 thumbs,
+                pending,
                 profile,
             }
         }
@@ -782,6 +837,7 @@ mod tests {
                 self.settings.clone(),
                 self.ports(),
                 self.thumbs.clone(),
+                self.pending.clone(),
                 self.profile.clone(),
             )
         }
@@ -873,6 +929,7 @@ mod tests {
             fixture.settings.clone(),
             fixture.ports(),
             fixture.thumbs.clone(),
+            fixture.pending.clone(),
             fixture.profile.clone(),
         )
         .with_random_source(Arc::new(FixedRandom::new("k3f9")));
@@ -1012,6 +1069,102 @@ mod tests {
         assert!(fixture.notifier.notices.lock().expect("notices").is_empty());
         assert_eq!(fixture.clipboard.images.load(Ordering::SeqCst), 1);
         assert!(!fixture.base_folder().exists());
+    }
+
+    struct RefuseHistory;
+
+    impl crate::durable::Faults for RefuseHistory {
+        fn at(&self, point: crate::durable::FaultPoint) -> Option<crate::durable::Fault> {
+            (point == crate::durable::FaultPoint::BeforeRegister)
+                .then_some(crate::durable::Fault::Fail)
+        }
+    }
+
+    fn portable_settings(fixture: &Fixture) -> Settings {
+        let mut settings = Settings::default();
+        settings.general.save_folder = fixture.base_folder().to_string_lossy().into_owned();
+        settings.general.subfolders = Subfolders::None;
+        settings
+    }
+
+    #[test]
+    fn an_unavailable_history_reports_saved_locally_and_registers_later() {
+        let mut fixture = Fixture::new(Settings::default());
+        *fixture.settings.settings.lock().expect("settings") = portable_settings(&fixture);
+        let saver = fixture.saver().with_journal(
+            crate::durable::Journal::new(fixture.pending.clone())
+                .with_faults(Arc::new(RefuseHistory)),
+        );
+        let outcome = saver
+            .run(&mut fixture.repo, Fixture::default_request())
+            .expect("save");
+        assert!(outcome.saved);
+        assert!(outcome.history_pending);
+        assert_eq!(outcome.capture_id, None);
+        let path = outcome.path.clone().expect("path");
+        assert!(path.is_file());
+        assert_eq!(fixture.count(), 0);
+        assert_eq!(saver.pending_saves(), 1);
+        {
+            let notices = fixture.notifier.notices.lock().expect("notices");
+            assert_eq!(notices.len(), 1);
+            assert_eq!(notices[0].title, HISTORY_PENDING_TITLE);
+        }
+
+        let recovered = fixture.saver().reconcile(&mut fixture.repo);
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(fixture.count(), 1);
+        assert_eq!(fixture.saver().pending_saves(), 0);
+        let recorded = fixture
+            .repo
+            .get(recovered[0])
+            .expect("get")
+            .expect("capture");
+        assert_eq!(recorded.path, path.to_string_lossy());
+        assert!(fixture.saver().reconcile(&mut fixture.repo).is_empty());
+        assert_eq!(fixture.count(), 1);
+    }
+
+    #[test]
+    fn a_successful_save_records_its_operation_and_first_revision() {
+        let mut fixture = Fixture::new(Settings::default());
+        *fixture.settings.settings.lock().expect("settings") = portable_settings(&fixture);
+        let outcome = fixture.run(Fixture::default_request()).expect("save");
+        assert!(!outcome.history_pending);
+        let id = outcome.capture_id.expect("id");
+        let revision = fixture
+            .repo
+            .current_revision(id)
+            .expect("revision")
+            .expect("present");
+        assert_eq!(revision.revision, 1);
+        assert_eq!(
+            Some(revision.path.as_str()),
+            outcome.path.as_ref().and_then(|path| path.to_str())
+        );
+        assert_eq!(fixture.saver().pending_saves(), 0);
+        let leftovers: Vec<_> = std::fs::read_dir(fixture.base_folder())
+            .expect("folder")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".part"))
+            .collect();
+        assert!(leftovers.is_empty());
+    }
+
+    #[test]
+    fn a_failed_write_reports_failure_and_leaves_no_recovery_files() {
+        let mut fixture = Fixture::new(Settings::default());
+        *fixture.settings.settings.lock().expect("settings") = portable_settings(&fixture);
+        std::fs::create_dir_all(fixture.base_folder().parent().expect("parent")).expect("parent");
+        std::fs::write(fixture.base_folder(), b"not a folder").expect("blocker");
+        let error = fixture
+            .run(Fixture::default_request())
+            .expect_err("must fail");
+        assert!(matches!(error, SaveError::Io(_)));
+        assert_eq!(fixture.count(), 0);
+        assert_eq!(fixture.saver().pending_saves(), 0);
+        assert!(fixture.settings.counters().is_empty());
     }
 
     #[test]

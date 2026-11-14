@@ -292,7 +292,7 @@ impl EditorService {
             }
             EditorAction::Upload => {
                 let saved = ports.saver.save(image, title.to_owned())?;
-                let capture_id = saved.capture_id.ok_or_else(not_saved)?;
+                let capture_id = saved.capture_id.ok_or_else(|| not_saved(&saved))?;
                 let destination = self.default_destination()?;
                 let _id = ports.uploader.enqueue(capture_id, &destination)?;
                 Ok(EditorOutcome {
@@ -346,7 +346,15 @@ impl EditorService {
 }
 
 fn saved_outcome(action: EditorAction, saved: SaveOutcome) -> Result<EditorOutcome, ServiceError> {
-    let capture_id = saved.capture_id.ok_or_else(not_saved)?;
+    if saved.capture_id.is_none() && saved.history_pending {
+        return Ok(EditorOutcome {
+            action: Some(action),
+            capture_id: None,
+            path: saved.path,
+            cancelled: false,
+        });
+    }
+    let capture_id = saved.capture_id.ok_or_else(|| not_saved(&saved))?;
     Ok(EditorOutcome {
         action: Some(action),
         capture_id: Some(capture_id),
@@ -355,7 +363,12 @@ fn saved_outcome(action: EditorAction, saved: SaveOutcome) -> Result<EditorOutco
     })
 }
 
-fn not_saved() -> ServiceError {
+fn not_saved(saved: &SaveOutcome) -> ServiceError {
+    if saved.history_pending {
+        return ServiceError::Invalid(
+            "Saved locally; History pending. The upload was not started.".to_owned(),
+        );
+    }
     ServiceError::Invalid("The image could not be saved.".to_owned())
 }
 
@@ -568,6 +581,7 @@ mod tests {
                 height: image.height(),
                 copied: false,
                 saved: capture_id.is_some(),
+                history_pending: false,
                 next_counter: None,
             })
         }

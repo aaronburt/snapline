@@ -47,6 +47,8 @@ pub enum ClipboardUploadError {
     NoDestination,
     #[error("The image could not be saved.")]
     Save,
+    #[error("Saved locally; History pending. The upload was not started.")]
+    HistoryPending,
     #[error("The upload could not be started.")]
     Upload,
     #[error("The confirmation dialog could not be shown.")]
@@ -227,7 +229,11 @@ impl ClipboardUpload {
             tracing::warn!(%error, "the clipboard capture could not be saved");
             ClipboardUploadError::Save
         })?;
-        let capture_id = saved.capture_id.ok_or(ClipboardUploadError::Save)?;
+        let capture_id = saved.capture_id.ok_or(if saved.history_pending {
+            ClipboardUploadError::HistoryPending
+        } else {
+            ClipboardUploadError::Save
+        })?;
         let upload_id = self
             .queue
             .enqueue(capture_id, &request.destination)
@@ -441,6 +447,7 @@ mod tests {
                 height: 2,
                 copied: false,
                 saved: true,
+                history_pending: false,
                 next_counter: None,
             })
         }
