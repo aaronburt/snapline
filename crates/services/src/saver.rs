@@ -130,6 +130,7 @@ pub struct SaveOutcome {
     pub copied: bool,
     pub saved: bool,
     pub history_pending: bool,
+    pub operation_id: Option<String>,
     pub next_counter: Option<u32>,
 }
 
@@ -145,6 +146,7 @@ impl SaveOutcome {
             copied,
             saved: false,
             history_pending: false,
+            operation_id: None,
             next_counter: None,
         }
     }
@@ -352,6 +354,7 @@ impl Saver {
                     copied,
                     saved: true,
                     history_pending: true,
+                    operation_id: Some(operation_id.clone()),
                     next_counter: Some(next_counter),
                 });
             }
@@ -388,6 +391,7 @@ impl Saver {
             copied,
             saved: true,
             history_pending: false,
+            operation_id: None,
             next_counter: Some(next_counter),
         })
     }

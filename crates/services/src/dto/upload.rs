@@ -47,18 +47,40 @@ pub struct UploadLinkBatch {
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum UploadReq {
     Ping,
-    State { id: u64 },
-    Cancel { id: u64 },
-    Retry { id: u64 },
-    Pause { id: u64 },
-    Resume { id: u64 },
-    SetQueuePaused { paused: bool },
+    State {
+        id: u64,
+    },
+    Cancel {
+        id: u64,
+    },
+    Retry {
+        id: u64,
+    },
+    Pause {
+        id: u64,
+    },
+    Resume {
+        id: u64,
+    },
+    SetQueuePaused {
+        paused: bool,
+    },
     QueueState,
     List,
     LastLink,
     PickAndUpload,
-    CopyLink { link: String },
-    UploadElsewhere { capture_id: i64, dest: String },
+    CopyLink {
+        link: String,
+    },
+    UploadElsewhere {
+        capture_id: i64,
+        dest: String,
+    },
+    HoldForHistory {
+        operation_id: String,
+        path: String,
+        dest: String,
+    },
     Destination(DestinationReq),
 }
 

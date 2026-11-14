@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use snapline_core::image::Image;
@@ -47,8 +47,6 @@ pub enum ClipboardUploadError {
     NoDestination,
     #[error("The image could not be saved.")]
     Save,
-    #[error("Saved locally; History pending. The upload was not started.")]
-    HistoryPending,
     #[error("The upload could not be started.")]
     Upload,
     #[error("The confirmation dialog could not be shown.")]
@@ -93,6 +91,10 @@ impl ClipboardUploadRequest {
 pub enum ClipboardUploadOutcome {
     Queued {
         capture_id: i64,
+        upload_id: u64,
+        destination: String,
+    },
+    WaitingForHistory {
         upload_id: u64,
         destination: String,
     },
@@ -161,9 +163,37 @@ impl CaptureSaver for crate::worker::Handle {
 
 pub trait UploadQueue: Send + Sync {
     fn enqueue(&self, capture_id: i64, destination: &str) -> Result<u64, ServiceError>;
+
+    fn hold(
+        &self,
+        _operation_id: &str,
+        _path: &Path,
+        _destination: &str,
+    ) -> Result<u64, ServiceError> {
+        Err(ServiceError::NotYet)
+    }
 }
 
 impl UploadQueue for UploadService {
+    fn hold(
+        &self,
+        operation_id: &str,
+        path: &Path,
+        destination: &str,
+    ) -> Result<u64, ServiceError> {
+        let response = self.handle(UploadReq::HoldForHistory {
+            operation_id: operation_id.to_owned(),
+            path: path.to_string_lossy().into_owned(),
+            dest: destination.to_owned(),
+        })?;
+        match response {
+            UploadResp::Accepted { id } => Ok(id),
+            _ => Err(ServiceError::Internal(
+                "The upload could not be held.".to_owned(),
+            )),
+        }
+    }
+
     fn enqueue(&self, capture_id: i64, destination: &str) -> Result<u64, ServiceError> {
         let response = self.handle(UploadReq::UploadElsewhere {
             capture_id,
@@ -229,11 +259,25 @@ impl ClipboardUpload {
             tracing::warn!(%error, "the clipboard capture could not be saved");
             ClipboardUploadError::Save
         })?;
-        let capture_id = saved.capture_id.ok_or(if saved.history_pending {
-            ClipboardUploadError::HistoryPending
-        } else {
-            ClipboardUploadError::Save
-        })?;
+        if saved.history_pending {
+            let (Some(operation_id), Some(path)) =
+                (saved.operation_id.as_deref(), saved.path.as_deref())
+            else {
+                return Err(ClipboardUploadError::Save);
+            };
+            let upload_id = self
+                .queue
+                .hold(operation_id, path, &request.destination)
+                .map_err(|error| {
+                    tracing::warn!(%error, "the clipboard capture could not be held for upload");
+                    ClipboardUploadError::Upload
+                })?;
+            return Ok(ClipboardUploadOutcome::WaitingForHistory {
+                upload_id,
+                destination: request.destination.clone(),
+            });
+        }
+        let capture_id = saved.capture_id.ok_or(ClipboardUploadError::Save)?;
         let upload_id = self
             .queue
             .enqueue(capture_id, &request.destination)
@@ -420,6 +464,7 @@ mod tests {
         capture_id: Option<i64>,
         requests: Mutex<Vec<CaptureRequest>>,
         failed: AtomicBool,
+        pending: AtomicBool,
     }
 
     impl FakeSaver {
@@ -428,6 +473,7 @@ mod tests {
                 capture_id,
                 requests: Mutex::new(Vec::new()),
                 failed: AtomicBool::new(false),
+                pending: AtomicBool::new(false),
             }
         }
     }
@@ -438,16 +484,18 @@ mod tests {
             if self.failed.load(Ordering::SeqCst) {
                 return Err(ServiceError::Internal("not shown".to_owned()));
             }
+            let pending = self.pending.load(Ordering::SeqCst);
             Ok(SaveOutcome {
-                capture_id: self.capture_id,
-                path: None,
+                capture_id: if pending { None } else { self.capture_id },
+                path: pending.then(|| PathBuf::from("saved.png")),
                 file_name: None,
                 bytes: 4,
                 width: 2,
                 height: 2,
                 copied: false,
                 saved: true,
-                history_pending: false,
+                history_pending: pending,
+                operation_id: pending.then(|| "op-9".to_owned()),
                 next_counter: None,
             })
         }
@@ -456,6 +504,7 @@ mod tests {
     struct FakeQueue {
         upload_id: u64,
         calls: Mutex<Vec<(i64, String)>>,
+        held: Mutex<Vec<(String, PathBuf, String)>>,
         failed: AtomicBool,
     }
 
@@ -464,12 +513,27 @@ mod tests {
             Self {
                 upload_id,
                 calls: Mutex::new(Vec::new()),
+                held: Mutex::new(Vec::new()),
                 failed: AtomicBool::new(false),
             }
         }
     }
 
     impl UploadQueue for FakeQueue {
+        fn hold(
+            &self,
+            operation_id: &str,
+            path: &Path,
+            destination: &str,
+        ) -> Result<u64, ServiceError> {
+            self.held.lock().expect("held").push((
+                operation_id.to_owned(),
+                path.to_path_buf(),
+                destination.to_owned(),
+            ));
+            Ok(self.upload_id)
+        }
+
         fn enqueue(&self, capture_id: i64, destination: &str) -> Result<u64, ServiceError> {
             self.calls
                 .lock()
@@ -754,6 +818,29 @@ mod tests {
         let error = service.run(&request(false)).expect_err("save");
         assert_eq!(error, ClipboardUploadError::Save);
         assert!(fixture.queue_calls().is_empty());
+    }
+
+    #[test]
+    fn a_save_waiting_for_history_holds_the_upload_instead_of_dropping_it() {
+        let fixture = Fixture::new(Some(image()), Vec::new(), Confirmation::Upload);
+        fixture.saver.pending.store(true, Ordering::SeqCst);
+        let outcome = fixture.service().run(&request(false)).expect("held");
+        assert_eq!(
+            outcome,
+            ClipboardUploadOutcome::WaitingForHistory {
+                upload_id: 11,
+                destination: "imgur".to_owned(),
+            }
+        );
+        assert!(fixture.queue_calls().is_empty());
+        assert_eq!(
+            *fixture.queue.held.lock().expect("held"),
+            vec![(
+                "op-9".to_owned(),
+                PathBuf::from("saved.png"),
+                "imgur".to_owned()
+            )]
+        );
     }
 
     #[test]

@@ -360,6 +360,223 @@ fn restored_stopped(
     })
 }
 
+fn restore_live(
+    repo: &mut HistoryRepo,
+    job: &Job,
+    uploader: Option<Arc<dyn snapline_upload::queue::Uploader>>,
+    destinations: &dyn DestinationSource,
+    now: i64,
+    summary: &mut Recovery,
+) -> Result<Option<RestoredJob>, ServiceError> {
+    let io = |error: snapline_store::history::HistoryError| ServiceError::Io(error.to_string());
+    let problem = match &uploader {
+        None => Some(DESTINATION_REMOVED_MESSAGE),
+        Some(_)
+            if destinations
+                .fingerprint(&job.dest_id)
+                .is_some_and(|current| current != job.config_fingerprint) =>
+        {
+            Some(DESTINATION_CHANGED_MESSAGE)
+        }
+        Some(_) if !Path::new(&job.file.path).is_file() => Some(FILE_MISSING_MESSAGE),
+        Some(_) => None,
+    };
+    if let Some(message) = problem {
+        repo.stop_job(job.id, JobState::NeedsAttention, message, now)
+            .map_err(io)?;
+        summary.needs_attention += 1;
+        let uploader = uploader.unwrap_or_else(|| Arc::new(Missing));
+        return Ok(restored_stopped(
+            job,
+            uploader,
+            Status::Failed,
+            UploadError::Permanent(message.to_owned()),
+        ));
+    }
+    let Some(uploader) = uploader else {
+        return Ok(None);
+    };
+    let Ok(file) = upload_file(job) else {
+        return Ok(None);
+    };
+    let Ok(id) = u64::try_from(job.id) else {
+        return Ok(None);
+    };
+    let mut upload = UploadJob::new(uploader, file, job.dest_id.clone(), None);
+    if let Some(capture_id) = job.capture_id {
+        upload = upload.with_capture_id(capture_id);
+    }
+    let until_retry = job
+        .next_retry_at
+        .map(|due| Duration::from_millis(u64::try_from((due - now).max(0)).unwrap_or(0)));
+    let start = match job.state {
+        JobState::Paused => {
+            summary.paused += 1;
+            RestoreStart::Paused {
+                retry_in: until_retry,
+            }
+        }
+        JobState::WaitingToRetry => match until_retry {
+            Some(delay) if !delay.is_zero() => {
+                summary.waiting += 1;
+                RestoreStart::After(delay)
+            }
+            _ => {
+                summary.resumed += 1;
+                RestoreStart::Queued
+            }
+        },
+        _ => {
+            summary.resumed += 1;
+            RestoreStart::Queued
+        }
+    };
+    Ok(Some(RestoredJob {
+        id: UploadId::new(id),
+        job: upload,
+        attempts: u32::try_from(job.attempts).unwrap_or(u32::MAX),
+        start,
+    }))
+}
+
+pub fn hold_for_history(
+    services: &Services,
+    destinations: &dyn DestinationSource,
+    operation_id: &str,
+    path: &Path,
+    dest: &str,
+) -> Result<u64, ServiceError> {
+    if operation_id.trim().is_empty() {
+        return Err(ServiceError::Invalid("The save was not valid.".to_owned()));
+    }
+    if dest.trim().is_empty() {
+        return Err(ServiceError::Invalid(
+            "Choose an upload destination.".to_owned(),
+        ));
+    }
+    if destinations.uploader(dest).is_none() {
+        return Err(ServiceError::Invalid(
+            "The upload destination was not found.".to_owned(),
+        ));
+    }
+    let io = |error: snapline_store::history::HistoryError| ServiceError::Io(error.to_string());
+    let metadata = std::fs::metadata(path)
+        .ok()
+        .filter(std::fs::Metadata::is_file)
+        .ok_or(ServiceError::NotFound)?;
+    let file = JobFile {
+        name: path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("capture")
+            .to_owned(),
+        content_type: snapline_core::media::content_type(path).to_owned(),
+        path: path.to_string_lossy().into_owned(),
+        len: i64::try_from(metadata.len())
+            .map_err(|_| ServiceError::Invalid("The file size was not valid.".to_owned()))?,
+        modified_ms: modified_ms(&metadata),
+        staged: false,
+    };
+    let paths = services.paths()?;
+    let mut repo = HistoryRepo::open_write(&paths.history_file).map_err(io)?;
+    let created = repo
+        .create_job(NewJob {
+            capture_id: None,
+            revision: None,
+            operation_id: Some(operation_id.to_owned()),
+            dest_id: dest.to_owned(),
+            config_fingerprint: destinations.fingerprint(dest).unwrap_or_default(),
+            run_id: None,
+            batch: None,
+            file,
+            state: JobState::WaitingForHistory,
+            created_at: now_ms(),
+        })
+        .map_err(io)?;
+    u64::try_from(created.id).map_err(|_| ServiceError::Internal("The job id was invalid.".into()))
+}
+
+fn modified_ms(metadata: &std::fs::Metadata) -> i64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
+        .unwrap_or_default()
+}
+
+fn attach_ready(repo: &mut HistoryRepo, now: i64) -> Result<(Vec<i64>, usize), ServiceError> {
+    let io = |error: snapline_store::history::HistoryError| ServiceError::Io(error.to_string());
+    let mut attached = Vec::new();
+    let mut remaining = 0;
+    for job in repo.jobs_in(&[JobState::WaitingForHistory]).map_err(io)? {
+        let registered = match job.operation_id.as_deref() {
+            Some(operation) => repo.capture_for_operation(operation).map_err(io)?,
+            None => None,
+        };
+        let (Some(operation), Some(capture_id)) = (job.operation_id.as_deref(), registered) else {
+            remaining += 1;
+            continue;
+        };
+        let Some(capture) = repo.get(capture_id).map_err(io)? else {
+            remaining += 1;
+            continue;
+        };
+        let revision = repo
+            .current_revision(capture_id)
+            .map_err(io)?
+            .map_or(1, |revision| revision.revision);
+        let mut file = job.file.clone();
+        file.path = capture.path.clone();
+        if let Ok(metadata) = std::fs::metadata(&capture.path) {
+            if let Ok(len) = i64::try_from(metadata.len()) {
+                file.len = len;
+            }
+            file.modified_ms = modified_ms(&metadata);
+        }
+        if repo
+            .attach_operation(operation, capture_id, revision, &file, now)
+            .map_err(io)?
+            > 0
+        {
+            attached.push(job.id);
+        }
+    }
+    Ok((attached, remaining))
+}
+
+pub fn release_ready(
+    services: &Services,
+    queue: &Handle,
+    destinations: &dyn DestinationSource,
+) -> Result<bool, ServiceError> {
+    let paths = services.paths()?;
+    if !paths.history_file.is_file() {
+        return Ok(false);
+    }
+    let io = |error: snapline_store::history::HistoryError| ServiceError::Io(error.to_string());
+    let mut repo = HistoryRepo::open_write(&paths.history_file).map_err(io)?;
+    let now = now_ms();
+    let (attached, remaining) = attach_ready(&mut repo, now)?;
+    let mut summary = Recovery::default();
+    let mut restored = Vec::new();
+    for id in attached {
+        let Some(job) = repo.job(id).map_err(io)? else {
+            continue;
+        };
+        let uploader = destinations.uploader(&job.dest_id);
+        if let Some(entry) =
+            restore_live(&mut repo, &job, uploader, destinations, now, &mut summary)?
+        {
+            restored.push(entry);
+        }
+    }
+    queue
+        .restore(restored)
+        .map_err(|error| ServiceError::Internal(error.to_string()))?;
+    Ok(remaining > 0)
+}
+
 pub fn recover(
     services: &Services,
     queue: &Handle,
@@ -380,6 +597,8 @@ pub fn recover(
     queue
         .set_paused(repo.queue_paused().map_err(io)?)
         .map_err(|error| ServiceError::Internal(error.to_string()))?;
+
+    attach_ready(&mut repo, now)?;
 
     for job in repo.interrupted_jobs(owner).map_err(io)? {
         let uploader = destinations.uploader(&job.dest_id);
@@ -436,77 +655,11 @@ pub fn recover(
             }
             continue;
         }
-        let problem = match &uploader {
-            None => Some(DESTINATION_REMOVED_MESSAGE),
-            Some(_)
-                if destinations
-                    .fingerprint(&job.dest_id)
-                    .is_some_and(|current| current != job.config_fingerprint) =>
-            {
-                Some(DESTINATION_CHANGED_MESSAGE)
-            }
-            Some(_) if !Path::new(&job.file.path).is_file() => Some(FILE_MISSING_MESSAGE),
-            Some(_) => None,
-        };
-        if let Some(message) = problem {
-            repo.stop_job(job.id, JobState::NeedsAttention, message, now)
-                .map_err(io)?;
-            summary.needs_attention += 1;
-            let uploader = uploader.unwrap_or_else(|| Arc::new(Missing));
-            if let Some(entry) = restored_stopped(
-                &job,
-                uploader,
-                Status::Failed,
-                UploadError::Permanent(message.to_owned()),
-            ) {
-                restored.push(entry);
-            }
-            continue;
+        if let Some(entry) =
+            restore_live(&mut repo, &job, uploader, destinations, now, &mut summary)?
+        {
+            restored.push(entry);
         }
-        let Some(uploader) = uploader else {
-            continue;
-        };
-        let Ok(file) = upload_file(&job) else {
-            continue;
-        };
-        let Ok(id) = u64::try_from(job.id) else {
-            continue;
-        };
-        let mut upload = UploadJob::new(uploader, file, job.dest_id.clone(), None);
-        if let Some(capture_id) = job.capture_id {
-            upload = upload.with_capture_id(capture_id);
-        }
-        let until_retry = job
-            .next_retry_at
-            .map(|due| Duration::from_millis(u64::try_from((due - now).max(0)).unwrap_or(0)));
-        let start = match job.state {
-            JobState::Paused => {
-                summary.paused += 1;
-                RestoreStart::Paused {
-                    retry_in: until_retry,
-                }
-            }
-            JobState::WaitingToRetry => match until_retry {
-                Some(delay) if !delay.is_zero() => {
-                    summary.waiting += 1;
-                    RestoreStart::After(delay)
-                }
-                _ => {
-                    summary.resumed += 1;
-                    RestoreStart::Queued
-                }
-            },
-            _ => {
-                summary.resumed += 1;
-                RestoreStart::Queued
-            }
-        };
-        restored.push(RestoredJob {
-            id: UploadId::new(id),
-            job: upload,
-            attempts: u32::try_from(job.attempts).unwrap_or(u32::MAX),
-            start,
-        });
     }
 
     let cutoff = now.saturating_sub(FINISHED_RETENTION_MS);
@@ -1180,5 +1333,153 @@ mod tests {
         assert_eq!(job.capture_id, Some(capture_id));
         assert_eq!(job.revision, Some(1));
         assert!(path.is_file());
+    }
+
+    fn capture_input(path: &Path) -> NewCapture {
+        NewCapture {
+            kind: CaptureKind::Image,
+            path: path.to_string_lossy().into_owned(),
+            bytes: 6,
+            width: None,
+            height: None,
+            duration_ms: None,
+            source_app: None,
+            created_at: now_ms(),
+            ocr_text: None,
+        }
+    }
+
+    fn hold(thread: &UploaderThread, operation: &str, path: &Path) -> u64 {
+        match thread
+            .service()
+            .handle(UploadReq::HoldForHistory {
+                operation_id: operation.to_owned(),
+                path: path.to_string_lossy().into_owned(),
+                dest: "dest".to_owned(),
+            })
+            .expect("hold")
+        {
+            UploadResp::Accepted { id } => id,
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_upload_held_for_history_waits_and_then_uploads_once_the_capture_exists() {
+        let fixture = Fixture::new();
+        let fake = Fake::new(false, Vec::new());
+        fixture.destinations.set("dest", fake.clone(), "fp");
+        let path = fixture.external_file("pending.png", b"pixels");
+        let thread = fixture.start(0);
+        let id = hold(&thread, "op-1", &path);
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(fake.calls().is_empty());
+        assert!(states(&thread).is_empty());
+        let held = fixture
+            .repo()
+            .job(i64::try_from(id).expect("id"))
+            .expect("read")
+            .expect("job");
+        assert_eq!(held.state, JobState::WaitingForHistory);
+        assert_eq!(held.capture_id, None);
+        let capture_id = fixture
+            .repo()
+            .record_operation("op-1", capture_input(&path))
+            .expect("register")
+            .id;
+        wait_for(&thread, id, UploadStatus::Done);
+        assert_eq!(fake.calls(), vec!["pending.png".to_owned()]);
+        let done = fixture
+            .repo()
+            .job(i64::try_from(id).expect("id"))
+            .expect("read")
+            .expect("job");
+        assert_eq!(done.capture_id, Some(capture_id));
+        assert_eq!(done.revision, Some(1));
+        assert_eq!(done.state, JobState::Complete);
+        assert!(!done.file.staged);
+        assert!(path.is_file());
+    }
+
+    #[test]
+    fn a_held_upload_survives_a_restart_and_starts_when_history_catches_up() {
+        let fixture = Fixture::new();
+        let fake = Fake::new(false, Vec::new());
+        fixture.destinations.set("dest", fake.clone(), "fp");
+        let path = fixture.external_file("later.png", b"pixels");
+        let first = fixture.start(0);
+        let id = hold(&first, "op-2", &path);
+        first.join().expect("join");
+        let second = fixture.start(0);
+        let summary = second.recover().expect("recover");
+        assert_eq!(summary.resumed, 0);
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(fake.calls().is_empty());
+        fixture
+            .repo()
+            .record_operation("op-2", capture_input(&path))
+            .expect("register");
+        wait_for(&second, id, UploadStatus::Done);
+        assert_eq!(fake.calls(), vec!["later.png".to_owned()]);
+    }
+
+    #[test]
+    fn recovery_starts_a_held_upload_whose_capture_was_registered_while_closed() {
+        let fixture = Fixture::new();
+        let fake = Fake::new(false, Vec::new());
+        fixture.destinations.set("dest", fake.clone(), "fp");
+        let path = fixture.external_file("closed.png", b"pixels");
+        let first = fixture.start(0);
+        let id = hold(&first, "op-3", &path);
+        first.join().expect("join");
+        fixture
+            .repo()
+            .record_operation("op-3", capture_input(&path))
+            .expect("register");
+        let second = fixture.start(0);
+        let summary = second.recover().expect("recover");
+        assert_eq!(summary.resumed, 1);
+        wait_for(&second, id, UploadStatus::Done);
+    }
+
+    #[test]
+    fn a_held_upload_is_rejected_for_a_missing_file_or_destination() {
+        let fixture = Fixture::new();
+        fixture
+            .destinations
+            .set("dest", Fake::new(false, Vec::new()), "fp");
+        let path = fixture.external_file("here.png", b"x");
+        let thread = fixture.start(0);
+        let service = thread.service();
+        assert_eq!(
+            service
+                .handle(UploadReq::HoldForHistory {
+                    operation_id: "op".to_owned(),
+                    path: fixture
+                        .directory
+                        .path()
+                        .join("gone.png")
+                        .to_string_lossy()
+                        .into_owned(),
+                    dest: "dest".to_owned(),
+                })
+                .expect_err("missing file"),
+            ServiceError::NotFound
+        );
+        assert!(matches!(
+            service
+                .handle(UploadReq::HoldForHistory {
+                    operation_id: "op".to_owned(),
+                    path: path.to_string_lossy().into_owned(),
+                    dest: "missing".to_owned(),
+                })
+                .expect_err("missing destination"),
+            ServiceError::Invalid(_)
+        ));
+        assert!(fixture
+            .repo()
+            .jobs_in(&[JobState::WaitingForHistory])
+            .expect("jobs")
+            .is_empty());
     }
 }

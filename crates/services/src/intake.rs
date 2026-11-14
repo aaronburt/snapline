@@ -357,6 +357,7 @@ mod tests {
                 queue: queue.handle(),
                 files: Arc::new(NoFiles),
                 destinations,
+                waiting: Arc::default(),
             };
             Self {
                 directory,
