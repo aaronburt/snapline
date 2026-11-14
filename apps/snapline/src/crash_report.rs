@@ -50,7 +50,8 @@ pub fn mark_older_reported(directory: &Path, keep: &Path) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path != keep && path.extension().and_then(|value| value.to_str()) == Some(REPORT_EXTENSION)
+        if path != keep
+            && path.extension().and_then(|value| value.to_str()) == Some(REPORT_EXTENSION)
         {
             let _ = mark_reported(&path);
         }
@@ -264,7 +265,10 @@ mod tests {
 
     #[test]
     fn issue_url_trims_long_reports() {
-        let report = format!("Version: 0.1.0\nMessage: boom\n{}", "frame line\n".repeat(5000));
+        let report = format!(
+            "Version: 0.1.0\nMessage: boom\n{}",
+            "frame line\n".repeat(5000)
+        );
         let url = issue_url(&report);
         assert!(url.len() <= MAX_URL_LENGTH);
         assert!(url.contains("trimmed"));
