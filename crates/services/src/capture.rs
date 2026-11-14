@@ -304,7 +304,7 @@ impl CaptureService {
         let settings = self.inner.context.capture_settings()?;
         let choices = self.inner.context.list_windows();
         let foreground = self.inner.context.foreground_window();
-        // Opened from the tray or the Quick Panel, the foreground can be the taskbar or one of
+        // Started from the tray or the Snapline window, the foreground can be the taskbar or one of
         // Snapline's own windows. Those are not capturable, so use the topmost window that is.
         let active = if choices.is_empty() {
             foreground

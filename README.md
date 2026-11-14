@@ -5,7 +5,7 @@ A lightweight Windows tray app for screenshots and screen recordings. Capture a 
 - Screenshots and recordings (video or GIF through FFmpeg)
 - Annotation tools
 - Uploads to S3-compatible storage, SFTP, GitHub Gist and custom `.sxcu` destinations
-- Capture history, global hotkeys and a tray Quick Panel
+- Capture history, global hotkeys and a tray icon
 
 Windows 10 or 11 (x64) only. Releases are on the GitHub releases page; the installer is not code signed, so SmartScreen may warn.
 

@@ -10,7 +10,6 @@ use windows::Win32::Security::Credentials::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BudgetWindow {
-    Panel,
     Main,
 }
 
@@ -18,7 +17,6 @@ impl BudgetWindow {
     #[must_use]
     pub fn from_argument(value: &str) -> Option<Self> {
         match value {
-            "panel" => Some(Self::Panel),
             "main" => Some(Self::Main),
             _ => None,
         }
@@ -237,11 +235,8 @@ mod tests {
     }
 
     #[test]
-    fn parses_budget_open_panel() {
-        assert_eq!(
-            parse(&["--budget-open", "panel"]).budget_open,
-            Some(BudgetWindow::Panel)
-        );
+    fn the_retired_panel_window_is_no_longer_a_budget_window() {
+        assert_eq!(parse(&["--budget-open", "panel"]).budget_open, None);
     }
 
     #[test]
@@ -310,11 +305,11 @@ mod tests {
         let argv = vec![
             "C:\\Program Files\\Snapline\\snapline.exe".to_string(),
             "--budget-open".to_string(),
-            "panel".to_string(),
+            "main".to_string(),
         ];
         assert_eq!(
             Args::parse_forwarded(&argv).budget_open,
-            Some(BudgetWindow::Panel)
+            Some(BudgetWindow::Main)
         );
     }
 

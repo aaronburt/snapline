@@ -5,7 +5,6 @@ use std::sync::{Arc, Mutex};
 use snapline_core::actions::ActionId;
 use snapline_services::actions::dispatch_notifying;
 use snapline_services::ServiceError;
-use snapline_ui::TrayRect;
 use tray_icon::menu::{IconMenuItem, Menu, MenuEvent};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
@@ -49,14 +48,14 @@ fn state() -> TrayState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LeftClick {
-    Panel,
+    Main,
     Capture,
     Ignore,
 }
 
 fn left_click(capture_on_click: bool, recording: bool, follows_double_click: bool) -> LeftClick {
     if !capture_on_click || recording {
-        LeftClick::Panel
+        LeftClick::Main
     } else if follows_double_click {
         LeftClick::Ignore
     } else {
@@ -73,15 +72,6 @@ fn capture_on_click(shell: &Shell) -> bool {
 
 fn is_recording() -> bool {
     state().recording_seconds.is_some()
-}
-
-fn rect_of(rect: tray_icon::Rect) -> TrayRect {
-    TrayRect::new(
-        rect.position.x,
-        rect.position.y,
-        f64::from(rect.size.width),
-        f64::from(rect.size.height),
-    )
 }
 
 pub fn init(shell: &Shell) -> Result<(), String> {
@@ -118,7 +108,6 @@ pub fn init(shell: &Shell) -> Result<(), String> {
         TrayIconEvent::Click {
             button: MouseButton::Left,
             button_state: MouseButtonState::Up,
-            rect,
             ..
         } => {
             let follows_double_click = double_click.swap(false, Ordering::SeqCst);
@@ -133,8 +122,8 @@ pub fn init(shell: &Shell) -> Result<(), String> {
                 "tray click"
             );
             match decision {
-                LeftClick::Panel => {
-                    shell.show_panel(rect_of(rect));
+                LeftClick::Main => {
+                    shell.open_main("/history");
                     return;
                 }
                 LeftClick::Ignore => return,
@@ -284,9 +273,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn with_capture_on_click_off_a_click_opens_the_quick_panel() {
-        assert_eq!(left_click(false, false, false), LeftClick::Panel);
-        assert_eq!(left_click(false, false, true), LeftClick::Panel);
+    fn with_capture_on_click_off_a_click_opens_the_main_window() {
+        assert_eq!(left_click(false, false, false), LeftClick::Main);
+        assert_eq!(left_click(false, false, true), LeftClick::Main);
     }
 
     #[test]
@@ -303,21 +292,21 @@ mod tests {
     fn toggling_the_setting_live_changes_the_next_click_and_cancels_a_pending_capture() {
         assert_eq!(left_click(true, false, false), LeftClick::Capture);
         assert_ne!(left_click(false, false, false), LeftClick::Capture);
-        assert_eq!(left_click(false, false, false), LeftClick::Panel);
+        assert_eq!(left_click(false, false, false), LeftClick::Main);
         assert_eq!(left_click(true, false, false), LeftClick::Capture);
     }
 
     #[test]
     fn a_recording_started_while_a_capture_is_pending_cancels_it() {
         assert_eq!(left_click(true, false, false), LeftClick::Capture);
-        assert_eq!(left_click(true, true, false), LeftClick::Panel);
+        assert_eq!(left_click(true, true, false), LeftClick::Main);
         assert_eq!(left_click(true, false, false), LeftClick::Capture);
     }
 
     #[test]
-    fn while_recording_a_click_always_opens_the_quick_panel() {
-        assert_eq!(left_click(true, true, false), LeftClick::Panel);
-        assert_eq!(left_click(false, true, false), LeftClick::Panel);
+    fn while_recording_a_click_always_opens_the_main_window() {
+        assert_eq!(left_click(true, true, false), LeftClick::Main);
+        assert_eq!(left_click(false, true, false), LeftClick::Main);
     }
 
     #[test]

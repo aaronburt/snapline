@@ -14,13 +14,6 @@ pub struct MonitorInfo {
     pub primary: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PanelMonitor {
-    pub bounds: (i32, i32, i32, i32),
-    pub work: (i32, i32, i32, i32),
-    pub scale: f64,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QrScanResult {
     pub text: String,
@@ -66,18 +59,6 @@ pub trait Host: Send + Sync {
     fn configure_window(&self, _hwnd: isize, _light: bool) {}
 
     fn trim_memory(&self) {}
-
-    fn panel_monitor_at(&self, _x: i32, _y: i32) -> Option<PanelMonitor> {
-        None
-    }
-
-    fn configure_panel(&self, _hwnd: isize, _light: bool) {}
-
-    fn panel_action(&self, _action: &str) {}
-
-    fn copy_last_link(&self) -> bool {
-        false
-    }
 
     fn monitors(&self) -> Vec<MonitorInfo> {
         Vec::new()

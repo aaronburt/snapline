@@ -1366,20 +1366,7 @@ fn codec_factory() -> Arc<CodecFactory> {
 
 fn open_budget_window(shell: &Shell, window: BudgetWindow) {
     match window {
-        BudgetWindow::Panel => shell.show_panel(budget_tray_rect()),
         BudgetWindow::Main => shell.open_main("/history"),
-    }
-}
-
-fn budget_tray_rect() -> snapline_ui::TrayRect {
-    match snapline_win::monitors::primary() {
-        Some(monitor) => {
-            let work = monitor.work_area;
-            let right = f64::from(work.x.0) + f64::from(work.width.0);
-            let bottom = f64::from(work.y.0) + f64::from(work.height.0);
-            snapline_ui::TrayRect::new(right - 36.0, bottom - 36.0, 24.0, 24.0)
-        }
-        None => snapline_ui::TrayRect::new(0.0, 0.0, 24.0, 24.0),
     }
 }
 
