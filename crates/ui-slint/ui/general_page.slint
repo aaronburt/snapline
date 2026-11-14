@@ -105,13 +105,13 @@ export component GeneralPage inherits VerticalLayout {
     if show-startup: Section {
         heading: "Startup";
         if launch-visible: Row { icon: Icons.power; title: "Launch at sign-in"; description: "Start Snapline in the tray when you sign in to Windows";
-            Toggle { checked: SettingsState.launch-at-sign-in; toggled(v) => { SettingsState.update-bool("general.launch_at_signin", v); } } }
+            Toggle { label: "Launch at sign-in"; checked: SettingsState.launch-at-sign-in; toggled(v) => { SettingsState.update-bool("general.launch_at_signin", v); } } }
         if minimise-visible: Row { icon: Icons.tray; title: "Start minimised to tray"; description: "Don't open the main window on launch";
-            Toggle { checked: SettingsState.start-minimised; toggled(v) => { SettingsState.update-bool("general.start_minimised", v); } } }
+            Toggle { label: "Start minimised to tray"; checked: SettingsState.start-minimised; toggled(v) => { SettingsState.update-bool("general.start_minimised", v); } } }
         if tray-click-visible: Row { icon: Icons.tray; title: "Open capture on tray click"; description: "When off, clicking the tray icon opens the Quick Panel";
-            Toggle { checked: SettingsState.tray-click-capture; toggled(v) => { SettingsState.update-bool("general.tray_click_capture", v); } } }
+            Toggle { label: "Open capture on tray click"; checked: SettingsState.tray-click-capture; toggled(v) => { SettingsState.update-bool("general.tray_click_capture", v); } } }
         if notifications-visible: Row { icon: Icons.bell; title: "Notifications"; description: "Show a toast when an upload finishes or a link is copied";
-            Toggle { checked: SettingsState.notifications; toggled(v) => { SettingsState.update-bool("general.notifications", v); } } }
+            Toggle { label: "Notifications"; checked: SettingsState.notifications; toggled(v) => { SettingsState.update-bool("general.notifications", v); } } }
     }
 
     if show-saving: Section {

@@ -95,13 +95,13 @@ export component HotkeysPage inherits VerticalLayout {
     if show-behaviour: Section {
         heading: "Behaviour";
         if take-over-visible: Row { icon: Icons.shield; title: "Take over the PrtSc key"; description: "Stops Windows opening Snipping Tool when you press PrtSc";
-            Toggle { checked: SettingsState.take-over-prtsc; toggled(v) => { SettingsState.update-bool("hotkeys.take_over_prtsc", v); } } }
+            Toggle { label: "Take over the PrtSc key"; checked: SettingsState.take-over-prtsc; toggled(v) => { SettingsState.update-bool("hotkeys.take_over_prtsc", v); } } }
         if take-over-visible && SettingsState.prtsc-hint != "": HorizontalLayout {
             padding-left: 20px;
             padding-right: 20px;
             Text { text: SettingsState.prtsc-hint; color: Tokens.text3; font-size: 12px; wrap: word-wrap; }
         }
         if clash-visible: Row { icon: Icons.alert; title: "Warn about clashes"; description: "Tell me when another app already uses a hotkey";
-            Toggle { checked: SettingsState.warn-clashes; toggled(v) => { SettingsState.update-bool("hotkeys.warn_about_clashes", v); } } }
+            Toggle { label: "Warn about clashes"; checked: SettingsState.warn-clashes; toggled(v) => { SettingsState.update-bool("hotkeys.warn_about_clashes", v); } } }
     }
 }

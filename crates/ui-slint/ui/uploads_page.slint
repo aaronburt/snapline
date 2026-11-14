@@ -245,9 +245,9 @@ export component UploadsPage inherits VerticalLayout {
     if show-behaviour: Section {
         heading: "Upload behaviour";
         if strip-visible: Row { icon: Icons.shield; title: "Remove location and camera data"; description: "Strip EXIF metadata before anything leaves your PC";
-            Toggle { checked: UploadsState.strip-exif; toggled(v) => { UploadsState.update-bool("uploads.strip_exif", v); } } }
+            Toggle { label: "Remove location and camera data"; checked: UploadsState.strip-exif; toggled(v) => { UploadsState.update-bool("uploads.strip_exif", v); } } }
         if clipboard-visible: Row { icon: Icons.clip; title: "Ask before uploading from the clipboard"; description: "Avoid sending something you copied by mistake";
-            Toggle { checked: UploadsState.ask-clipboard; toggled(v) => { UploadsState.update-bool("uploads.ask_before_clipboard_upload", v); } } }
+            Toggle { label: "Ask before uploading from the clipboard"; checked: UploadsState.ask-clipboard; toggled(v) => { UploadsState.update-bool("uploads.ask_before_clipboard_upload", v); } } }
         if retry-visible: Row { icon: Icons.redo; title: "Retry failed uploads";
             Select { model: UploadsState.retry-options; current-value: UploadsState.retry;
                 selected(v) => { UploadsState.update-choice("uploads.retry", v); } } }
