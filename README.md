@@ -28,7 +28,7 @@ Windows 10 or 11 (x64) only. Releases are on the GitHub releases page; the insta
 
 CI measures every release and the chart updates itself. The raw numbers are in [`memory.json`](https://github.com/aaronburt/snapline/blob/metrics/memory.json) on the `metrics` branch, with the commit, build profile and runner details for each entry.
 
-How it is measured: the release `snapline.exe` runs in portable mode on a GitHub-hosted `windows-latest` runner (a virtual machine without a GPU, so figures on a real PC will differ). The script waits for the tray to settle, then reads the process's private working set at five fixed points: tray idle, main window open, main window closed, capture overlay open and capture overlay closed. Each figure is the median of five readings one second apart. The script is [`.github/scripts/measure-memory.ps1`](.github/scripts/measure-memory.ps1).
+How it is measured: the release `snapline.exe` runs in portable mode on a GitHub-hosted `windows-latest` runner (a virtual machine without a GPU, so figures on a real PC will differ). The script waits for the tray to settle, then reads the process's private working set at three fixed points: tray idle, main window open, and main window closed (the app trims its memory shortly after the window closes). Each figure is the median of five readings one second apart. The chart plots idle and main window open; closed is in the data file. The capture overlay is not measured, because the overlay never appears on a hosted runner. The script is [`.github/scripts/measure-memory.ps1`](.github/scripts/measure-memory.ps1).
 
 ## Build
 

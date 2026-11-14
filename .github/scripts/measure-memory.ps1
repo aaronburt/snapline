@@ -3,8 +3,7 @@
   the raw numbers to a JSON file. It never fails on the numbers themselves.
   Run it the same way for every release so the figures are comparable.
 
-  Stages: idle (tray only), main_open, main_closed, overlay (region capture
-  overlay showing), overlay_closed. Numbers are bytes of the Snapline process:
+  Stages: idle (tray only), main_open, main_closed. Numbers are bytes of the Snapline process:
   private_ws = private working set, private_bytes = committed private memory,
   working_set = full working set.
 #>
@@ -176,7 +175,7 @@ function Stop-App($p) {
     Get-Process snapline -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $app } | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
-# Run 1: tray idle, then the main window. Fresh process, so nothing else has been loaded.
+# One fresh process: tray idle, then the main window opened, closed and opened again.
 $proc = Start-App
 try {
     $stages["idle"] = Sample $proc.Id
@@ -207,53 +206,18 @@ try {
     # The running app must still answer a second launch after its window closed.
     Start-Process $app -ArgumentList "--budget-open", "main" | Out-Null
     if (Wait-Windows $proc.Id $true 15) {
-        Log "reopen: the running app answered a second launch after its window closed"
+        Log "reopen: a second launch brought the window back"
     } else {
-        $notes += "after its window closed, the running app did not answer a second launch"
+        $notes += "after its window closed, a second launch did not bring it back"
         Log-Windows $proc.Id "after reopen attempt"
+        Shot "reopen-missing"
     }
 } finally {
     Stop-App $proc
 }
 
-# Run 2: a second fresh process for the capture overlay, so the figures above do not
-# include anything the overlay loaded.
-$proc = Start-App
-try {
-    Start-Process $app -ArgumentList "--action", "capture_region" | Out-Null
-    if (Wait-Windows $proc.Id $true 15) {
-        Start-Sleep -Seconds 2
-        Log-Windows $proc.Id "overlay open"
-        Shot "overlay-open"
-        $stages["overlay"] = Sample $proc.Id
-        Log "overlay: $($stages['overlay'].private_ws)"
-        Close-Windows $proc.Id
-        if (-not (Wait-Windows $proc.Id $false 15)) {
-            [Windows.Forms.SendKeys]::SendWait("{ESC}")
-            if (-not (Wait-Windows $proc.Id $false 10)) { $notes += "overlay did not close" }
-        }
-        Start-Sleep -Seconds 5
-        Log-Windows $proc.Id "overlay closed"
-        $stages["overlay_closed"] = Sample $proc.Id
-        Log "overlay_closed: $($stages['overlay_closed'].private_ws)"
-    } else {
-        $notes += "capture overlay did not appear"
-        Log-Windows $proc.Id "after capture_region"
-        foreach ($sp in (Get-CimInstance Win32_Process -Filter "Name='snapline.exe'")) {
-            Log ("snapline process {0} (parent {1}, started {2}): {3}" -f $sp.ProcessId, $sp.ParentProcessId, $sp.CreationDate.ToString("HH:mm:ss.fff"), $sp.CommandLine)
-            Log-Windows $sp.ProcessId "  windows of $($sp.ProcessId)"
-        }
-        Shot "overlay-missing"
-        $logs = Join-Path $env:LOCALAPPDATA "SnapLine\logs"
-        $newest = Get-ChildItem $logs -Filter *.log -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
-        if ($newest) {
-            Log "tail of $($newest.FullName):"
-            Get-Content $newest.FullName -Tail 40 | ForEach-Object { Write-Host "    $_" }
-        } else { Log "no app log found in $logs" }
-    }
-} finally {
-    Stop-App $proc
-}
+# The capture overlay is not measured here: on a hosted runner the app receives
+# capture_region but no overlay window ever appears, so there is nothing to sample.
 
 $os = Get-CimInstance Win32_OperatingSystem
 $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
@@ -270,7 +234,7 @@ $run = [ordered]@{
         ram_gb       = [Math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
         screen       = "$($screen.Width)x$($screen.Height)"
     }
-    method  = "median of 5 readings 1 s apart per stage; idle and main window in one fresh process, capture overlay in a second fresh process; Win32_PerfFormattedData_PerfProc_Process of the snapline.exe process"
+    method  = "median of 5 readings 1 s apart per stage; one fresh process for all stages; Win32_PerfFormattedData_PerfProc_Process of the snapline.exe process"
     stages  = $stages
     notes   = $notes
 }
