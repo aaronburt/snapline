@@ -148,7 +148,7 @@ mod tests {
     }
 
     #[test]
-    fn every_quick_panel_tile_action_is_in_the_catalogue() {
+    fn every_capture_action_is_in_the_catalogue_and_runs_a_workflow() {
         for id in ["capture_region", "capture_window", "capture_screen"] {
             assert!(
                 CATALOGUE.iter().any(|definition| definition.id == id),

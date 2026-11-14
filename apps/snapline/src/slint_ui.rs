@@ -15,7 +15,7 @@ use snapline_services::recording::DEFAULT_MICROPHONE;
 use snapline_services::tools::ocr::{OcrRequest, OcrTool};
 use snapline_services::tools::ruler::{RulerHost, RulerHostError, RulerSelection, RulerToolError};
 use snapline_services::{ServiceError, Services};
-use snapline_ui::{Host, MonitorInfo, PanelMonitor, UiHandle};
+use snapline_ui::{Host, MonitorInfo, UiHandle};
 use windows::Win32::Foundation::HWND;
 
 use crate::settings_update::apply_update;
@@ -237,56 +237,6 @@ impl Host for WindowsHost {
         snapline_win::theme::is_light()
     }
 
-    fn panel_monitor_at(&self, x: i32, y: i32) -> Option<PanelMonitor> {
-        let monitors = snapline_win::monitors::enumerate();
-        let point = Point::new(Px(x), Px(y));
-        let monitor = monitors
-            .iter()
-            .find(|monitor| monitor.bounds.contains(point))
-            .or_else(|| monitors.iter().find(|monitor| monitor.primary))
-            .or_else(|| monitors.first())?;
-        let tuple = |rect: Rect| (rect.x.0, rect.y.0, rect.width.0, rect.height.0);
-        Some(PanelMonitor {
-            bounds: tuple(monitor.bounds),
-            work: tuple(monitor.work_area),
-            scale: f64::from(monitor.dpi.scale()),
-        })
-    }
-
-    fn configure_panel(&self, hwnd: isize, light: bool) {
-        let hwnd = HWND(hwnd as *mut c_void);
-        crate::theme::apply_hwnd_dark_mode(hwnd, light);
-        crate::theme::apply_rounded_corners(hwnd);
-        crate::theme::bring_to_front(hwnd);
-    }
-
-    fn panel_action(&self, action: &str) {
-        let hides_first = action.starts_with("capture_") || action.starts_with("record_");
-        let result = run_panel_action(&self.services, &ActionId::new(action), hides_first);
-        match result {
-            Ok(()) => {}
-            Err(ServiceError::NotYet) => {
-                tracing::warn!(%action, "the panel action is not available yet");
-                snapline_services::actions::notify_unavailable(action, &self.services);
-            }
-            Err(error) => snapline_services::actions::notify_failure(&error, &self.services),
-        }
-    }
-
-    fn copy_last_link(&self) -> bool {
-        let copied = snapline_services::shell_actions::installed().and_then(|host| {
-            snapline_services::shell_actions::copy_last_link(&self.services, host.as_ref())
-        });
-        match copied {
-            Ok(copied) => copied,
-            Err(error) => {
-                tracing::warn!(%error, "could not copy the last link");
-                snapline_services::actions::notify_failure(&error, &self.services);
-                false
-            }
-        }
-    }
-
     fn configure_window(&self, hwnd: isize, light: bool) {
         crate::theme::apply_hwnd_dark_mode(HWND(hwnd as *mut c_void), light);
     }
@@ -428,23 +378,4 @@ pub fn start(services: Services) -> Result<UiHandle, String> {
         services: services.clone(),
     });
     snapline_ui::runner::start(services, host)
-}
-
-const PANEL_HIDE_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
-
-fn run_panel_action(
-    services: &Services,
-    action: &ActionId,
-    hide_first: bool,
-) -> Result<(), ServiceError> {
-    if hide_first {
-        std::thread::sleep(PANEL_HIDE_DELAY);
-    }
-    if action.as_str() == "capture_region" {
-        snapline_services::workflows::installed_runner()?
-            .run_default_from_capture()
-            .map(|_| ())
-    } else {
-        snapline_services::actions::dispatch(action, services)
-    }
 }

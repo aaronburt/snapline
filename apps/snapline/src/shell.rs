@@ -2,7 +2,7 @@ use std::sync::{Arc, OnceLock};
 
 use snapline_core::ports::Notice;
 use snapline_services::{AppEvent, Services};
-use snapline_ui::{TrayRect, UiHandle};
+use snapline_ui::UiHandle;
 
 use crate::slint_ui;
 
@@ -63,14 +63,6 @@ impl Shell {
                 shell.report("Snapline could not open its window.");
             }),
         );
-    }
-
-    pub fn show_panel(&self, anchor: TrayRect) {
-        let Some(ui) = self.ui() else {
-            self.report("Snapline could not open its quick panel.");
-            return;
-        };
-        ui.toggle_panel(anchor);
     }
 
     pub fn emit(&self, event: &AppEvent) {

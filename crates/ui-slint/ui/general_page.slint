@@ -27,7 +27,7 @@ export component GeneralPage inherits VerticalLayout {
     property <bool> version-visible: SettingsState.text-matches("Snapline", "Version " + SettingsState.app-version, root.filter);
     property <bool> launch-visible: SettingsState.text-matches("Launch at sign-in", "Start Snapline in the tray when you sign in to Windows", root.filter);
     property <bool> minimise-visible: SettingsState.text-matches("Start minimised to tray", "Don't open the main window on launch", root.filter);
-    property <bool> tray-click-visible: SettingsState.text-matches("Open capture on tray click", "When off, clicking the tray icon opens the Quick Panel", root.filter);
+    property <bool> tray-click-visible: SettingsState.text-matches("Open capture on tray click", "When off, clicking the tray icon opens the Snapline window", root.filter);
     property <bool> notifications-visible: SettingsState.text-matches("Notifications", "Show a toast when an upload finishes or a link is copied", root.filter);
     property <bool> show-appearance: SettingsState.text-matches("Appearance", "", root.filter)
         || SettingsState.text-matches("Zoom", "Scale the whole window. Ctrl+= and Ctrl+- step, Ctrl+0 resets", root.filter);
@@ -108,7 +108,7 @@ export component GeneralPage inherits VerticalLayout {
             Toggle { label: "Launch at sign-in"; checked: SettingsState.launch-at-sign-in; toggled(v) => { SettingsState.update-bool("general.launch_at_signin", v); } } }
         if minimise-visible: Row { icon: Icons.tray; title: "Start minimised to tray"; description: "Don't open the main window on launch";
             Toggle { label: "Start minimised to tray"; checked: SettingsState.start-minimised; toggled(v) => { SettingsState.update-bool("general.start_minimised", v); } } }
-        if tray-click-visible: Row { icon: Icons.tray; title: "Open capture on tray click"; description: "When off, clicking the tray icon opens the Quick Panel";
+        if tray-click-visible: Row { icon: Icons.tray; title: "Open capture on tray click"; description: "When off, clicking the tray icon opens the Snapline window";
             Toggle { label: "Open capture on tray click"; checked: SettingsState.tray-click-capture; toggled(v) => { SettingsState.update-bool("general.tray_click_capture", v); } } }
         if notifications-visible: Row { icon: Icons.bell; title: "Notifications"; description: "Show a toast when an upload finishes or a link is copied";
             Toggle { label: "Notifications"; checked: SettingsState.notifications; toggled(v) => { SettingsState.update-bool("general.notifications", v); } } }

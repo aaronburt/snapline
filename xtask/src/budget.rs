@@ -40,9 +40,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const MIB: u64 = 1024 * 1024;
 const IDLE_LIMIT: u64 = 15 * MIB;
 const IDLE_DRIFT_LIMIT: u64 = 3 * MIB;
-const PANEL_LIMIT: u64 = 90 * MIB;
 const MAIN_LIMIT: u64 = 120 * MIB;
-const BOTH_LIMIT: u64 = 150 * MIB;
 const OVERLAY_LIMIT: u64 = 40 * MIB;
 const STARTUP_WAIT: Duration = Duration::from_secs(30);
 const CPU_WINDOW: Duration = Duration::from_secs(10);
@@ -53,8 +51,6 @@ const EXIT_WAIT: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(250);
 const ZERO_PERCENT_LIMIT: f64 = 1.0;
 const OVERLAY_TIMING_LIMIT: Duration = Duration::from_millis(150);
-const PANEL_COLD_LIMIT: Duration = Duration::from_millis(500);
-const PANEL_WARM_LIMIT: Duration = Duration::from_millis(200);
 const MAIN_COLD_LIMIT: Duration = Duration::from_millis(800);
 const OVERLAY_WAIT: Duration = Duration::from_secs(10);
 const OVERLAY_SETTLE: Duration = Duration::from_secs(1);
@@ -106,9 +102,7 @@ impl Limit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BudgetRow {
     TrayIdleBefore,
-    QuickPanel,
     MainWindow,
-    BothWindows,
     TrayIdleAfter,
     CaptureToLink,
     Recording,
@@ -119,9 +113,7 @@ impl BudgetRow {
     pub fn label(self) -> &'static str {
         match self {
             Self::TrayIdleBefore => "tray idle before any window",
-            Self::QuickPanel => "quick panel open",
             Self::MainWindow => "main window open",
-            Self::BothWindows => "main window and quick panel open",
             Self::TrayIdleAfter => "tray idle after every window",
             Self::CaptureToLink => "capture-to-link run",
             Self::Recording => "recording 1080p30",
@@ -866,21 +858,18 @@ fn collect(root: u32, root_created: u64, data_directory: &str) -> Result<Sample>
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BudgetWindow {
-    Panel,
     Main,
 }
 
 impl BudgetWindow {
     fn argument(self) -> &'static str {
         match self {
-            Self::Panel => "panel",
             Self::Main => "main",
         }
     }
 
     fn label(self) -> &'static str {
         match self {
-            Self::Panel => "quick panel",
             Self::Main => "main window",
         }
     }
@@ -1173,20 +1162,6 @@ fn check_slow(
     };
     println!("  FAIL {}: {kind}", row.label());
     failures.push(BudgetFailure::new(row, kind));
-}
-
-fn measured_row(row: BudgetRow, sample: Option<&Sample>, limit: u64, webviews: bool) -> RowOutcome {
-    let Some(sample) = sample else {
-        println!("  FAIL {}: the measurement is missing.", row.label());
-        return RowOutcome::missing(row);
-    };
-    report(row.label(), sample);
-    let mut failures = Vec::new();
-    check_under(row, &mut failures, sample.total_private, limit);
-    if webviews {
-        check_webview(row, &mut failures, sample.webview);
-    }
-    RowOutcome::with_failures(row, failures)
 }
 
 fn idle_row(
@@ -1871,40 +1846,6 @@ fn run_windows(root: &Path, suite: Suite) -> Result<Vec<RowOutcome>> {
     let first_idle = idle.total_private;
     rows.push(idle_row(BudgetRow::TrayIdleBefore, Some(&idle), None, full));
 
-    let panel_cold = open_window(&exe, BudgetWindow::Panel, pid, 1)?;
-    let panel = collect(pid, created, &data_directory)?;
-    close_windows(pid)?;
-    let panel_warm = if full {
-        let warm = open_window(&exe, BudgetWindow::Panel, pid, 1)?;
-        close_windows(pid)?;
-        Some(warm)
-    } else {
-        None
-    };
-    let mut panel_row = window_row(BudgetRow::QuickPanel, Some(&panel), PANEL_LIMIT, full);
-    if full {
-        check_slow(
-            BudgetRow::QuickPanel,
-            &mut panel_row.failures,
-            "cold quick panel",
-            panel_cold,
-            PANEL_COLD_LIMIT,
-        );
-        if let Some(warm) = panel_warm {
-            check_slow(
-                BudgetRow::QuickPanel,
-                &mut panel_row.failures,
-                "warm quick panel",
-                warm,
-                PANEL_WARM_LIMIT,
-            );
-        }
-    }
-    rows.push(panel_row);
-    wait_linger();
-    let after_panel = collect(pid, created, &data_directory)?;
-    report("tray idle after the quick panel", &after_panel);
-
     let main_cold = open_window(&exe, BudgetWindow::Main, pid, 1)?;
     let main = collect(pid, created, &data_directory)?;
     let mut main_row = window_row(BudgetRow::MainWindow, Some(&main), MAIN_LIMIT, full);
@@ -1921,23 +1862,9 @@ fn run_windows(root: &Path, suite: Suite) -> Result<Vec<RowOutcome>> {
     close_windows(pid)?;
     wait_linger();
     let after_main = collect(pid, created, &data_directory)?;
-    report("tray idle after the main window", &after_main);
-
-    open_window(&exe, BudgetWindow::Main, pid, 1)?;
-    open_window(&exe, BudgetWindow::Panel, pid, 2)?;
-    let both = collect(pid, created, &data_directory)?;
-    close_windows(pid)?;
-    rows.push(measured_row(
-        BudgetRow::BothWindows,
-        Some(&both),
-        BOTH_LIMIT,
-        false,
-    ));
-    wait_linger();
-    let after_both = collect(pid, created, &data_directory)?;
     rows.push(idle_row(
         BudgetRow::TrayIdleAfter,
-        Some(&after_both),
+        Some(&after_main),
         Some(first_idle),
         full,
     ));
@@ -2354,13 +2281,12 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        action_command, capture_row, descendants, encoder_is_hardware, is_link, measured_row,
-        overlay_limit, parse_budget_mode, parse_recording_command, recording_row, webview_children,
-        window_row, BudgetMode, BudgetRow, BudgetSummary, FailureKind, Limit, ProcessRow,
-        RecordingCommand, RecordingFailure, RecordingPlan, RecordingReport, RecordingSample,
-        RowOutcome, Sample, BOTH_LIMIT, IDLE_DRIFT_LIMIT, IDLE_LIMIT, MAIN_LIMIT, MIB,
-        OVERLAY_LIMIT, OVERLAY_TIMING_LIMIT, PANEL_COLD_LIMIT, PANEL_LIMIT, RECORD_CPU_LIMIT,
-        RECORD_INSTRUCTION, RECORD_MEMORY_LIMIT,
+        action_command, capture_row, descendants, encoder_is_hardware, is_link, overlay_limit,
+        parse_budget_mode, parse_recording_command, recording_row, webview_children, window_row,
+        BudgetMode, BudgetRow, BudgetSummary, FailureKind, Limit, ProcessRow, RecordingCommand,
+        RecordingFailure, RecordingPlan, RecordingReport, RecordingSample, RowOutcome, Sample,
+        IDLE_DRIFT_LIMIT, IDLE_LIMIT, MAIN_LIMIT, MIB, OVERLAY_LIMIT, OVERLAY_TIMING_LIMIT,
+        RECORD_CPU_LIMIT, RECORD_INSTRUCTION, RECORD_MEMORY_LIMIT,
     };
 
     const DATA: &str = "C:\\Users\\tester\\AppData\\Local\\SnapLine\\WebView2";
@@ -2726,12 +2652,8 @@ mod tests {
     fn every_memory_row_passes_one_byte_under_its_budget() {
         let idle = memory_sample(IDLE_LIMIT - 1, 0, 0.0);
         assert!(super::idle_row(BudgetRow::TrayIdleBefore, Some(&idle), None, true).passed());
-        let panel = memory_sample(PANEL_LIMIT - 1, 1, 0.0);
-        assert!(window_row(BudgetRow::QuickPanel, Some(&panel), PANEL_LIMIT, true).passed());
         let main = memory_sample(MAIN_LIMIT - 1, 1, 0.0);
         assert!(window_row(BudgetRow::MainWindow, Some(&main), MAIN_LIMIT, true).passed());
-        let both = memory_sample(BOTH_LIMIT - 1, 2, 0.0);
-        assert!(measured_row(BudgetRow::BothWindows, Some(&both), BOTH_LIMIT, false).passed());
         let after = memory_sample(IDLE_LIMIT - 1, 0, 0.0);
         assert!(super::idle_row(
             BudgetRow::TrayIdleAfter,
@@ -2747,12 +2669,8 @@ mod tests {
     fn every_memory_row_fails_at_its_exact_budget() {
         let idle = memory_sample(IDLE_LIMIT, 0, 0.0);
         assert!(!super::idle_row(BudgetRow::TrayIdleBefore, Some(&idle), None, false).passed());
-        let panel = memory_sample(PANEL_LIMIT, 1, 0.0);
-        assert!(!window_row(BudgetRow::QuickPanel, Some(&panel), PANEL_LIMIT, false).passed());
         let main = memory_sample(MAIN_LIMIT, 1, 0.0);
         assert!(!window_row(BudgetRow::MainWindow, Some(&main), MAIN_LIMIT, false).passed());
-        let both = memory_sample(BOTH_LIMIT, 2, 0.0);
-        assert!(!measured_row(BudgetRow::BothWindows, Some(&both), BOTH_LIMIT, false).passed());
         let after = memory_sample(IDLE_LIMIT, 0, 0.0);
         assert!(!super::idle_row(BudgetRow::TrayIdleAfter, Some(&after), None, false).passed());
         assert!(!recording_row(Some(&report(RECORD_MEMORY_LIMIT, 1.0))).passed());
@@ -2830,9 +2748,7 @@ mod tests {
     fn a_missing_sample_fails_every_row() {
         for row in [
             BudgetRow::TrayIdleBefore,
-            BudgetRow::QuickPanel,
             BudgetRow::MainWindow,
-            BudgetRow::BothWindows,
             BudgetRow::TrayIdleAfter,
             BudgetRow::CaptureToLink,
             BudgetRow::Recording,
@@ -2843,8 +2759,7 @@ mod tests {
             assert!(outcome.summary_line().contains("missing"));
         }
         assert!(!super::idle_row(BudgetRow::TrayIdleBefore, None, None, true).passed());
-        assert!(!window_row(BudgetRow::QuickPanel, None, PANEL_LIMIT, true).passed());
-        assert!(!measured_row(BudgetRow::BothWindows, None, BOTH_LIMIT, false).passed());
+        assert!(!window_row(BudgetRow::MainWindow, None, MAIN_LIMIT, true).passed());
         assert!(!recording_row(None).passed());
     }
 
@@ -2917,38 +2832,38 @@ mod tests {
             false,
         );
         let fail = window_row(
-            BudgetRow::QuickPanel,
-            Some(&memory_sample(PANEL_LIMIT + 1, 1, 0.0)),
-            PANEL_LIMIT,
+            BudgetRow::MainWindow,
+            Some(&memory_sample(MAIN_LIMIT + 1, 1, 0.0)),
+            MAIN_LIMIT,
             false,
         );
-        let last = measured_row(
-            BudgetRow::BothWindows,
-            Some(&memory_sample(1, 2, 0.0)),
-            BOTH_LIMIT,
+        let last = super::idle_row(
+            BudgetRow::TrayIdleAfter,
+            Some(&memory_sample(1, 0, 0.0)),
+            None,
             false,
         );
         let summary = BudgetSummary::new(vec![pass, fail, last]);
         let text = summary.render();
         assert!(text.contains("2 of 3 rows passed"));
         assert!(text.contains("PASS tray idle before any window"));
-        assert!(text.contains("FAIL quick panel open"));
-        assert!(text.contains("PASS main window and quick panel open"));
-        assert!(text.contains("first failing row: quick panel open"));
+        assert!(text.contains("FAIL main window open"));
+        assert!(text.contains("PASS tray idle after every window"));
+        assert!(text.contains("first failing row: main window open"));
         assert!(!summary.passed());
         assert_eq!(summary.passed_rows(), 2);
         assert_eq!(
             summary.first_failure().map(|row| row.row),
-            Some(BudgetRow::QuickPanel)
+            Some(BudgetRow::MainWindow)
         );
     }
 
     #[test]
     fn a_passing_summary_has_no_failing_row() {
-        let summary = BudgetSummary::new(vec![measured_row(
-            BudgetRow::BothWindows,
-            Some(&memory_sample(1, 2, 0.0)),
-            BOTH_LIMIT,
+        let summary = BudgetSummary::new(vec![window_row(
+            BudgetRow::MainWindow,
+            Some(&memory_sample(1, 1, 0.0)),
+            MAIN_LIMIT,
             false,
         )]);
         assert!(summary.passed());
@@ -2970,16 +2885,16 @@ mod tests {
             BudgetRow::CaptureToLink,
             &mut failures,
             "region overlay",
-            PANEL_COLD_LIMIT - Duration::from_millis(1),
-            PANEL_COLD_LIMIT,
+            OVERLAY_TIMING_LIMIT - Duration::from_millis(1),
+            OVERLAY_TIMING_LIMIT,
         );
         assert!(failures.is_empty());
         super::check_slow(
             BudgetRow::CaptureToLink,
             &mut failures,
             "region overlay",
-            PANEL_COLD_LIMIT,
-            PANEL_COLD_LIMIT,
+            OVERLAY_TIMING_LIMIT,
+            OVERLAY_TIMING_LIMIT,
         );
         assert_eq!(failures.len(), 1);
         assert!(matches!(&failures[0].kind, FailureKind::Slow { .. }));
@@ -3045,9 +2960,7 @@ mod tests {
     fn every_row_has_a_distinct_label() {
         let rows = [
             BudgetRow::TrayIdleBefore,
-            BudgetRow::QuickPanel,
             BudgetRow::MainWindow,
-            BudgetRow::BothWindows,
             BudgetRow::TrayIdleAfter,
             BudgetRow::CaptureToLink,
             BudgetRow::Recording,
