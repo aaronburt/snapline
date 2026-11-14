@@ -1371,6 +1371,7 @@ mod tests {
         fixture.destinations.set("dest", fake.clone(), "fp");
         let path = fixture.external_file("pending.png", b"pixels");
         let thread = fixture.start(0);
+        thread.recover().expect("recover");
         let id = hold(&thread, "op-1", &path);
         std::thread::sleep(Duration::from_millis(200));
         assert!(fake.calls().is_empty());
@@ -1440,6 +1441,28 @@ mod tests {
         let summary = second.recover().expect("recover");
         assert_eq!(summary.resumed, 1);
         wait_for(&second, id, UploadStatus::Done);
+    }
+
+    #[test]
+    fn a_held_upload_is_not_released_twice_when_recovery_is_slow_to_start() {
+        let fixture = Fixture::new();
+        let fake = Fake::new(false, Vec::new());
+        fixture.destinations.set("dest", fake.clone(), "fp");
+        let path = fixture.external_file("slow.png", b"pixels");
+        let first = fixture.start(0);
+        let id = hold(&first, "op-4", &path);
+        first.join().expect("join");
+        fixture
+            .repo()
+            .record_operation("op-4", capture_input(&path))
+            .expect("register");
+        let second = fixture.start(0);
+        std::thread::sleep(Duration::from_millis(300));
+        let summary = second.recover().expect("recover");
+        assert_eq!(summary.resumed, 1);
+        wait_for(&second, id, UploadStatus::Done);
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(fake.calls(), vec!["slow.png".to_owned()]);
     }
 
     #[test]

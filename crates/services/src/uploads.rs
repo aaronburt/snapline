@@ -388,6 +388,7 @@ pub struct UploadRuntime {
     pub(crate) files: Arc<dyn FileSource>,
     pub(crate) destinations: Arc<dyn DestinationSource>,
     pub(crate) waiting: Arc<AtomicBool>,
+    pub(crate) recovered: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -654,7 +655,9 @@ fn spawn_releaser(
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         while let Err(RecvTimeoutError::Timeout) = stopped.recv_timeout(RELEASE_INTERVAL) {
-            if !runtime.waiting.swap(false, Ordering::SeqCst) {
+            if !runtime.recovered.load(Ordering::SeqCst)
+                || !runtime.waiting.swap(false, Ordering::SeqCst)
+            {
                 continue;
             }
             match crate::upload_journal::release_ready(
@@ -731,6 +734,7 @@ impl UploaderThread {
             files,
             destinations,
             waiting: Arc::new(AtomicBool::new(true)),
+            recovered: Arc::new(AtomicBool::new(false)),
         };
         let service = UploadService::with_runtime(services, runtime.clone());
         let (stop, stopped) = bounded::<()>(0);
@@ -748,12 +752,14 @@ impl UploaderThread {
     }
 
     pub fn recover(&self) -> Result<crate::upload_journal::Recovery, ServiceError> {
-        crate::upload_journal::recover(
+        let recovery = crate::upload_journal::recover(
             &self.services,
             &self.queue.handle(),
             self.runtime.destinations.as_ref(),
             &self.owner,
-        )
+        );
+        self.runtime.recovered.store(true, Ordering::SeqCst);
+        recovery
     }
 
     pub fn service(&self) -> UploadService {
