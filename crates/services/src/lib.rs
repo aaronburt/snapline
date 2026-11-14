@@ -29,6 +29,7 @@ pub mod shell_actions;
 pub mod thumbs;
 pub mod tools;
 pub mod uninstall;
+pub mod upload_journal;
 pub mod uploads;
 pub mod worker;
 pub mod workflow_runner;

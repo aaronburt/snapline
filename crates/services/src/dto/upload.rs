@@ -6,6 +6,7 @@ pub enum UploadStatus {
     Queued,
     Uploading,
     BackingOff,
+    Paused,
     Done,
     Failed,
     OutcomeUnknown,
@@ -49,6 +50,10 @@ pub enum UploadReq {
     State { id: u64 },
     Cancel { id: u64 },
     Retry { id: u64 },
+    Pause { id: u64 },
+    Resume { id: u64 },
+    SetQueuePaused { paused: bool },
+    QueueState,
     List,
     LastLink,
     PickAndUpload,
@@ -69,6 +74,9 @@ pub enum UploadResp {
     AcceptedMany { ids: Vec<u64> },
     Cancelled { id: u64 },
     Retried { id: u64 },
+    Paused { id: u64 },
+    Resumed { id: u64 },
+    QueuePaused { paused: bool },
     Destination(DestinationResp),
 }
 

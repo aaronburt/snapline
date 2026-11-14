@@ -5232,6 +5232,7 @@ dependencies = [
  "crossbeam-channel",
  "serde",
  "serde_json",
+ "sha2",
  "snapline-core",
  "snapline-store",
  "snapline-upload",

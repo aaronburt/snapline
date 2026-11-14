@@ -325,6 +325,7 @@ pub enum Status {
     Queued,
     Uploading,
     BackingOff { retry_in: Duration },
+    Paused,
     Done,
     Failed,
     OutcomeUnknown,
@@ -358,6 +359,7 @@ pub struct UploadSnapshot {
     pub page_link: Option<String>,
     pub deletion_link: Option<String>,
     pub error: Option<UploadError>,
+    pub restored: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -477,7 +479,66 @@ pub enum QueueError {
     NotCancellable,
     #[error("Only failed, cancelled or uncertain uploads can be retried.")]
     NotRetryable,
+    #[error("The upload cannot be paused.")]
+    NotPausable,
+    #[error("The upload is not paused.")]
+    NotPaused,
+    #[error("The upload queue could not be saved.")]
+    Storage,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("The upload queue could not be saved.")]
+pub struct JournalError;
+
+pub struct Registered {
+    pub id: UploadId,
+    pub file: Option<UploadFile>,
+}
+
+pub enum Change<'a> {
+    Retrying {
+        retry_in: Duration,
+        error: &'a UploadError,
+    },
+    Done(&'a Uploaded),
+    Failed(&'a UploadError),
+    OutcomeUnknown(&'a UploadError),
+    Cancelled,
+    Paused,
+    Resumed,
+    Requeued,
+}
+
+pub trait Journal: Send + Sync {
+    fn register(&self, job: &UploadJob) -> Result<Option<Registered>, JournalError>;
+
+    fn start(&self, id: UploadId) -> Result<bool, JournalError>;
+
+    fn record(&self, id: UploadId, change: &Change<'_>) -> Result<(), JournalError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestoreStart {
+    Queued,
+    After(Duration),
+    Paused {
+        retry_in: Option<Duration>,
+    },
+    Stopped {
+        status: Status,
+        error: Option<UploadError>,
+    },
+}
+
+pub struct RestoredJob {
+    pub id: UploadId,
+    pub job: UploadJob,
+    pub attempts: u32,
+    pub start: RestoreStart,
+}
+
+pub const EPHEMERAL_ID_BASE: u64 = 1 << 40;
 
 enum Command {
     Enqueue(Vec<(UploadId, UploadJob)>),
@@ -489,6 +550,16 @@ enum Command {
         id: UploadId,
         reply: Sender<Result<(), QueueError>>,
     },
+    Pause {
+        id: UploadId,
+        reply: Sender<Result<(), QueueError>>,
+    },
+    Resume {
+        id: UploadId,
+        reply: Sender<Result<(), QueueError>>,
+    },
+    SetPaused(bool),
+    Restore(Vec<RestoredJob>),
     State {
         id: UploadId,
         reply: Sender<Option<UploadSnapshot>>,
@@ -522,6 +593,7 @@ impl Listener {
 pub struct Handle {
     commands: Arc<Mutex<Sender<Command>>>,
     next_id: Arc<AtomicU64>,
+    journal: Option<Arc<dyn Journal>>,
     cancellations: Arc<Mutex<HashMap<UploadId, ActiveCancellation>>>,
 }
 
@@ -533,19 +605,76 @@ struct ActiveCancellation {
 
 impl Handle {
     pub fn enqueue(&self, job: UploadJob) -> Result<UploadId, QueueError> {
-        let id = UploadId(self.next_id.fetch_add(1, Ordering::Relaxed));
-        self.send(Command::Enqueue(vec![(id, job)]))?;
+        let entry = self.register(job)?;
+        let id = entry.0;
+        if let Err(error) = self.send(Command::Enqueue(vec![entry])) {
+            self.record_cancelled(&[id]);
+            return Err(error);
+        }
         Ok(id)
     }
 
     pub fn enqueue_batch(&self, jobs: Vec<UploadJob>) -> Result<Vec<UploadId>, QueueError> {
-        let entries: Vec<_> = jobs
-            .into_iter()
-            .map(|job| (UploadId(self.next_id.fetch_add(1, Ordering::Relaxed)), job))
-            .collect();
-        let ids = entries.iter().map(|(id, _)| *id).collect();
-        self.send(Command::Enqueue(entries))?;
+        let mut entries: Vec<(UploadId, UploadJob)> = Vec::with_capacity(jobs.len());
+        for job in jobs {
+            match self.register(job) {
+                Ok(entry) => entries.push(entry),
+                Err(error) => {
+                    let ids: Vec<_> = entries.iter().map(|entry| entry.0).collect();
+                    self.record_cancelled(&ids);
+                    return Err(error);
+                }
+            }
+        }
+        let ids: Vec<UploadId> = entries.iter().map(|entry| entry.0).collect();
+        if let Err(error) = self.send(Command::Enqueue(entries)) {
+            self.record_cancelled(&ids);
+            return Err(error);
+        }
         Ok(ids)
+    }
+
+    pub fn restore(&self, jobs: Vec<RestoredJob>) -> Result<(), QueueError> {
+        if jobs.is_empty() {
+            return Ok(());
+        }
+        self.send(Command::Restore(jobs))
+    }
+
+    pub fn set_paused(&self, paused: bool) -> Result<(), QueueError> {
+        self.send(Command::SetPaused(paused))
+    }
+
+    pub fn pause(&self, id: UploadId) -> Result<(), QueueError> {
+        let (reply, response) = mpsc::channel();
+        self.send(Command::Pause { id, reply })?;
+        response.recv().map_err(|_| QueueError::Closed)?
+    }
+
+    pub fn resume(&self, id: UploadId) -> Result<(), QueueError> {
+        let (reply, response) = mpsc::channel();
+        self.send(Command::Resume { id, reply })?;
+        response.recv().map_err(|_| QueueError::Closed)?
+    }
+
+    fn register(&self, mut job: UploadJob) -> Result<(UploadId, UploadJob), QueueError> {
+        if let Some(journal) = &self.journal {
+            if let Some(registered) = journal.register(&job).map_err(|_| QueueError::Storage)? {
+                if let Some(file) = registered.file {
+                    job.file = file;
+                }
+                return Ok((registered.id, job));
+            }
+        }
+        Ok((UploadId(self.next_id.fetch_add(1, Ordering::Relaxed)), job))
+    }
+
+    fn record_cancelled(&self, ids: &[UploadId]) {
+        if let Some(journal) = &self.journal {
+            for id in ids {
+                let _ = journal.record(*id, &Change::Cancelled);
+            }
+        }
     }
 
     pub fn cancel(&self, id: UploadId) -> Result<(), QueueError> {
@@ -610,7 +739,7 @@ impl Queue {
     ) -> Result<(Self, Receiver<UploadEvent>), QueueError> {
         let (events, receiver) = mpsc::channel();
         let listener = Listener::Channel(Arc::new(Mutex::new(events)));
-        Ok((Self::spawn(secrets, policy, listener)?, receiver))
+        Ok((Self::spawn(secrets, policy, listener, None)?, receiver))
     }
 
     pub fn start_with_sink<F>(
@@ -621,24 +750,58 @@ impl Queue {
     where
         F: Fn(UploadEvent) + Send + Sync + 'static,
     {
-        Self::spawn(secrets, policy, Listener::Callback(Arc::new(sink)))
+        Self::spawn(secrets, policy, Listener::Callback(Arc::new(sink)), None)
+    }
+
+    pub fn start_durable<F>(
+        secrets: Arc<dyn SecretStore>,
+        policy: RetryPolicy,
+        journal: Arc<dyn Journal>,
+        sink: F,
+    ) -> Result<Self, QueueError>
+    where
+        F: Fn(UploadEvent) + Send + Sync + 'static,
+    {
+        Self::spawn(
+            secrets,
+            policy,
+            Listener::Callback(Arc::new(sink)),
+            Some(journal),
+        )
     }
 
     fn spawn(
         secrets: Arc<dyn SecretStore>,
         policy: RetryPolicy,
         listener: Listener,
+        journal: Option<Arc<dyn Journal>>,
     ) -> Result<Self, QueueError> {
         let (commands, receiver) = mpsc::channel();
+        let first_id = if journal.is_some() {
+            EPHEMERAL_ID_BASE
+        } else {
+            1
+        };
+        let thread_journal = journal.clone();
         let handle = Handle {
             commands: Arc::new(Mutex::new(commands)),
-            next_id: Arc::new(AtomicU64::new(1)),
+            journal,
+            next_id: Arc::new(AtomicU64::new(first_id)),
             cancellations: Arc::new(Mutex::new(HashMap::new())),
         };
         let cancellations = Arc::clone(&handle.cancellations);
         let thread = thread::Builder::new()
             .name("snapline-upload".to_owned())
-            .spawn(move || run(receiver, secrets, policy, listener, cancellations))
+            .spawn(move || {
+                run(
+                    receiver,
+                    secrets,
+                    policy,
+                    listener,
+                    cancellations,
+                    thread_journal,
+                )
+            })
             .map_err(|_| QueueError::Spawn)?;
         Ok(Self {
             handle,
@@ -674,6 +837,7 @@ struct JobRecord {
     status: Status,
     attempts: u32,
     error: Option<UploadError>,
+    retry_at: Option<Instant>,
     progress: Arc<Mutex<ProgressData>>,
 }
 
@@ -686,6 +850,7 @@ impl JobRecord {
             status: Status::Queued,
             attempts: 0,
             error: None,
+            retry_at: None,
             progress: Arc::new(Mutex::new(ProgressData {
                 sent: 0,
                 total,
@@ -709,7 +874,7 @@ impl JobRecord {
             run_id: self.job.run_id.clone(),
             status: self.status.clone(),
             cancellable: match &self.status {
-                Status::Queued | Status::BackingOff { .. } => true,
+                Status::Queued | Status::BackingOff { .. } | Status::Paused => true,
                 Status::Uploading => self.job.uploader.supports_in_flight_cancel(),
                 Status::Done | Status::Failed | Status::OutcomeUnknown | Status::Cancelled => false,
             },
@@ -722,6 +887,7 @@ impl JobRecord {
             page_link: None,
             deletion_link: None,
             error: self.error.clone(),
+            restored: false,
         }
     }
 }
@@ -784,17 +950,39 @@ struct State {
     records: HashMap<UploadId, JobRecord>,
     completed: HashMap<UploadId, UploadSnapshot>,
     listener: Listener,
+    journal: Option<Arc<dyn Journal>>,
+    paused_all: bool,
 }
 
 impl State {
-    fn new(listener: Listener) -> Self {
+    fn new(listener: Listener, journal: Option<Arc<dyn Journal>>) -> Self {
         Self {
             pending: VecDeque::new(),
             delayed: Vec::new(),
             records: HashMap::new(),
             completed: HashMap::new(),
             listener,
+            journal,
+            paused_all: false,
         }
+    }
+
+    fn journal(&self, id: UploadId, change: &Change<'_>) -> Result<(), QueueError> {
+        if id.get() >= EPHEMERAL_ID_BASE {
+            return Ok(());
+        }
+        let Some(journal) = &self.journal else {
+            return Ok(());
+        };
+        for attempt in 0..3 {
+            if journal.record(id, change).is_ok() {
+                return Ok(());
+            }
+            if attempt < 2 {
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+        Err(QueueError::Storage)
     }
 
     /// Moves every job whose backoff has elapsed back to the front of the line.
@@ -833,6 +1021,7 @@ impl State {
     }
 
     fn complete(&mut self, id: UploadId, uploaded: Uploaded) {
+        let _ = self.journal(id, &Change::Done(&uploaded));
         let Some(mut record) = self.records.remove(&id) else {
             return;
         };
@@ -851,6 +1040,103 @@ impl State {
             self.completed.remove(&oldest);
         }
         self.emit(id);
+    }
+
+    fn pause(&mut self, id: UploadId) -> Result<(), QueueError> {
+        let status = self
+            .records
+            .get(&id)
+            .map(|record| record.status.clone())
+            .ok_or_else(|| {
+                if self.completed.contains_key(&id) {
+                    QueueError::NotPausable
+                } else {
+                    QueueError::NotFound
+                }
+            })?;
+        let retry_at = match status {
+            Status::Queued if self.pending.contains(&id) => None,
+            Status::BackingOff { .. } => self
+                .delayed
+                .iter()
+                .find(|entry| entry.1 == id)
+                .map(|entry| entry.0),
+            _ => return Err(QueueError::NotPausable),
+        };
+        self.journal(id, &Change::Paused)?;
+        self.pending.retain(|item| *item != id);
+        self.delayed.retain(|entry| entry.1 != id);
+        if let Some(record) = self.records.get_mut(&id) {
+            record.status = Status::Paused;
+            record.retry_at = retry_at;
+        }
+        Ok(())
+    }
+
+    fn resume(&mut self, id: UploadId) -> Result<(), QueueError> {
+        let record = self.records.get(&id).ok_or_else(|| {
+            if self.completed.contains_key(&id) {
+                QueueError::NotPaused
+            } else {
+                QueueError::NotFound
+            }
+        })?;
+        if record.status != Status::Paused {
+            return Err(QueueError::NotPaused);
+        }
+        let retry_at = record.retry_at;
+        self.journal(id, &Change::Resumed)?;
+        let now = Instant::now();
+        let Some(record) = self.records.get_mut(&id) else {
+            return Ok(());
+        };
+        match retry_at {
+            Some(at) if at > now => {
+                record.status = Status::BackingOff {
+                    retry_in: at.saturating_duration_since(now),
+                };
+                self.delayed.push((at, id));
+            }
+            _ => {
+                record.status = Status::Queued;
+                self.pending.push_back(id);
+            }
+        }
+        record.retry_at = None;
+        Ok(())
+    }
+
+    fn restore(&mut self, restored: RestoredJob) {
+        let RestoredJob {
+            id,
+            job,
+            attempts,
+            start,
+        } = restored;
+        let mut record = JobRecord::new(id, job);
+        record.attempts = attempts;
+        match start {
+            RestoreStart::Queued => {
+                self.pending.push_back(id);
+            }
+            RestoreStart::After(delay) => {
+                record.status = Status::BackingOff { retry_in: delay };
+                self.delayed.push((Instant::now() + delay, id));
+            }
+            RestoreStart::Paused { retry_in } => {
+                record.status = Status::Paused;
+                record.retry_at = retry_in.map(|delay| Instant::now() + delay);
+            }
+            RestoreStart::Stopped { status, error } => {
+                record.status = status;
+                record.error = error;
+            }
+        }
+        self.records.insert(id, record);
+        if let Some(mut snapshot) = self.snapshot(id) {
+            snapshot.restored = true;
+            self.listener.emit(UploadEvent(snapshot));
+        }
     }
 
     fn handle(&mut self, command: Command) -> Control {
@@ -878,10 +1164,15 @@ impl State {
                         let _ = reply.send(Err(QueueError::NotFound));
                         Control::Continue
                     }
-                    Some(Status::BackingOff { .. }) => {
+                    Some(Status::BackingOff { .. } | Status::Paused) => {
+                        if let Err(error) = self.journal(id, &Change::Cancelled) {
+                            let _ = reply.send(Err(error));
+                            return Control::Continue;
+                        }
                         self.delayed.retain(|entry| entry.1 != id);
                         if let Some(record) = self.records.get_mut(&id) {
                             record.status = Status::Cancelled;
+                            record.retry_at = None;
                         }
                         let _ = reply.send(Ok(()));
                         self.emit(id);
@@ -889,6 +1180,10 @@ impl State {
                     }
                     Some(Status::Queued) => {
                         if let Some(position) = self.pending.iter().position(|item| *item == id) {
+                            if let Err(error) = self.journal(id, &Change::Cancelled) {
+                                let _ = reply.send(Err(error));
+                                return Control::Continue;
+                            }
                             self.pending.remove(position);
                             if let Some(record) = self.records.get_mut(&id) {
                                 record.status = Status::Cancelled;
@@ -912,6 +1207,10 @@ impl State {
                     Some(Status::Failed | Status::OutcomeUnknown | Status::Cancelled)
                 );
                 if retryable {
+                    if let Err(error) = self.journal(id, &Change::Requeued) {
+                        let _ = reply.send(Err(error));
+                        return Control::Continue;
+                    }
                     if let Some(record) = self.records.get_mut(&id) {
                         record.status = Status::Queued;
                         record.attempts = 0;
@@ -936,6 +1235,34 @@ impl State {
                     let _ = reply.send(Err(QueueError::NotRetryable));
                 } else {
                     let _ = reply.send(Err(QueueError::NotFound));
+                }
+                Control::Continue
+            }
+            Command::Pause { id, reply } => {
+                let result = self.pause(id);
+                let ok = result.is_ok();
+                let _ = reply.send(result);
+                if ok {
+                    self.emit(id);
+                }
+                Control::Continue
+            }
+            Command::Resume { id, reply } => {
+                let result = self.resume(id);
+                let ok = result.is_ok();
+                let _ = reply.send(result);
+                if ok {
+                    self.emit(id);
+                }
+                Control::Continue
+            }
+            Command::SetPaused(paused) => {
+                self.paused_all = paused;
+                Control::Continue
+            }
+            Command::Restore(jobs) => {
+                for restored in jobs {
+                    self.restore(restored);
                 }
                 Control::Continue
             }
@@ -965,8 +1292,9 @@ fn run(
     policy: RetryPolicy,
     listener: Listener,
     cancellations: Arc<Mutex<HashMap<UploadId, ActiveCancellation>>>,
+    journal: Option<Arc<dyn Journal>>,
 ) {
-    let mut state = State::new(listener);
+    let mut state = State::new(listener, journal);
     loop {
         while let Ok(command) = commands.try_recv() {
             if matches!(state.handle(command), Control::Shutdown) {
@@ -974,8 +1302,18 @@ fn run(
             }
         }
         state.promote_due();
-        let Some(id) = state.pending.pop_front() else {
-            let received = match state.next_due() {
+        let next = if state.paused_all {
+            None
+        } else {
+            state.pending.pop_front()
+        };
+        let Some(id) = next else {
+            let wake = if state.paused_all {
+                None
+            } else {
+                state.next_due()
+            };
+            let received = match wake {
                 Some(at) => commands.recv_timeout(at.saturating_duration_since(Instant::now())),
                 None => commands.recv().map_err(|_| RecvTimeoutError::Disconnected),
             };
@@ -1011,6 +1349,32 @@ fn run_job(
     state: &mut State,
     cancellations: &Arc<Mutex<HashMap<UploadId, ActiveCancellation>>>,
 ) -> bool {
+    if !state.records.contains_key(&id) {
+        return true;
+    }
+    let durable = if id.get() >= EPHEMERAL_ID_BASE {
+        None
+    } else {
+        state.journal.clone()
+    };
+    if let Some(journal) = durable {
+        match journal.start(id) {
+            Ok(true) => {}
+            Ok(false) => {
+                if let Some(record) = state.records.get_mut(&id) {
+                    record.status = Status::Cancelled;
+                }
+                state.emit(id);
+                return true;
+            }
+            Err(_) => {
+                state
+                    .delayed
+                    .push((Instant::now() + Duration::from_secs(5), id));
+                return true;
+            }
+        }
+    }
     let Some(record) = state.records.get_mut(&id) else {
         return true;
     };
@@ -1087,6 +1451,7 @@ fn run_job(
         }
         Err(error) => {
             if error == UploadError::Cancelled || cancelled.load(Ordering::SeqCst) {
+                let _ = state.journal(id, &Change::Cancelled);
                 if let Some(record) = state.records.get_mut(&id) {
                     record.status = Status::Cancelled;
                     record.error = None;
@@ -1096,6 +1461,7 @@ fn run_job(
             }
             let outcome_unknown = error.is_uncertain() && !idempotent;
             if outcome_unknown {
+                let _ = state.journal(id, &Change::OutcomeUnknown(&error));
                 if let Some(record) = state.records.get_mut(&id) {
                     record.status = Status::OutcomeUnknown;
                     record.error = Some(error);
@@ -1105,6 +1471,7 @@ fn run_job(
             }
             let retryable = error.is_transient() && attempts <= policy.max_retries();
             if !retryable {
+                let _ = state.journal(id, &Change::Failed(&error));
                 if let Some(record) = state.records.get_mut(&id) {
                     record.status = Status::Failed;
                     record.error = Some(error);
@@ -1113,6 +1480,13 @@ fn run_job(
                 return true;
             }
             let delay = policy.delay_for(attempts, &error);
+            let _ = state.journal(
+                id,
+                &Change::Retrying {
+                    retry_in: delay,
+                    error: &error,
+                },
+            );
             if let Some(record) = state.records.get_mut(&id) {
                 record.status = Status::BackingOff { retry_in: delay };
                 record.error = Some(error);
@@ -1520,6 +1894,7 @@ mod tests {
                 Status::BackingOff { .. } => "backing-off",
                 Status::Done => "done",
                 Status::Failed => "failed",
+                Status::Paused => "paused",
                 Status::OutcomeUnknown => "outcome-unknown",
                 Status::Cancelled => "cancelled",
             };
@@ -2110,6 +2485,393 @@ mod tests {
         let finished = wait_terminal(&events, id);
         assert_eq!(finished.status, Status::Done);
         assert_eq!(finished.attempts, 2);
+        queue.join().expect("join");
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum Logged {
+        Registered(String),
+        Started(u64),
+        Retrying(u64),
+        Done(u64),
+        Failed(u64),
+        OutcomeUnknown(u64),
+        Cancelled(u64),
+        Paused(u64),
+        Resumed(u64),
+        Requeued(u64),
+    }
+
+    struct FakeJournal {
+        log: Mutex<Vec<Logged>>,
+        next: AtomicU64,
+        deny_start: AtomicBool,
+        fail_register_at: Mutex<Option<usize>>,
+        registered: AtomicU64,
+    }
+
+    impl FakeJournal {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                log: Mutex::new(Vec::new()),
+                next: AtomicU64::new(100),
+                deny_start: AtomicBool::new(false),
+                fail_register_at: Mutex::new(None),
+                registered: AtomicU64::new(0),
+            })
+        }
+
+        fn log(&self) -> Vec<Logged> {
+            self.log.lock().expect("log").clone()
+        }
+    }
+
+    impl Journal for FakeJournal {
+        fn register(&self, job: &UploadJob) -> Result<Option<Registered>, JournalError> {
+            let position = usize::try_from(self.registered.fetch_add(1, Ordering::SeqCst))
+                .unwrap_or(usize::MAX);
+            if *self.fail_register_at.lock().expect("fail") == Some(position) {
+                return Err(JournalError);
+            }
+            if job.run_id.as_deref() == Some("ephemeral") {
+                return Ok(None);
+            }
+            let id = self.next.fetch_add(1, Ordering::SeqCst);
+            self.log
+                .lock()
+                .expect("log")
+                .push(Logged::Registered(job.file.file_name.clone()));
+            let staged = UploadFile::new(
+                PathBuf::from("C:\\staged\\copy.png"),
+                job.file.file_name.clone(),
+                "image/png",
+                vec![9_u8, 9],
+            );
+            Ok(Some(Registered {
+                id: UploadId::new(id),
+                file: Some(staged),
+            }))
+        }
+
+        fn start(&self, id: UploadId) -> Result<bool, JournalError> {
+            if self.deny_start.load(Ordering::SeqCst) {
+                return Ok(false);
+            }
+            self.log
+                .lock()
+                .expect("log")
+                .push(Logged::Started(id.get()));
+            Ok(true)
+        }
+
+        fn record(&self, id: UploadId, change: &Change<'_>) -> Result<(), JournalError> {
+            let id = id.get();
+            let entry = match change {
+                Change::Retrying { .. } => Logged::Retrying(id),
+                Change::Done(_) => Logged::Done(id),
+                Change::Failed(_) => Logged::Failed(id),
+                Change::OutcomeUnknown(_) => Logged::OutcomeUnknown(id),
+                Change::Cancelled => Logged::Cancelled(id),
+                Change::Paused => Logged::Paused(id),
+                Change::Resumed => Logged::Resumed(id),
+                Change::Requeued => Logged::Requeued(id),
+            };
+            self.log.lock().expect("log").push(entry);
+            Ok(())
+        }
+    }
+
+    fn durable(
+        results: Vec<Result<Uploaded, UploadError>>,
+        policy: RetryPolicy,
+    ) -> (
+        Arc<FakeUploader>,
+        Arc<FakeJournal>,
+        Queue,
+        Receiver<(UploadEvent, usize)>,
+        Handle,
+    ) {
+        let uploader = FakeUploader::new(results);
+        let journal = FakeJournal::new();
+        let (sender, receiver) = mpsc::channel();
+        let sink_journal = Arc::clone(&journal);
+        let queue = Queue::start_durable(
+            Arc::new(TestSecrets),
+            policy,
+            journal.clone(),
+            move |event| {
+                let _ = sender.send((event, sink_journal.log().len()));
+            },
+        )
+        .expect("queue");
+        let handle = queue.handle();
+        (uploader, journal, queue, receiver, handle)
+    }
+
+    fn wait_logged(
+        events: &Receiver<(UploadEvent, usize)>,
+        id: UploadId,
+        status: &Status,
+    ) -> (UploadSnapshot, usize) {
+        loop {
+            let (event, logged) = events.recv_timeout(Duration::from_secs(5)).expect("event");
+            if event.0.id == id && event.0.status == *status {
+                return (event.0, logged);
+            }
+        }
+    }
+
+    #[test]
+    fn a_durable_job_takes_its_id_and_staged_file_from_the_journal() {
+        let (uploader, journal, queue, events, handle) = durable(Vec::new(), RetryPolicy::new(0));
+        let id = handle
+            .enqueue(job(uploader.clone(), "shot.png"))
+            .expect("enqueue");
+        assert_eq!(id, UploadId::new(100));
+        wait_logged(&events, id, &Status::Done);
+        assert_eq!(
+            journal.log(),
+            vec![
+                Logged::Registered("shot.png".to_owned()),
+                Logged::Started(100),
+                Logged::Done(100)
+            ]
+        );
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn state_is_saved_before_the_matching_event_is_published() {
+        let (uploader, _journal, queue, events, handle) = durable(
+            vec![Err(UploadError::Retryable("again".to_owned()))],
+            RetryPolicy::with_backoff(2, vec![Duration::ZERO]),
+        );
+        let id = handle
+            .enqueue(job(uploader.clone(), "shot.png"))
+            .expect("enqueue");
+        let (_, retry_logged) = wait_logged(
+            &events,
+            id,
+            &Status::BackingOff {
+                retry_in: Duration::ZERO,
+            },
+        );
+        assert_eq!(retry_logged, 3);
+        let (_, done_logged) = wait_logged(&events, id, &Status::Done);
+        assert_eq!(done_logged, 5);
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn a_job_the_journal_will_not_start_never_uploads() {
+        let (uploader, journal, queue, events, handle) = durable(Vec::new(), RetryPolicy::new(0));
+        journal.deny_start.store(true, Ordering::SeqCst);
+        let id = handle
+            .enqueue(job(uploader.clone(), "shot.png"))
+            .expect("enqueue");
+        wait_logged(&events, id, &Status::Cancelled);
+        assert!(uploader.calls().is_empty());
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn jobs_the_journal_declines_use_ephemeral_ids() {
+        let (uploader, journal, queue, events, handle) = durable(Vec::new(), RetryPolicy::new(0));
+        let mut ephemeral = job(uploader.clone(), "test.png");
+        ephemeral.run_id = Some("ephemeral".to_owned());
+        let id = handle.enqueue(ephemeral).expect("enqueue");
+        assert!(id.get() >= EPHEMERAL_ID_BASE);
+        wait_logged(&events, id, &Status::Done);
+        assert!(journal.log().is_empty());
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn a_registration_failure_refuses_the_job_and_cancels_earlier_batch_entries() {
+        let (uploader, journal, queue, _events, handle) = durable(Vec::new(), RetryPolicy::new(0));
+        *journal.fail_register_at.lock().expect("fail") = Some(1);
+        let error = handle
+            .enqueue_batch(vec![
+                job(uploader.clone(), "a.png"),
+                job(uploader.clone(), "b.png"),
+            ])
+            .expect_err("batch");
+        assert_eq!(error, QueueError::Storage);
+        assert_eq!(
+            journal.log(),
+            vec![
+                Logged::Registered("a.png".to_owned()),
+                Logged::Cancelled(100)
+            ]
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(uploader.calls().is_empty());
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn a_paused_queue_starts_nothing_until_resumed() {
+        let (uploader, queue, events, handle) = queue(Vec::new(), RetryPolicy::new(0));
+        handle.set_paused(true).expect("pause");
+        let id = handle
+            .enqueue(job(uploader.clone(), "held.png"))
+            .expect("enqueue");
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(uploader.calls().is_empty());
+        assert_eq!(
+            handle.state(id).expect("state").map(|state| state.status),
+            Some(Status::Queued)
+        );
+        handle.set_paused(false).expect("resume");
+        assert_eq!(wait_terminal(&events, id).status, Status::Done);
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn a_paused_job_stays_put_while_others_run_and_resumes_on_request() {
+        let (uploader, journal, queue, events, handle) = durable(Vec::new(), RetryPolicy::new(0));
+        handle.set_paused(true).expect("hold the queue");
+        let first = handle
+            .enqueue(job(uploader.clone(), "first.png"))
+            .expect("enqueue");
+        let second = handle
+            .enqueue(job(uploader.clone(), "second.png"))
+            .expect("enqueue");
+        handle.pause(first).expect("pause first");
+        handle.set_paused(false).expect("release");
+        wait_logged(&events, second, &Status::Done);
+        assert_eq!(uploader.calls(), vec!["second.png".to_owned()]);
+        assert_eq!(handle.pause(second), Err(QueueError::NotPausable));
+        assert_eq!(handle.resume(second), Err(QueueError::NotPaused));
+        handle.resume(first).expect("resume first");
+        wait_logged(&events, first, &Status::Done);
+        assert!(journal.log().contains(&Logged::Paused(100)));
+        assert!(journal.log().contains(&Logged::Resumed(100)));
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn a_paused_job_can_be_cancelled_and_never_uploads() {
+        let (uploader, journal, queue, events, handle) = durable(Vec::new(), RetryPolicy::new(0));
+        handle.set_paused(true).expect("hold");
+        let id = handle
+            .enqueue(job(uploader.clone(), "p.png"))
+            .expect("enqueue");
+        handle.pause(id).expect("pause");
+        handle.cancel(id).expect("cancel");
+        handle.set_paused(false).expect("release");
+        wait_logged(&events, id, &Status::Cancelled);
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(uploader.calls().is_empty());
+        assert!(journal.log().contains(&Logged::Cancelled(100)));
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn restored_jobs_resume_where_they_left_off() {
+        let (uploader, queue, events, handle) = queue(Vec::new(), RetryPolicy::new(3));
+        let make = |name: &str| job(uploader.clone(), name);
+        handle
+            .restore(vec![
+                RestoredJob {
+                    id: UploadId::new(7),
+                    job: make("queued.png"),
+                    attempts: 1,
+                    start: RestoreStart::Queued,
+                },
+                RestoredJob {
+                    id: UploadId::new(8),
+                    job: make("waiting.png"),
+                    attempts: 2,
+                    start: RestoreStart::After(Duration::from_millis(80)),
+                },
+                RestoredJob {
+                    id: UploadId::new(9),
+                    job: make("paused.png"),
+                    attempts: 0,
+                    start: RestoreStart::Paused { retry_in: None },
+                },
+            ])
+            .expect("restore");
+        let queued = wait_terminal(&events, UploadId::new(7));
+        assert_eq!(queued.status, Status::Done);
+        assert_eq!(queued.attempts, 2);
+        let waiting = wait_terminal(&events, UploadId::new(8));
+        assert_eq!(waiting.status, Status::Done);
+        assert_eq!(waiting.attempts, 3);
+        assert_eq!(
+            handle
+                .state(UploadId::new(9))
+                .expect("state")
+                .map(|state| state.status),
+            Some(Status::Paused)
+        );
+        assert_eq!(
+            uploader.calls(),
+            vec!["queued.png".to_owned(), "waiting.png".to_owned()]
+        );
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn a_restored_stopped_job_keeps_its_status_and_can_be_retried_or_cancelled() {
+        let (uploader, queue, events, handle) = queue(Vec::new(), RetryPolicy::new(0));
+        handle
+            .restore(vec![
+                RestoredJob {
+                    id: UploadId::new(3),
+                    job: job(uploader.clone(), "maybe.png"),
+                    attempts: 1,
+                    start: RestoreStart::Stopped {
+                        status: Status::OutcomeUnknown,
+                        error: Some(UploadError::Uncertain("It may have uploaded.".to_owned())),
+                    },
+                },
+                RestoredJob {
+                    id: UploadId::new(4),
+                    job: job(uploader.clone(), "attention.png"),
+                    attempts: 1,
+                    start: RestoreStart::Stopped {
+                        status: Status::Failed,
+                        error: Some(UploadError::Auth),
+                    },
+                },
+            ])
+            .expect("restore");
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(uploader.calls().is_empty());
+        let maybe = handle.state(UploadId::new(3)).expect("state").expect("job");
+        assert_eq!(maybe.status, Status::OutcomeUnknown);
+        assert_eq!(
+            maybe.error,
+            Some(UploadError::Uncertain("It may have uploaded.".to_owned()))
+        );
+        handle.retry(UploadId::new(3)).expect("retry");
+        wait_for(&events, UploadId::new(3), &Status::Done);
+        assert_eq!(
+            handle.cancel(UploadId::new(4)),
+            Err(QueueError::NotCancellable)
+        );
+        queue.join().expect("join");
+    }
+
+    #[test]
+    fn a_restored_job_still_obeys_the_retry_limit() {
+        let (uploader, queue, events, handle) = queue(
+            vec![Err(UploadError::Retryable("again".to_owned()))],
+            RetryPolicy::with_backoff(2, vec![Duration::ZERO]),
+        );
+        handle
+            .restore(vec![RestoredJob {
+                id: UploadId::new(5),
+                job: job(uploader.clone(), "limit.png"),
+                attempts: 2,
+                start: RestoreStart::Queued,
+            }])
+            .expect("restore");
+        let finished = wait_terminal(&events, UploadId::new(5));
+        assert_eq!(finished.status, Status::Failed);
+        assert_eq!(finished.attempts, 3);
         queue.join().expect("join");
     }
 }

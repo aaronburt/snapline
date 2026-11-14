@@ -294,6 +294,7 @@ fn card_badge_for(
                 state.cancellable,
                 -1.0,
             ),
+            UploadStatus::Paused => ("Paused", "uploading", false, state.cancellable, -1.0),
             UploadStatus::Done => ("Link", "ok", false, false, -1.0),
             UploadStatus::Failed => ("Failed", "failed", false, false, -1.0),
             UploadStatus::OutcomeUnknown => ("Unknown", "failed", false, false, -1.0),
@@ -411,6 +412,7 @@ fn share_status_from_live(status: UploadStatus) -> (&'static str, &'static str) 
         UploadStatus::Queued => ("uploading", "Queued"),
         UploadStatus::Uploading => ("uploading", "Uploading"),
         UploadStatus::BackingOff => ("uploading", "Waiting to retry"),
+        UploadStatus::Paused => ("uploading", "Paused"),
         UploadStatus::Cancelled => ("local", "Not uploaded"),
     }
 }
@@ -520,7 +522,7 @@ fn compute_share_view(
 
 fn upload_dto_from_state(state: &UploadState) -> Option<UploadDto> {
     let dto_state = match state.status {
-        UploadStatus::Queued => UploadStateDto::Queued,
+        UploadStatus::Queued | UploadStatus::Paused => UploadStateDto::Queued,
         UploadStatus::Uploading | UploadStatus::BackingOff => UploadStateDto::Uploading,
         UploadStatus::Done => UploadStateDto::Done,
         UploadStatus::Failed | UploadStatus::OutcomeUnknown => UploadStateDto::Failed,
@@ -564,7 +566,10 @@ fn active_upload_for(
 fn is_active_upload(status: UploadStatus) -> bool {
     matches!(
         status,
-        UploadStatus::Queued | UploadStatus::Uploading | UploadStatus::BackingOff
+        UploadStatus::Queued
+            | UploadStatus::Uploading
+            | UploadStatus::BackingOff
+            | UploadStatus::Paused
     )
 }
 
