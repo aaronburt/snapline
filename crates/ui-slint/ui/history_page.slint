@@ -413,7 +413,10 @@ component SharingBlock inherits Rectangle {
         spacing: 10px;
         HorizontalLayout {
             Text { text: "Sharing"; color: Tokens.text; font-size: 14px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
-            Badge { label: HistoryState.share-label; tone: HistoryState.share-status == "uploaded" ? "ok" : HistoryState.share-status; }
+            Badge {
+                label: HistoryState.share-label;
+                tone: HistoryState.share-status == "uploaded" ? "ok" : (HistoryState.share-status == "unknown" ? "failed" : (HistoryState.share-status == "paused" ? "uploading" : HistoryState.share-status));
+            }
         }
         if HistoryState.share-status == "uploaded": VerticalLayout {
             spacing: 10px;
@@ -447,7 +450,13 @@ component SharingBlock inherits Rectangle {
                 }
             }
             HorizontalLayout {
+                spacing: 6px;
                 alignment: start;
+                SmallButton {
+                    label: "Open link";
+                    btn-height: 32px;
+                    clicked => { HistoryState.open-share-link(HistoryState.share-url); }
+                }
                 UploadMenuButton {
                     label: "Upload elsewhere…";
                     disabled: HistoryState.upload-busy || HistoryState.detail-missing;
@@ -501,6 +510,46 @@ component SharingBlock inherits Rectangle {
                 }
             }
         }
+        if HistoryState.share-status == "unknown": VerticalLayout {
+            spacing: 10px;
+            if HistoryState.share-note != "": Text { text: HistoryState.share-note; color: Tokens.text2; font-size: 12px; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                SmallButton {
+                    label: "Retry anyway";
+                    primary: true;
+                    btn-height: 32px;
+                    disabled: HistoryState.upload-busy || HistoryState.detail-missing;
+                    clicked => { HistoryState.retry-upload(); }
+                }
+                UploadMenuButton {
+                    label: "Upload elsewhere…";
+                    disabled: HistoryState.detail-missing;
+                }
+            }
+        }
+        if HistoryState.share-status == "paused": VerticalLayout {
+            spacing: 10px;
+            if HistoryState.share-note != "": Text { text: HistoryState.share-note; color: Tokens.text2; font-size: 12px; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                SmallButton {
+                    label: "Resume";
+                    primary: true;
+                    btn-height: 32px;
+                    disabled: HistoryState.upload-busy;
+                    clicked => { HistoryState.resume-upload(); }
+                }
+                SmallButton {
+                    label: "Cancel";
+                    btn-height: 32px;
+                    disabled: HistoryState.upload-busy;
+                    clicked => { HistoryState.cancel-upload(); }
+                }
+            }
+        }
         if HistoryState.share-status == "uploading": VerticalLayout {
             spacing: 10px;
             if HistoryState.share-uploading && HistoryState.share-note != "": Text {
@@ -510,9 +559,16 @@ component SharingBlock inherits Rectangle {
                 wrap: word-wrap;
             }
             if HistoryState.share-uploading: Progress { value: HistoryState.share-progress; }
-            if HistoryState.share-cancellable: HorizontalLayout {
+            if HistoryState.share-cancellable || HistoryState.share-pausable: HorizontalLayout {
+                spacing: 6px;
                 alignment: start;
-                SmallButton {
+                if HistoryState.share-pausable: SmallButton {
+                    label: "Pause";
+                    btn-height: 32px;
+                    disabled: HistoryState.upload-busy;
+                    clicked => { HistoryState.pause-upload(); }
+                }
+                if HistoryState.share-cancellable: SmallButton {
                     label: "Cancel";
                     btn-height: 32px;
                     disabled: HistoryState.upload-busy;
@@ -655,6 +711,12 @@ export component HistoryPage inherits Rectangle {
     property <int> columns: HistoryState.grid-view ? max(1, floor((root.scroll-width / 1px + 12) / 212)) : 1;
     property <length> head-height: root.inline-head ? 58px : 104px;
 
+    Timer {
+        running: HistoryState.share-countdown;
+        interval: 1s;
+        triggered => { HistoryState.tick(); }
+    }
+
     VerticalLayout {
         x: 0px;
         y: 0px;
@@ -695,6 +757,11 @@ export component HistoryPage inherits Rectangle {
                 height: 34px;
                 alignment: start;
                 spacing: 8px;
+                if HistoryState.queue-has-work || HistoryState.queue-paused: SmallButton {
+                    label: HistoryState.queue-paused ? "Resume uploads" : "Pause uploads";
+                    disabled: HistoryState.upload-busy;
+                    clicked => { HistoryState.toggle-queue-paused(); }
+                }
                 SmallButton {
                     label: "Upload file…";
                     disabled: HistoryState.upload-busy;
