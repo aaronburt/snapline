@@ -10,7 +10,6 @@ from html import escape
 SERIES = [
     ("idle", "Tray idle", "--s1"),
     ("main_open", "Main window open", "--s2"),
-    ("overlay", "Capture overlay open", "--s3"),
 ]
 MIB = 1024 * 1024
 W, H = 800, 380

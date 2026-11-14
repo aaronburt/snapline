@@ -3,8 +3,7 @@
   the raw numbers to a JSON file. It never fails on the numbers themselves.
   Run it the same way for every release so the figures are comparable.
 
-  Stages: idle (tray only), main_open, main_closed, overlay (region capture
-  overlay showing), overlay_closed. Numbers are bytes of the Snapline process:
+  Stages: idle (tray only), main_open, main_closed. Numbers are bytes of the Snapline process:
   private_ws = private working set, private_bytes = committed private memory,
   working_set = full working set.
 #>
@@ -116,6 +115,36 @@ function Close-Windows($procId) {
     }
 }
 
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public static class Probe {
+  [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+  [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SendMessageTimeout(IntPtr h, uint m, IntPtr w, IntPtr l, uint flags, uint timeout, out IntPtr result);
+  [DllImport("user32.dll")] static extern bool IsHungAppWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  public static string Run() {
+    IntPtr msgOnly = new IntPtr(-3);
+    IntPtr h = FindWindowEx(msgOnly, IntPtr.Zero, "SnaplineMainMessageWindow", null);
+    if (h == IntPtr.Zero) return "message window NOT FOUND";
+    uint pid; uint tid = GetWindowThreadProcessId(h, out pid);
+    IntPtr res;
+    long started = Environment.TickCount;
+    IntPtr ok = SendMessageTimeout(h, 0x0000, IntPtr.Zero, IntPtr.Zero, 0x2, 3000, out res);
+    int err = Marshal.GetLastWin32Error();
+    return "message window found (pid " + pid + ", thread " + tid + "), hung=" + IsHungAppWindow(h) + ", WM_NULL " + (ok == IntPtr.Zero ? "FAILED (error " + err + ")" : "answered") + " in " + (Environment.TickCount - started) + " ms";
+  }
+}
+"@
+
+function Probe-HandOff($procId, $label) {
+    Log ("probe {0}: {1}" -f $label, [Probe]::Run())
+    try {
+        $threads = (Get-Process -Id $procId).Threads
+        $waiting = @($threads | Where-Object { $_.ThreadState -eq 'Wait' } | ForEach-Object { "$($_.WaitReason)" } | Group-Object | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ", "
+        Log ("probe {0}: {1} threads; waiting: {2}" -f $label, $threads.Count, $waiting)
+    } catch { Log "probe $label threads failed: $_" }
+}
+
 function Shot($name) {
     try {
         Add-Type -AssemblyName System.Drawing
@@ -131,20 +160,35 @@ function Shot($name) {
 
 $stages = [ordered]@{}
 $notes = @()
-$proc = Start-Process $app -ArgumentList "--budget-run" -PassThru
-Log "started pid $($proc.Id)"
-try {
+
+function Start-App {
+    $p = Start-Process $app -ArgumentList "--budget-run" -PassThru
+    Log "started pid $($p.Id)"
     Start-Sleep -Seconds 20
-    if ($proc.HasExited) { throw "app exited during startup (code $($proc.ExitCode))" }
+    if ($p.HasExited) { throw "app exited during startup (code $($p.ExitCode))" }
+    return $p
+}
+
+function Stop-App($p) {
+    Start-Process $app -ArgumentList "--action", "app_exit" | Out-Null
+    if (-not $p.WaitForExit(10000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+    Get-Process snapline -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $app } | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+# One fresh process: tray idle, then the main window opened, closed and opened again.
+$proc = Start-App
+try {
     $stages["idle"] = Sample $proc.Id
     Log "idle: $($stages['idle'].private_ws)"
     Breakdown $proc.Id "idle"
 
     Log-Windows $proc.Id "before opening anything"
+    Probe-HandOff $proc.Id "at idle"
     Start-Process $app -ArgumentList "--budget-open", "main" | Out-Null
     if (-not (Wait-Windows $proc.Id $true 30)) { $notes += "main window did not appear" }
     Start-Sleep -Seconds 3
     Log-Windows $proc.Id "main open"
+    Probe-HandOff $proc.Id "main open"
     Shot "main-open"
     $stages["main_open"] = Sample $proc.Id
     Log "main_open: $($stages['main_open'].private_ws)"
@@ -154,42 +198,26 @@ try {
     if (-not (Wait-Windows $proc.Id $false 15)) { $notes += "main window did not close" }
     Start-Sleep -Seconds 5
     Log-Windows $proc.Id "main closed"
+    Probe-HandOff $proc.Id "main closed"
     $stages["main_closed"] = Sample $proc.Id
     Log "main_closed: $($stages['main_closed'].private_ws)"
     Breakdown $proc.Id "main_closed"
 
-    Start-Process $app -ArgumentList "--action", "capture_region" | Out-Null
+    # The running app must still answer a second launch after its window closed.
+    Start-Process $app -ArgumentList "--budget-open", "main" | Out-Null
     if (Wait-Windows $proc.Id $true 15) {
-        Start-Sleep -Seconds 2
-        Log-Windows $proc.Id "overlay open"
-        Shot "overlay-open"
-        $stages["overlay"] = Sample $proc.Id
-        Log "overlay: $($stages['overlay'].private_ws)"
-        Close-Windows $proc.Id
-        if (-not (Wait-Windows $proc.Id $false 15)) {
-            [Windows.Forms.SendKeys]::SendWait("{ESC}")
-            if (-not (Wait-Windows $proc.Id $false 10)) { $notes += "overlay did not close" }
-        }
-        Start-Sleep -Seconds 5
-        Log-Windows $proc.Id "overlay closed"
-        $stages["overlay_closed"] = Sample $proc.Id
-        Log "overlay_closed: $($stages['overlay_closed'].private_ws)"
+        Log "reopen: a second launch brought the window back"
     } else {
-        $notes += "capture overlay did not appear"
-        Log-Windows $proc.Id "after capture_region"
-        Shot "overlay-missing"
-        $logs = Join-Path $env:LOCALAPPDATA "SnapLine\logs"
-        $newest = Get-ChildItem $logs -Filter *.log -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
-        if ($newest) {
-            Log "tail of $($newest.FullName):"
-            Get-Content $newest.FullName -Tail 40 | ForEach-Object { Write-Host "    $_" }
-        } else { Log "no app log found in $logs" }
+        $notes += "after its window closed, a second launch did not bring it back"
+        Log-Windows $proc.Id "after reopen attempt"
+        Shot "reopen-missing"
     }
 } finally {
-    Start-Process $app -ArgumentList "--action", "app_exit" | Out-Null
-    if (-not $proc.WaitForExit(10000)) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-    Get-Process snapline -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $app } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Stop-App $proc
 }
+
+# The capture overlay is not measured here: on a hosted runner the app receives
+# capture_region but no overlay window ever appears, so there is nothing to sample.
 
 $os = Get-CimInstance Win32_OperatingSystem
 $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
@@ -206,7 +234,7 @@ $run = [ordered]@{
         ram_gb       = [Math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
         screen       = "$($screen.Width)x$($screen.Height)"
     }
-    method  = "median of 5 readings 1 s apart per stage; Win32_PerfFormattedData_PerfProc_Process of the snapline.exe process"
+    method  = "median of 5 readings 1 s apart per stage; one fresh process for all stages; Win32_PerfFormattedData_PerfProc_Process of the snapline.exe process"
     stages  = $stages
     notes   = $notes
 }
