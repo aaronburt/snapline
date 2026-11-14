@@ -56,13 +56,16 @@ $newerRelease = $releases | Where-Object {
 }
 $markLatest = if ($newerRelease) { 'false' } else { 'true' }
 
-$appManifest = 'apps/snapline/Cargo.toml'
-$manifest = Get-Content -LiteralPath $appManifest -Raw
-if ($manifest -notmatch '(?m)^version\.workspace = true\r?$') {
-    throw "Could not set the Snapline package version in $appManifest."
+# Every crate (the app, the UI's version label, the installer) inherits the workspace version,
+# so stamping it here keeps them all in line with the release tag.
+$workspaceManifest = 'Cargo.toml'
+$manifest = Get-Content -LiteralPath $workspaceManifest -Raw
+$versionLine = [regex]'(?m)^version = "[^"\r\n]*"(?=\r?$)'
+if (!$versionLine.IsMatch($manifest)) {
+    throw "Could not set the Snapline package version in $workspaceManifest."
 }
-$manifest -replace '(?m)^version\.workspace = true(?=\r?$)', "version = `"$packageVersion`"" |
-    Set-Content -LiteralPath $appManifest -Encoding utf8 -NoNewline
+$versionLine.Replace($manifest, "version = `"$packageVersion`"", 1) |
+    Set-Content -LiteralPath $workspaceManifest -Encoding utf8 -NoNewline
 
 @(
     "tag=$tag"

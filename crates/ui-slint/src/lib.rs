@@ -1033,6 +1033,60 @@ pub(crate) fn create_window_with_cache(
         );
     });
 
+    let w = weak.clone();
+    s.on_check_updates(move || {
+        let Some(app) = w.upgrade() else { return };
+        let state = app.global::<SettingsState>();
+        if state.get_update_checking() {
+            return;
+        }
+        state.set_update_checking(true);
+        state.set_update_message("".into());
+        state.set_update_url("".into());
+        let w2 = w.clone();
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(|| {
+                snapline_upload::update::check(env!("CARGO_PKG_VERSION"))
+            })
+            .unwrap_or_else(|_| {
+                Err(snapline_upload::error::UploadError::Permanent(
+                    "The update check failed unexpectedly.".to_owned(),
+                ))
+            });
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(app) = w2.upgrade() else { return };
+                let state = app.global::<SettingsState>();
+                state.set_update_checking(false);
+                match result {
+                    Ok(snapline_upload::update::UpdateStatus::Available { tag, url }) => {
+                        state.set_update_message(format!("{tag} is available").into());
+                        state.set_update_url(url.into());
+                    }
+                    Ok(snapline_upload::update::UpdateStatus::UpToDate) => {
+                        state.set_update_message("You're up to date".into());
+                    }
+                    Ok(snapline_upload::update::UpdateStatus::NoReleases) => {
+                        state.set_update_message("No releases published yet".into());
+                    }
+                    Err(error) => {
+                        tracing::warn!("update check failed: {error}");
+                        state.set_update_message(format!("Couldn't check: {error}").into());
+                    }
+                }
+            });
+        });
+    });
+    let (b, w) = (backend.clone(), weak.clone());
+    s.on_open_update(move || {
+        let Some(app) = w.upgrade() else { return };
+        let url = app.global::<SettingsState>().get_update_url().to_string();
+        if let Err(error) = b.host().open_url(&url) {
+            tracing::warn!("could not open the release page: {error}");
+            app.global::<SettingsState>()
+                .set_update_message("Couldn't open the release page".into());
+        }
+    });
+
     wire_uploads(&app, backend.clone());
     wire_workflows(&app, backend.clone());
     let history_handle = history::wire(&app, backend.clone(), cache);

@@ -10,3 +10,4 @@ pub mod http;
 pub mod queue;
 pub mod s3;
 pub mod sftp;
+pub mod update;
