@@ -358,6 +358,7 @@ mod tests {
                 files: Arc::new(NoFiles),
                 destinations,
                 waiting: Arc::default(),
+                recovered: Arc::default(),
             };
             Self {
                 directory,
