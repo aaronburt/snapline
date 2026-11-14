@@ -87,8 +87,14 @@ component Thumb inherits Rectangle {
 
 component CaptureCell inherits Rectangle {
     in property <HistoryCellData> data;
+    in property <length> content-y;
+    in property <length> view-top;
+    in property <length> view-bottom;
+    property <bool> in-view: root.content-y + root.height > root.view-top && root.content-y < root.view-bottom;
     callback select(int, bool, bool);
     callback open(int);
+    init => { HistoryState.thumb-view(root.data.id, root.in-view); }
+    changed in-view => { HistoryState.thumb-view(root.data.id, root.in-view); }
     width: 200px;
     height: 205px;
     border-radius: 6px;
@@ -139,9 +145,15 @@ component ListRow inherits Rectangle {
     in property <bool> compact;
     in property <bool> inline-size;
     in property <bool> first;
+    in property <length> content-y;
+    in property <length> view-top;
+    in property <length> view-bottom;
+    property <bool> in-view: root.content-y + root.height > root.view-top && root.content-y < root.view-bottom;
     callback select(int, bool, bool);
     callback open(int);
     callback cancel-upload(int);
+    init => { HistoryState.thumb-view(root.data.id, root.in-view); }
+    changed in-view => { HistoryState.thumb-view(root.data.id, root.in-view); }
     height: 72px;
     background: root.data.selected ? Tokens.accent-soft : (ta.has-hover ? Tokens.subtle : transparent);
     if root.data.selected: Rectangle {
@@ -934,7 +946,7 @@ export component HistoryPage inherits Rectangle {
                         }
                     }
                     if HistoryState.grid-view && !HistoryState.is-empty: VerticalLayout {
-                        for group in HistoryState.rows: VerticalLayout {
+                        for group in HistoryState.rows: grp := VerticalLayout {
                             DayHeader { height: 46px; label: group.label; count: group.count; }
                             Rectangle {
                                 height: ceil(group.size / root.columns) * 217px;
@@ -942,6 +954,9 @@ export component HistoryPage inherits Rectangle {
                                     x: (cell.index - floor(cell.index / root.columns) * root.columns) * 212px;
                                     y: floor(cell.index / root.columns) * 217px;
                                     data: cell;
+                                    content-y: lists.y + grp.y + 46px + floor(cell.index / root.columns) * 217px;
+                                    view-top: -scroller.content-y - 300px;
+                                    view-bottom: -scroller.content-y + scroller.height + 300px;
                                     select(id, additive, range) => {
                                         key-scope.focus();
                                         HistoryState.select(id, additive, range);
@@ -953,7 +968,7 @@ export component HistoryPage inherits Rectangle {
                             }
                         }
                     }
-                    if !HistoryState.grid-view && !HistoryState.is-empty && HistoryState.cells.length > 0: Rectangle {
+                    if !HistoryState.grid-view && !HistoryState.is-empty && HistoryState.cells.length > 0: listcard := Rectangle {
                         background: Tokens.card;
                         border-radius: 6px;
                         border-width: 1px;
@@ -976,6 +991,9 @@ export component HistoryPage inherits Rectangle {
                             }
                             for cell[i] in HistoryState.cells: ListRow {
                                 data: cell;
+                                content-y: lists.y + listcard.y + 38px + i * 72px;
+                                view-top: -scroller.content-y - 300px;
+                                view-bottom: -scroller.content-y + scroller.height + 300px;
                                 first: i == 0;
                                 compact: root.scroll-width < 740px;
                                 inline-size: root.scroll-width < 460px;

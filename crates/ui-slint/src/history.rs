@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
-use slint::{ComponentHandle, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel, Weak};
+use slint::{ComponentHandle, Model, ModelRc, Rgb8Pixel, SharedPixelBuffer, VecModel, Weak};
 use snapline_services::dto::history::{
     CaptureDto, CaptureKindDto, Cursor, HistoryFilter, HistoryPage, HistoryReq, HistoryResp,
     HistoryStats, UploadDto, UploadStateDto,
@@ -14,69 +15,215 @@ use snapline_services::dto::upload::{
     DestinationViewDto, UploadReq, UploadResp, UploadState, UploadStatus,
 };
 
-use crate::backend::{decode_rgba, spawn_bg, Backend};
+use crate::backend::{spawn_bg, Backend};
 use crate::{
     tools, HistoryCellData, HistoryDestOption, HistoryRowData, HistoryState, SnaplineWindow,
 };
 
 const FILTER_LABELS: [&str; 5] = ["All", "Images", "Videos", "GIFs", "Files"];
 
+const TILE_WIDTH: f32 = 188.0;
+const TILE_HEIGHT: f32 = 117.0;
+const ROW_WIDTH: f32 = 40.0;
+const ROW_HEIGHT: f32 = 25.0;
+const PRELOAD: usize = 24;
+const RELOAD_DELAY: Duration = Duration::from_millis(40);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThumbSpec {
+    width: u32,
+    height: u32,
+}
+
+impl ThumbSpec {
+    pub const FULL: Self = Self {
+        width: 0,
+        height: 0,
+    };
+
+    pub fn fit(logical_width: f32, logical_height: f32, scale: f32) -> Self {
+        let scale = scale.clamp(0.5, 4.0);
+        Self {
+            width: (logical_width * scale).ceil() as u32,
+            height: (logical_height * scale).ceil() as u32,
+        }
+    }
+
+    fn render(self, image: image::DynamicImage) -> image::RgbImage {
+        let (width, height) = (image.width(), image.height());
+        if self == Self::FULL || width == 0 || height == 0 {
+            return image.to_rgb8();
+        }
+        let cover = (self.width as f32 / width as f32).max(self.height as f32 / height as f32);
+        if cover >= 1.0 {
+            return image.to_rgb8();
+        }
+        image
+            .resize_to_fill(
+                self.width,
+                self.height,
+                image::imageops::FilterType::Triangle,
+            )
+            .to_rgb8()
+    }
+}
+
 #[derive(Clone)]
-pub struct CachedThumb(SharedPixelBuffer<Rgba8Pixel>);
+pub struct CachedThumb(SharedPixelBuffer<Rgb8Pixel>);
+
+impl CachedThumb {
+    fn decode(bytes: &[u8], spec: ThumbSpec) -> Option<Self> {
+        let rendered = spec.render(image::load_from_memory(bytes).ok()?);
+        let (width, height) = rendered.dimensions();
+        Some(Self(SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(
+            rendered.as_raw(),
+            width,
+            height,
+        )))
+    }
+
+    fn image(&self) -> slint::Image {
+        slint::Image::from_rgb8(self.0.clone())
+    }
+}
+
+struct CacheEntry {
+    spec: ThumbSpec,
+    thumb: CachedThumb,
+}
 
 #[derive(Default)]
 pub struct ThumbCache {
-    entries: Mutex<HashMap<i64, CachedThumb>>,
+    entries: Mutex<HashMap<i64, CacheEntry>>,
+    detail: Mutex<Option<(i64, CachedThumb)>>,
+    visible: Mutex<HashSet<i64>>,
+    reload_queued: AtomicBool,
+}
+
+fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
 impl ThumbCache {
-    pub fn load_or_get(&self, backend: &Backend, id: i64) -> Option<CachedThumb> {
-        if let Some(cached) = self
-            .entries
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
+    pub fn has(&self, id: i64, spec: ThumbSpec) -> bool {
+        locked(&self.entries)
             .get(&id)
-        {
-            return Some(cached.clone());
+            .is_some_and(|entry| entry.spec == spec)
+    }
+
+    pub fn load_or_get(&self, backend: &Backend, id: i64, spec: ThumbSpec) -> bool {
+        if self.has(id, spec) {
+            return true;
         }
         let decoded = backend
             .thumbnail(id)
             .ok()
-            .and_then(|(bytes, _)| decode_rgba(&bytes))
-            .map(|(width, height, rgba)| {
-                CachedThumb(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
-                    &rgba, width, height,
-                ))
-            })?;
-        self.entries
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .insert(id, decoded.clone());
-        Some(decoded)
+            .and_then(|(bytes, _)| CachedThumb::decode(&bytes, spec));
+        match decoded {
+            Some(thumb) => {
+                locked(&self.entries).insert(id, CacheEntry { spec, thumb });
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn load_detail(&self, backend: &Backend, id: i64) -> bool {
+        if locked(&self.detail)
+            .as_ref()
+            .is_some_and(|(held, _)| *held == id)
+        {
+            return true;
+        }
+        let decoded = backend
+            .thumbnail(id)
+            .ok()
+            .and_then(|(bytes, _)| CachedThumb::decode(&bytes, ThumbSpec::FULL));
+        match decoded {
+            Some(thumb) => {
+                *locked(&self.detail) = Some((id, thumb));
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn detail_for(&self, id: i64) -> Option<slint::Image> {
+        locked(&self.detail)
+            .as_ref()
+            .filter(|(held, _)| *held == id)
+            .map(|(_, thumb)| thumb.image())
+    }
+
+    pub fn has_detail(&self, id: i64) -> bool {
+        locked(&self.detail)
+            .as_ref()
+            .is_some_and(|(held, _)| *held == id)
+    }
+
+    pub fn clear_detail_except(&self, keep: Option<i64>) -> bool {
+        let mut detail = locked(&self.detail);
+        let drop_it = detail.as_ref().is_some_and(|(held, _)| Some(*held) != keep);
+        if drop_it {
+            *detail = None;
+        }
+        drop_it
     }
 
     pub fn retain(&self, ids: &HashSet<i64>) {
-        self.entries
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .retain(|id, _| ids.contains(id));
+        locked(&self.entries).retain(|id, _| ids.contains(id));
+    }
+
+    pub fn evict_except(&self, keep: &HashSet<i64>) -> Vec<i64> {
+        let mut entries = locked(&self.entries);
+        let evicted: Vec<i64> = entries
+            .keys()
+            .filter(|id| !keep.contains(id))
+            .copied()
+            .collect();
+        for id in &evicted {
+            entries.remove(id);
+        }
+        evicted
     }
 
     pub fn get_cached(&self, id: i64) -> Option<slint::Image> {
-        let cached = self
-            .entries
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
+        locked(&self.entries)
             .get(&id)
-            .cloned()?;
-        Some(slint::Image::from_rgba8(cached.0))
+            .map(|entry| entry.thumb.image())
     }
 
     pub fn remove(&self, id: i64) {
-        self.entries
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .remove(&id);
+        locked(&self.entries).remove(&id);
+        let mut detail = locked(&self.detail);
+        if detail.as_ref().is_some_and(|(held, _)| *held == id) {
+            *detail = None;
+        }
+    }
+
+    pub fn mark_visible(&self, id: i64, visible: bool) -> bool {
+        let mut set = locked(&self.visible);
+        if visible {
+            set.insert(id)
+        } else {
+            set.remove(&id)
+        }
+    }
+
+    pub fn clear_visible(&self) {
+        locked(&self.visible).clear();
+    }
+
+    pub fn visible_ids(&self) -> HashSet<i64> {
+        locked(&self.visible).clone()
+    }
+
+    pub fn queue_reload(&self) -> bool {
+        !self.reload_queued.swap(true, Ordering::AcqRel)
+    }
+
+    pub fn reload_started(&self) {
+        self.reload_queued.store(false, Ordering::Release);
     }
 }
 
@@ -320,6 +467,25 @@ fn card_badge_for(
 
 fn is_timed(kind: CaptureKindDto) -> bool {
     matches!(kind, CaptureKindDto::Video | CaptureKindDto::Gif)
+}
+
+fn wants_thumb(kind: CaptureKindDto) -> bool {
+    is_timed(kind) || matches!(kind, CaptureKindDto::Image)
+}
+
+fn patch_model(model: &impl Model<Data = HistoryCellData>, ids: &HashSet<i64>, cache: &ThumbCache) {
+    for index in 0..model.row_count() {
+        let Some(mut cell) = model.row_data(index) else {
+            continue;
+        };
+        if !ids.contains(&i64::from(cell.id)) {
+            continue;
+        }
+        let thumb = cache.get_cached(i64::from(cell.id));
+        cell.has_thumb = thumb.is_some();
+        cell.thumb = thumb.unwrap_or_default();
+        model.set_row_data(index, cell);
+    }
 }
 
 fn cell_for(
@@ -747,6 +913,53 @@ impl HistoryController {
         }
     }
 
+    fn tile_spec(&self) -> ThumbSpec {
+        let scale = self
+            .app
+            .upgrade()
+            .map_or(1.0, |app| app.window().scale_factor());
+        if self.grid_view {
+            ThumbSpec::fit(TILE_WIDTH, TILE_HEIGHT, scale)
+        } else {
+            ThumbSpec::fit(ROW_WIDTH, ROW_HEIGHT, scale)
+        }
+    }
+
+    fn single_selected(&self) -> Option<i64> {
+        if self.selected_ids.len() != 1 {
+            return None;
+        }
+        self.selected_ids.iter().next().copied().filter(|id| {
+            self.items
+                .iter()
+                .any(|item| item.id == *id && wants_thumb(item.kind))
+        })
+    }
+
+    fn patch_thumbs(&self, ids: &HashSet<i64>) {
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        let s = app.global::<HistoryState>();
+        if !ids.is_empty() {
+            patch_model(&s.get_cells(), ids, &self.cache);
+            let rows = s.get_rows();
+            for group in 0..rows.row_count() {
+                if let Some(row) = rows.row_data(group) {
+                    patch_model(&row.cells, ids, &self.cache);
+                }
+            }
+        }
+        if let Some(id) = self.single_selected() {
+            let thumb = self
+                .cache
+                .detail_for(id)
+                .or_else(|| self.cache.get_cached(id));
+            s.set_detail_has_thumb(thumb.is_some());
+            s.set_detail_thumb(thumb.unwrap_or_default());
+        }
+    }
+
     fn sync_ui(&mut self) {
         let Some(app) = self.app.upgrade() else {
             return;
@@ -790,7 +1003,7 @@ impl HistoryController {
             .items
             .iter()
             .map(|item| {
-                if is_timed(item.kind) || matches!(item.kind, CaptureKindDto::Image) {
+                if wants_thumb(item.kind) {
                     self.cache.get_cached(item.id)
                 } else {
                     None
@@ -852,12 +1065,11 @@ impl HistoryController {
             s.set_has_selection(false);
             return;
         };
-        let thumb_needed = {
-            let capture = &self.items[capture_index];
-            is_timed(capture.kind) || matches!(capture.kind, CaptureKindDto::Image)
-        };
+        let thumb_needed = wants_thumb(self.items[capture_index].kind);
         let thumb = if thumb_needed {
-            self.cache.get_cached(selected_id)
+            self.cache
+                .detail_for(selected_id)
+                .or_else(|| self.cache.get_cached(selected_id))
         } else {
             None
         };
@@ -1028,6 +1240,7 @@ impl HistoryHandle {
         {
             let mut ctrl = self.lock();
             ctrl.items.clear();
+            ctrl.cache.clear_visible();
             ctrl.next = None;
             ctrl.selected_ids.clear();
             ctrl.anchor_id = None;
@@ -1056,7 +1269,7 @@ impl HistoryHandle {
     }
 
     fn fetch_page(&self, backend: &Backend, reset: bool) {
-        let (gen, filter, query, cursor, minimum, cache) = {
+        let (gen, filter, query, cursor, minimum, cache, spec) = {
             let mut ctrl = self.lock();
             let gen = if reset {
                 ctrl.generation += 1;
@@ -1070,8 +1283,9 @@ impl HistoryHandle {
             let filter = filter_for(ctrl.filter_index);
             let query = ctrl.query.trim().to_owned();
             let cache = ctrl.cache.clone();
+            let spec = ctrl.tile_spec();
             ctrl.sync_ui();
-            (gen, filter, query, cursor, minimum, cache)
+            (gen, filter, query, cursor, minimum, cache, spec)
         };
         let handle = self.clone();
         spawn_bg(
@@ -1101,16 +1315,21 @@ impl HistoryHandle {
                             page.next = more.next;
                         }
                     }
-                    for item in &page.items {
-                        if is_timed(item.kind) || matches!(item.kind, CaptureKindDto::Image) {
-                            let _ = cache.load_or_get(&bg, item.id);
+                    if cursor.is_none() {
+                        for item in page
+                            .items
+                            .iter()
+                            .filter(|item| wants_thumb(item.kind))
+                            .take(PRELOAD)
+                        {
+                            let _ = cache.load_or_get(&bg, item.id, spec);
                         }
                     }
                     Ok(page)
                 })();
                 LoadedPage { stats, page }
             },
-            move |_, loaded| {
+            move |ui_backend, loaded| {
                 let mut ctrl = handle.lock();
                 if ctrl.generation != gen {
                     return;
@@ -1159,8 +1378,94 @@ impl HistoryHandle {
                     }
                 }
                 ctrl.sync_ui();
+                drop(ctrl);
+                handle.reload_thumbs(&ui_backend);
             },
         );
+    }
+
+    pub fn reload_thumbs(&self, backend: &Backend) {
+        let (cache, spec, missing, detail, changed) = {
+            let ctrl = self.lock();
+            if ctrl.app.upgrade().is_none() {
+                return;
+            }
+            let cache = ctrl.cache.clone();
+            cache.reload_started();
+            let spec = ctrl.tile_spec();
+            let listed: HashSet<i64> = ctrl
+                .items
+                .iter()
+                .filter(|item| wants_thumb(item.kind))
+                .map(|item| item.id)
+                .collect();
+            let selected = ctrl.single_selected();
+            let wanted: HashSet<i64> = cache.visible_ids().intersection(&listed).copied().collect();
+            let mut changed: HashSet<i64> = HashSet::new();
+            if !wanted.is_empty() {
+                let mut keep = wanted.clone();
+                keep.extend(selected);
+                changed.extend(cache.evict_except(&keep));
+            }
+            let mut detail_dropped = cache.clear_detail_except(selected);
+            let missing: Vec<i64> = wanted
+                .iter()
+                .copied()
+                .filter(|id| !cache.has(*id, spec))
+                .collect();
+            let detail = selected.filter(|id| !cache.has_detail(*id));
+            if detail.is_none() && missing.is_empty() {
+                detail_dropped |= !changed.is_empty();
+                if detail_dropped {
+                    ctrl.patch_thumbs(&changed);
+                }
+                return;
+            }
+            (cache, spec, missing, detail, changed)
+        };
+        let handle = self.clone();
+        spawn_bg(
+            backend,
+            move |bg| {
+                let mut loaded: HashSet<i64> = HashSet::new();
+                for id in missing {
+                    if cache.load_or_get(&bg, id, spec) {
+                        loaded.insert(id);
+                    }
+                }
+                if let Some(id) = detail {
+                    cache.load_detail(&bg, id);
+                }
+                anyhow::Ok(loaded)
+            },
+            move |_, loaded| {
+                let ctrl = handle.lock();
+                let mut ids = changed;
+                ids.extend(loaded.unwrap_or_default());
+                ctrl.patch_thumbs(&ids);
+            },
+        );
+    }
+
+    pub fn schedule_reload(&self, cache: &ThumbCache, backend: &Rc<Backend>) {
+        if !cache.queue_reload() {
+            return;
+        }
+        let handle = self.clone();
+        let backend = backend.clone();
+        slint::Timer::single_shot(RELOAD_DELAY, move || handle.reload_thumbs(&backend));
+    }
+
+    pub fn thumb_visibility(
+        &self,
+        cache: &ThumbCache,
+        backend: &Rc<Backend>,
+        id: i64,
+        visible: bool,
+    ) {
+        if cache.mark_visible(id, visible) {
+            self.schedule_reload(cache, backend);
+        }
     }
 
     pub fn refresh_destinations(&self, backend: &Backend) {
@@ -1472,6 +1777,7 @@ impl HistoryHandle {
     pub fn set_grid(&self, grid: bool) {
         let mut ctrl = self.lock();
         ctrl.grid_view = grid;
+        ctrl.cache.clear_visible();
         ctrl.sync_ui();
     }
 
@@ -2048,12 +2354,14 @@ impl HistoryHandle {
 
 pub fn wire(app: &SnaplineWindow, backend: Rc<Backend>, cache: Arc<ThumbCache>) -> HistoryHandle {
     let weak = app.as_weak();
-    let handle = HistoryHandle::new(weak.clone(), cache);
+    let handle = HistoryHandle::new(weak.clone(), cache.clone());
     let s = app.global::<HistoryState>();
 
     let h = handle.clone();
+    let (b, c) = (backend.clone(), cache.clone());
     s.on_select(move |id, additive, range| {
         h.select(i64::from(id), additive, range);
+        h.schedule_reload(&c, &b);
     });
 
     let h = handle.clone();
@@ -2064,6 +2372,11 @@ pub fn wire(app: &SnaplineWindow, backend: Rc<Backend>, cache: Arc<ThumbCache>) 
     let h = handle.clone();
     s.on_close_details(move || {
         h.clear_selection();
+    });
+
+    let (b, h, c) = (backend.clone(), handle.clone(), cache.clone());
+    s.on_thumb_view(move |id, visible| {
+        h.thumb_visibility(&c, &b, i64::from(id), visible);
     });
 
     let (b, h) = (backend.clone(), handle.clone());
@@ -2198,13 +2511,17 @@ pub fn wire(app: &SnaplineWindow, backend: Rc<Backend>, cache: Arc<ThumbCache>) 
     });
 
     let h = handle.clone();
+    let (b, c) = (backend.clone(), cache.clone());
     s.on_set_grid(move |grid| {
         h.set_grid(grid);
+        h.schedule_reload(&c, &b);
     });
 
     let h = handle.clone();
+    let (b, c) = (backend.clone(), cache.clone());
     s.on_move_selection(move |delta| {
         h.move_selection(delta);
+        h.schedule_reload(&c, &b);
     });
 
     let h = handle.clone();
@@ -2253,22 +2570,127 @@ mod tests {
     }
     use super::*;
 
+    fn dims(bytes: &[u8], spec: ThumbSpec) -> Option<(u32, u32)> {
+        CachedThumb::decode(bytes, spec).map(|thumb| (thumb.0.width(), thumb.0.height()))
+    }
+
+    fn tiny_thumb() -> CachedThumb {
+        CachedThumb(SharedPixelBuffer::<Rgb8Pixel>::new(1, 1))
+    }
+
+    fn fill(cache: &ThumbCache, ids: &[i64], spec: ThumbSpec) {
+        let mut entries = locked(&cache.entries);
+        for id in ids {
+            entries.insert(
+                *id,
+                CacheEntry {
+                    spec,
+                    thumb: tiny_thumb(),
+                },
+            );
+        }
+    }
+
+    fn encoded(width: u32, height: u32) -> Vec<u8> {
+        let image = image::RgbaImage::from_pixel(width, height, image::Rgba([10, 20, 30, 255]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        assert!(image.write_to(&mut out, image::ImageFormat::Png).is_ok());
+        out.into_inner()
+    }
+
     #[test]
     fn thumb_cache_retain_drops_ids_that_are_no_longer_listed() {
         let cache = ThumbCache::default();
-        {
-            let mut entries = cache
-                .entries
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            for id in [1, 2, 3] {
-                entries.insert(id, CachedThumb(SharedPixelBuffer::<Rgba8Pixel>::new(1, 1)));
-            }
-        }
+        fill(&cache, &[1, 2, 3], ThumbSpec::FULL);
         cache.retain(&HashSet::from([2]));
         assert!(cache.get_cached(1).is_none());
         assert!(cache.get_cached(2).is_some());
         assert!(cache.get_cached(3).is_none());
+    }
+
+    #[test]
+    fn evict_except_drops_everything_outside_the_keep_set_and_reports_it() {
+        let cache = ThumbCache::default();
+        fill(&cache, &[1, 2, 3, 4], ThumbSpec::FULL);
+        let mut evicted = cache.evict_except(&HashSet::from([2, 3]));
+        evicted.sort_unstable();
+        assert_eq!(evicted, vec![1, 4]);
+        assert!(cache.get_cached(1).is_none());
+        assert!(cache.get_cached(2).is_some());
+        assert!(cache.get_cached(4).is_none());
+    }
+
+    #[test]
+    fn has_only_matches_the_same_spec() {
+        let cache = ThumbCache::default();
+        let tile = ThumbSpec::fit(188.0, 117.0, 1.0);
+        fill(&cache, &[7], tile);
+        assert!(cache.has(7, tile));
+        assert!(!cache.has(7, ThumbSpec::fit(40.0, 25.0, 1.0)));
+        assert!(!cache.has(8, tile));
+    }
+
+    #[test]
+    fn visibility_reports_only_real_changes() {
+        let cache = ThumbCache::default();
+        assert!(cache.mark_visible(1, true));
+        assert!(!cache.mark_visible(1, true));
+        assert!(cache.mark_visible(2, true));
+        assert_eq!(cache.visible_ids(), HashSet::from([1, 2]));
+        assert!(cache.mark_visible(1, false));
+        assert!(!cache.mark_visible(1, false));
+        cache.clear_visible();
+        assert!(cache.visible_ids().is_empty());
+    }
+
+    #[test]
+    fn reload_is_queued_once_until_it_starts() {
+        let cache = ThumbCache::default();
+        assert!(cache.queue_reload());
+        assert!(!cache.queue_reload());
+        cache.reload_started();
+        assert!(cache.queue_reload());
+    }
+
+    #[test]
+    fn spec_scales_with_the_display_and_clamps_odd_scales() {
+        assert_eq!(
+            ThumbSpec::fit(188.0, 117.0, 1.0),
+            ThumbSpec {
+                width: 188,
+                height: 117
+            }
+        );
+        assert_eq!(
+            ThumbSpec::fit(188.0, 117.0, 1.5),
+            ThumbSpec {
+                width: 282,
+                height: 176
+            }
+        );
+        assert_eq!(
+            ThumbSpec::fit(40.0, 25.0, 100.0),
+            ThumbSpec::fit(40.0, 25.0, 4.0)
+        );
+    }
+
+    #[test]
+    fn decoding_crops_to_the_tile_when_the_source_is_larger() {
+        let spec = ThumbSpec::fit(188.0, 117.0, 1.0);
+        assert_eq!(dims(&encoded(320, 180), spec), Some((188, 117)));
+        assert_eq!(dims(&encoded(320, 2000), spec), Some((188, 117)));
+    }
+
+    #[test]
+    fn decoding_never_upscales_a_small_source() {
+        let spec = ThumbSpec::fit(188.0, 117.0, 2.0);
+        assert_eq!(dims(&encoded(320, 180), spec), Some((320, 180)));
+    }
+
+    #[test]
+    fn full_spec_keeps_the_source_size_and_bad_bytes_fail_cleanly() {
+        assert_eq!(dims(&encoded(320, 180), ThumbSpec::FULL), Some((320, 180)));
+        assert_eq!(dims(b"not an image", ThumbSpec::FULL), None);
     }
 
     fn sample_capture(
