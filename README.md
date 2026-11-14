@@ -22,6 +22,14 @@ Windows 10 or 11 (x64) only. Releases are on the GitHub releases page; the insta
 ![Hotkeys](docs/screenshots/hotkeys.png)
 ![Upload destinations](docs/screenshots/upload-destinations.png)
 
+## Memory use
+
+![Memory use by release](https://raw.githubusercontent.com/aaronburt/snapline/metrics/memory.svg)
+
+CI measures every release and the chart updates itself. The raw numbers are in [`memory.json`](https://github.com/aaronburt/snapline/blob/metrics/memory.json) on the `metrics` branch, with the commit, build profile and runner details for each entry.
+
+How it is measured: the release `snapline.exe` runs in portable mode on a GitHub-hosted `windows-latest` runner (a virtual machine without a GPU, so figures on a real PC will differ). The script waits for the tray to settle, then reads the process's private working set at five fixed points: tray idle, main window open, main window closed, capture overlay open and capture overlay closed. Each figure is the median of five readings one second apart. The script is [`.github/scripts/measure-memory.ps1`](.github/scripts/measure-memory.ps1).
+
 ## Build
 
 Needs the Rust toolchain in `rust-toolchain.toml`, and NSIS (`winget install NSIS.NSIS`) for the installer.

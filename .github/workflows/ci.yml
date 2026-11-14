@@ -170,6 +170,71 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Records the raw memory use of the packaged exe. Nothing is checked against a
+  # limit. It is not part of `release` needs, so a failure here never blocks a release.
+  memory:
+    needs: [changes, package]
+    if: needs.changes.outputs.code == 'true' && needs.package.result == 'success'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: snapline-windows
+          path: target
+      - name: Measure memory use
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.package.outputs.version }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          $version = if ($env:VERSION) { $env:VERSION } elseif ($env:PR_NUMBER) { "pr-$env:PR_NUMBER" } else { "dev" }
+          $profile = if ('${{ github.event_name }}' -eq 'pull_request') { 'fast (no LTO)' } else { 'release (LTO)' }
+          ./.github/scripts/measure-memory.ps1 -Exe target/release/snapline.exe -Out memory-run.json -Version $version -Commit '${{ github.sha }}' -Profile $profile
+          $run = Get-Content memory-run.json -Raw | ConvertFrom-Json
+          "### Memory use ($version, $profile)" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "| Stage | Private working set | Private bytes |" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "|---|---|---|" | Add-Content $env:GITHUB_STEP_SUMMARY
+          foreach ($s in $run.stages.PSObject.Properties) {
+            "| $($s.Name) | {0:N1} MB | {1:N1} MB |" -f ($s.Value.private_ws / 1MB), ($s.Value.private_bytes / 1MB) | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: memory-run
+          path: memory-run.json
+          if-no-files-found: error
+          retention-days: 30
+
+  # Appends a release's numbers to memory.json on the `metrics` branch and redraws
+  # memory.svg, which the README embeds. Commits go to `metrics`, never to main.
+  publish-memory:
+    if: >-
+      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.deleted
+      && needs.memory.result == 'success' && needs.package.outputs.tag != ''
+    needs: [package, memory]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: snapline-metrics
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: memory-run
+          path: run
+      - name: Update the metrics branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: ./.github/scripts/publish-memory.sh run/memory-run.json
+
   # Remembers which tree a PR run fully tested, so the merge to main can skip the
   # same tests when it lands on an identical tree.
   record-tested-tree:
