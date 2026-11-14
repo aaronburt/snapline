@@ -388,6 +388,10 @@ export global HistoryState {
     in-out property <bool> share-uploading: false;
     in-out property <float> share-progress: -1;
     in-out property <bool> share-cancellable: false;
+    in-out property <bool> share-pausable: false;
+    in-out property <bool> share-countdown: false;
+    in-out property <bool> queue-paused: false;
+    in-out property <bool> queue-has-work: false;
     in-out property <string> share-error;
     in-out property <[HistoryDestOption]> destinations;
 
@@ -409,6 +413,11 @@ export global HistoryState {
     callback copy-deletion-link(string);
     callback retry-upload();
     callback cancel-upload();
+    callback pause-upload();
+    callback resume-upload();
+    callback toggle-queue-paused();
+    callback open-share-link(string);
+    callback tick();
     callback cancel-row-upload(int);
     callback upload-to(string);
     callback ensure-destinations();

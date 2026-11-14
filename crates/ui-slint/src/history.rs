@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
 
 use anyhow::{bail, Result};
 use slint::{ComponentHandle, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel, Weak};
@@ -402,17 +403,20 @@ struct ShareView {
     progress_available: bool,
     sent: u64,
     total: u64,
+    pausable: bool,
+    attempts: u32,
+    retry_in_ms: Option<u64>,
 }
 
 fn share_status_from_live(status: UploadStatus) -> (&'static str, &'static str) {
     match status {
         UploadStatus::Done => ("uploaded", "Uploaded"),
-        UploadStatus::Failed => ("failed", "Upload failed"),
-        UploadStatus::OutcomeUnknown => ("failed", "Outcome unknown"),
+        UploadStatus::Failed => ("failed", "Needs attention"),
+        UploadStatus::OutcomeUnknown => ("unknown", "Outcome unknown"),
         UploadStatus::Queued => ("uploading", "Queued"),
         UploadStatus::Uploading => ("uploading", "Uploading"),
         UploadStatus::BackingOff => ("uploading", "Waiting to retry"),
-        UploadStatus::Paused => ("uploading", "Paused"),
+        UploadStatus::Paused => ("paused", "Paused"),
         UploadStatus::Cancelled => ("local", "Not uploaded"),
     }
 }
@@ -420,7 +424,7 @@ fn share_status_from_live(status: UploadStatus) -> (&'static str, &'static str) 
 fn share_status_from_dto(state: UploadStateDto) -> (&'static str, &'static str) {
     match state {
         UploadStateDto::Done => ("uploaded", "Uploaded"),
-        UploadStateDto::Failed => ("failed", "Upload failed"),
+        UploadStateDto::Failed => ("failed", "Needs attention"),
         UploadStateDto::Queued => ("uploading", "Queued"),
         UploadStateDto::Uploading => ("uploading", "Uploading"),
         UploadStateDto::Cancelled => ("local", "Not uploaded"),
@@ -484,6 +488,12 @@ fn compute_share_view(
                 progress_available: state.progress_available,
                 sent: state.sent,
                 total: state.total,
+                pausable: matches!(
+                    state.status,
+                    UploadStatus::Queued | UploadStatus::BackingOff
+                ),
+                attempts: state.attempts,
+                retry_in_ms: state.retry_in_ms,
             };
         }
     }
@@ -502,6 +512,9 @@ fn compute_share_view(
             progress_available: false,
             sent: upload.sent.max(0) as u64,
             total: upload.total.max(0) as u64,
+            pausable: false,
+            attempts: 0,
+            retry_in_ms: None,
         };
     }
     ShareView {
@@ -517,6 +530,9 @@ fn compute_share_view(
         progress_available: false,
         sent: 0,
         total: 0,
+        pausable: false,
+        attempts: 0,
+        retry_in_ms: None,
     }
 }
 
@@ -561,6 +577,10 @@ fn active_upload_for(
         }
     }
     chosen
+}
+
+fn is_stopped_upload(status: UploadStatus) -> bool {
+    matches!(status, UploadStatus::Failed | UploadStatus::OutcomeUnknown)
 }
 
 fn is_active_upload(status: UploadStatus) -> bool {
@@ -641,6 +661,9 @@ struct HistoryController {
     active_uploads: HashMap<u64, UploadState>,
     observed_upload_ids: HashSet<u64>,
     detail_live: Option<UploadState>,
+    stopped_uploads: HashMap<i64, UploadState>,
+    received_at: HashMap<u64, Instant>,
+    queue_paused: bool,
     queue_ids: HashMap<i64, u64>,
     destinations: Vec<DestinationViewDto>,
     destinations_loaded: bool,
@@ -678,6 +701,9 @@ impl HistoryController {
             active_uploads: HashMap::new(),
             observed_upload_ids: HashSet::new(),
             detail_live: None,
+            stopped_uploads: HashMap::new(),
+            received_at: HashMap::new(),
+            queue_paused: false,
             queue_ids: HashMap::new(),
             destinations: Vec::new(),
             destinations_loaded: false,
@@ -691,6 +717,26 @@ impl HistoryController {
             delete_error: String::new(),
             share_error: String::new(),
         }
+    }
+
+    fn live_for<'a>(&'a self, capture: &CaptureDto) -> Option<&'a UploadState> {
+        let known_queue_id = self.queue_ids.get(&capture.id).copied();
+        self.detail_live
+            .as_ref()
+            .filter(|state| live_matches_capture(capture, known_queue_id, state))
+            .or_else(|| active_upload_for(&self.active_uploads, capture.id))
+            .or_else(|| self.stopped_uploads.get(&capture.id))
+    }
+
+    fn retry_countdown(&self, share: &ShareView) -> Option<u64> {
+        let total = share.retry_in_ms?;
+        let elapsed = share
+            .queue_id
+            .and_then(|id| self.received_at.get(&id))
+            .map_or(0, |at| {
+                u64::try_from(at.elapsed().as_millis()).unwrap_or(u64::MAX)
+            });
+        Some(total.saturating_sub(elapsed))
     }
 
     fn current_banner(&self) -> &str {
@@ -870,13 +916,9 @@ impl HistoryController {
         });
 
         let known_queue_id = self.queue_ids.get(&capture.id).copied();
-        let active_for_capture = active_upload_for(&self.active_uploads, capture.id);
-        let current_live = self
-            .detail_live
-            .as_ref()
-            .filter(|state| live_matches_capture(capture, known_queue_id, state))
-            .or(active_for_capture);
+        let current_live = self.live_for(capture);
         let share = compute_share_view(capture, known_queue_id, current_live);
+        let countdown = self.retry_countdown(&share);
 
         let dest_label = match share.dest_id.as_deref() {
             Some(id) if !id.is_empty() => host_label(id, &self.destinations),
@@ -906,15 +948,31 @@ impl HistoryController {
             -1.0
         });
         s.set_share_cancellable(share.cancellable);
+        s.set_share_pausable(share.pausable);
+        s.set_share_countdown(countdown.is_some());
+        s.set_queue_paused(self.queue_paused);
+        s.set_queue_has_work(!self.active_uploads.is_empty());
         s.set_share_note(
             match share.status {
-                "failed" => format!(
-                    "Upload failed: {}",
-                    share
-                        .error
-                        .as_deref()
-                        .unwrap_or("the destination did not accept the file.")
-                ),
+                "failed" => share
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "The destination did not accept the file.".into()),
+                "unknown" => share.error.clone().unwrap_or_else(|| {
+                    "The file may have reached the destination. Retrying could create another copy."
+                        .into()
+                }),
+                "paused" => "Paused. This upload will not start until you resume it.".into(),
+                "uploading" if countdown.is_some() => {
+                    let seconds = countdown.unwrap_or(0).div_ceil(1000);
+                    let reason = share.error.clone().unwrap_or_default();
+                    format!(
+                        "Retrying in {seconds} s (attempt {} done). {reason}",
+                        share.attempts
+                    )
+                    .trim()
+                    .to_owned()
+                }
                 "uploading" if share.uploading_phase => {
                     if share.progress_available && share.total > 0 {
                         format!(
@@ -925,6 +983,10 @@ impl HistoryController {
                     } else {
                         "Sending file…".into()
                     }
+                }
+                "uploading" if self.queue_paused => {
+                    "Waiting. Uploads are paused, so nothing will start until you resume them."
+                        .into()
                 }
                 "local" if capture.missing => {
                     "The original file is unavailable. Add it again before uploading.".into()
@@ -1138,22 +1200,44 @@ impl HistoryHandle {
         let handle = self.clone();
         spawn_bg(
             backend,
-            move |bg| match bg.upload_request(UploadReq::List) {
-                Ok(UploadResp::States(list)) => Ok(list),
-                Ok(other) => Err(anyhow::anyhow!(
-                    "unexpected upload list response: {other:?}"
-                )),
-                Err(error) => Err(error),
+            move |bg| {
+                let states = match bg.upload_request(UploadReq::List) {
+                    Ok(UploadResp::States(list)) => list,
+                    Ok(other) => {
+                        return Err(anyhow::anyhow!(
+                            "unexpected upload list response: {other:?}"
+                        ))
+                    }
+                    Err(error) => return Err(error),
+                };
+                let paused = match bg.upload_request(UploadReq::QueueState) {
+                    Ok(UploadResp::QueuePaused { paused }) => paused,
+                    _ => false,
+                };
+                Ok((states, paused))
             },
             move |_, result| {
-                if let Ok(states) = result {
+                if let Ok((states, paused)) = result {
                     let mut ctrl = handle.lock();
-                    let mut changed = false;
+                    let mut changed = ctrl.queue_paused != paused;
+                    ctrl.queue_paused = paused;
                     for state in states {
+                        if state.capture_id.is_some()
+                            && !ctrl.observed_upload_ids.contains(&state.id)
+                            && is_stopped_upload(state.status)
+                        {
+                            if let Some(capture_id) = state.capture_id {
+                                ctrl.queue_ids.insert(capture_id, state.id);
+                                ctrl.stopped_uploads.insert(capture_id, state);
+                                changed = true;
+                            }
+                            continue;
+                        }
                         if state.capture_id.is_some()
                             && !ctrl.observed_upload_ids.contains(&state.id)
                             && is_active_upload(state.status)
                         {
+                            ctrl.received_at.insert(state.id, Instant::now());
                             ctrl.active_uploads.insert(state.id, state);
                             changed = true;
                         }
@@ -1217,7 +1301,16 @@ impl HistoryHandle {
         {
             let mut ctrl = self.lock();
             ctrl.observed_upload_ids.insert(state.id);
+            ctrl.received_at.insert(state.id, Instant::now());
+            if !is_active_upload(state.status) {
+                ctrl.received_at.remove(&state.id);
+            }
             if let Some(capture_id) = state.capture_id {
+                if is_stopped_upload(state.status) {
+                    ctrl.stopped_uploads.insert(capture_id, state.clone());
+                } else {
+                    ctrl.stopped_uploads.remove(&capture_id);
+                }
                 ctrl.queue_ids.insert(capture_id, state.id);
                 if is_active_upload(state.status) {
                     ctrl.active_uploads.insert(state.id, state.clone());
@@ -1755,16 +1848,9 @@ impl HistoryHandle {
                 return;
             };
             let known_queue_id = ctrl.queue_ids.get(&capture_id).copied();
-            let active_for_capture = active_upload_for(&ctrl.active_uploads, capture_id);
-            let current_live = ctrl
-                .detail_live
-                .as_ref()
-                .filter(|state| live_matches_capture(capture, known_queue_id, state))
-                .or(active_for_capture);
+            let current_live = ctrl.live_for(capture);
+            let live_queue_id = current_live.map(|state| state.id);
             let share = compute_share_view(capture, known_queue_id, current_live);
-            let live_queue_id = share
-                .queue_id
-                .filter(|qid| ctrl.detail_live.as_ref().is_some_and(|l| l.id == *qid));
             if let Some(queue_id) = live_queue_id {
                 ctrl.upload_busy = true;
                 ctrl.share_error.clear();
@@ -1829,12 +1915,7 @@ impl HistoryHandle {
                 return;
             };
             let known_queue_id = ctrl.queue_ids.get(&capture_id).copied();
-            let active_for_capture = active_upload_for(&ctrl.active_uploads, capture_id);
-            let current_live = ctrl
-                .detail_live
-                .as_ref()
-                .filter(|state| live_matches_capture(capture, known_queue_id, state))
-                .or(active_for_capture);
+            let current_live = ctrl.live_for(capture);
             let share = compute_share_view(capture, known_queue_id, current_live);
             let Some(queue_id) = share.queue_id else {
                 return;
@@ -1857,6 +1938,89 @@ impl HistoryHandle {
                 ctrl.sync_ui();
             },
         );
+    }
+
+    fn selected_queue_id(&self) -> Option<u64> {
+        let mut ctrl = self.lock();
+        if ctrl.upload_busy || ctrl.selected_ids.len() != 1 {
+            return None;
+        }
+        let capture_id = ctrl.selected_ids.iter().next().copied()?;
+        let capture = ctrl.items.iter().find(|item| item.id == capture_id)?;
+        let queue_id = ctrl.live_for(capture).map(|state| state.id)?;
+        ctrl.upload_busy = true;
+        ctrl.share_error.clear();
+        ctrl.sync_ui();
+        Some(queue_id)
+    }
+
+    fn run_selected_queue_request(&self, backend: &Backend, make: fn(u64) -> UploadReq) {
+        let Some(queue_id) = self.selected_queue_id() else {
+            return;
+        };
+        let handle = self.clone();
+        spawn_bg(
+            backend,
+            move |bg| bg.upload_request(make(queue_id)),
+            move |_, result| {
+                let mut ctrl = handle.lock();
+                ctrl.upload_busy = false;
+                if let Err(error) = result {
+                    ctrl.share_error = format!("{error:#}");
+                }
+                ctrl.sync_ui();
+            },
+        );
+    }
+
+    pub fn pause_upload(&self, backend: &Backend) {
+        self.run_selected_queue_request(backend, |id| UploadReq::Pause { id });
+    }
+
+    pub fn resume_upload(&self, backend: &Backend) {
+        self.run_selected_queue_request(backend, |id| UploadReq::Resume { id });
+    }
+
+    pub fn toggle_queue_paused(&self, backend: &Backend) {
+        let paused = {
+            let mut ctrl = self.lock();
+            if ctrl.upload_busy {
+                return;
+            }
+            ctrl.upload_busy = true;
+            !ctrl.queue_paused
+        };
+        let handle = self.clone();
+        spawn_bg(
+            backend,
+            move |bg| bg.upload_request(UploadReq::SetQueuePaused { paused }),
+            move |_, result| {
+                let mut ctrl = handle.lock();
+                ctrl.upload_busy = false;
+                match result {
+                    Ok(UploadResp::QueuePaused { paused }) => ctrl.queue_paused = paused,
+                    Ok(_) => {}
+                    Err(error) => ctrl.error_message = format!("{error:#}"),
+                }
+                ctrl.sync_ui();
+            },
+        );
+    }
+
+    pub fn open_share_link(&self, backend: &Backend, url: &str) {
+        if !(url.starts_with("https://") || url.starts_with("http://")) {
+            return;
+        }
+        if let Err(error) = backend.host().open_url(url) {
+            let mut ctrl = self.lock();
+            ctrl.share_error = format!("The link could not be opened: {error}");
+            ctrl.sync_ui();
+        }
+    }
+
+    pub fn tick(&self) {
+        let mut ctrl = self.lock();
+        ctrl.sync_ui();
     }
 
     pub fn cancel_row_upload(&self, backend: &Backend, capture_id: i64) {
@@ -1984,6 +2148,31 @@ pub fn wire(app: &SnaplineWindow, backend: Rc<Backend>, cache: Arc<ThumbCache>) 
     });
 
     let (b, h) = (backend.clone(), handle.clone());
+    s.on_pause_upload(move || {
+        h.pause_upload(&b);
+    });
+
+    let (b, h) = (backend.clone(), handle.clone());
+    s.on_resume_upload(move || {
+        h.resume_upload(&b);
+    });
+
+    let (b, h) = (backend.clone(), handle.clone());
+    s.on_toggle_queue_paused(move || {
+        h.toggle_queue_paused(&b);
+    });
+
+    let (b, h) = (backend.clone(), handle.clone());
+    s.on_open_share_link(move |url| {
+        h.open_share_link(&b, url.as_str());
+    });
+
+    let h = handle.clone();
+    s.on_tick(move || {
+        h.tick();
+    });
+
+    let (b, h) = (backend.clone(), handle.clone());
     s.on_cancel_row_upload(move |id| {
         h.cancel_row_upload(&b, i64::from(id));
     });
@@ -2043,6 +2232,25 @@ pub fn wire(app: &SnaplineWindow, backend: Rc<Backend>, cache: Arc<ThumbCache>) 
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn live_status_maps_recovery_states_to_distinct_share_views() {
+        assert_eq!(
+            share_status_from_live(UploadStatus::OutcomeUnknown),
+            ("unknown", "Outcome unknown")
+        );
+        assert_eq!(
+            share_status_from_live(UploadStatus::Paused),
+            ("paused", "Paused")
+        );
+        assert_eq!(
+            share_status_from_live(UploadStatus::Failed),
+            ("failed", "Needs attention")
+        );
+        assert!(is_stopped_upload(UploadStatus::OutcomeUnknown));
+        assert!(is_stopped_upload(UploadStatus::Failed));
+        assert!(!is_stopped_upload(UploadStatus::Paused));
+    }
     use super::*;
 
     #[test]
