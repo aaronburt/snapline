@@ -41,6 +41,19 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
+## Privacy
+
+Snapline does not track you. There is no telemetry, analytics or account, and nothing about you or how you use the app is collected. Captures, history and settings stay on your PC.
+
+The app only touches the network when you ask it to:
+
+- **Check updates** (the button on the General page) sends one request to GitHub's releases API. It never runs on its own, not even at startup. It downloads nothing; it compares the version and links to the release page. GitHub sees your IP address and the app version, as with any web request.
+- **Uploads** go only to the destinations you set up (S3-compatible storage, SFTP, GitHub Gist, custom).
+- **Crash reports** are never sent automatically. After a crash, Snapline offers to open a prefilled GitHub issue in your browser, and nothing is sent until you press Submit. Your user name and personal paths are removed.
+- Links you click open in your browser.
+
+The only contact between you and me is through GitHub, such as issues and releases.
+
 ## Licence
 
 GPL-3.0-or-later. See `LICENSE`.
