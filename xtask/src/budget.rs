@@ -2281,13 +2281,12 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        action_command, capture_row, descendants, encoder_is_hardware, is_link,
-        overlay_limit, parse_budget_mode, parse_recording_command, recording_row, webview_children,
-        window_row, BudgetMode, BudgetRow, BudgetSummary, FailureKind, Limit, ProcessRow,
-        RecordingCommand, RecordingFailure, RecordingPlan, RecordingReport, RecordingSample,
-        RowOutcome, Sample, IDLE_DRIFT_LIMIT, IDLE_LIMIT, MAIN_LIMIT, MIB,
-        OVERLAY_LIMIT, OVERLAY_TIMING_LIMIT, RECORD_CPU_LIMIT,
-        RECORD_INSTRUCTION, RECORD_MEMORY_LIMIT,
+        action_command, capture_row, descendants, encoder_is_hardware, is_link, overlay_limit,
+        parse_budget_mode, parse_recording_command, recording_row, webview_children, window_row,
+        BudgetMode, BudgetRow, BudgetSummary, FailureKind, Limit, ProcessRow, RecordingCommand,
+        RecordingFailure, RecordingPlan, RecordingReport, RecordingSample, RowOutcome, Sample,
+        IDLE_DRIFT_LIMIT, IDLE_LIMIT, MAIN_LIMIT, MIB, OVERLAY_LIMIT, OVERLAY_TIMING_LIMIT,
+        RECORD_CPU_LIMIT, RECORD_INSTRUCTION, RECORD_MEMORY_LIMIT,
     };
 
     const DATA: &str = "C:\\Users\\tester\\AppData\\Local\\SnapLine\\WebView2";
