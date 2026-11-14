@@ -116,6 +116,36 @@ function Close-Windows($procId) {
     }
 }
 
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public static class Probe {
+  [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+  [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SendMessageTimeout(IntPtr h, uint m, IntPtr w, IntPtr l, uint flags, uint timeout, out IntPtr result);
+  [DllImport("user32.dll")] static extern bool IsHungAppWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  public static string Run() {
+    IntPtr msgOnly = new IntPtr(-3);
+    IntPtr h = FindWindowEx(msgOnly, IntPtr.Zero, "SnaplineMainMessageWindow", null);
+    if (h == IntPtr.Zero) return "message window NOT FOUND";
+    uint pid; uint tid = GetWindowThreadProcessId(h, out pid);
+    IntPtr res;
+    long started = Environment.TickCount;
+    IntPtr ok = SendMessageTimeout(h, 0x0000, IntPtr.Zero, IntPtr.Zero, 0x2, 3000, out res);
+    int err = Marshal.GetLastWin32Error();
+    return "message window found (pid " + pid + ", thread " + tid + "), hung=" + IsHungAppWindow(h) + ", WM_NULL " + (ok == IntPtr.Zero ? "FAILED (error " + err + ")" : "answered") + " in " + (Environment.TickCount - started) + " ms";
+  }
+}
+"@
+
+function Probe-HandOff($procId, $label) {
+    Log ("probe {0}: {1}" -f $label, [Probe]::Run())
+    try {
+        $threads = (Get-Process -Id $procId).Threads
+        $waiting = @($threads | Where-Object { $_.ThreadState -eq 'Wait' } | ForEach-Object { "$($_.WaitReason)" } | Group-Object | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ", "
+        Log ("probe {0}: {1} threads; waiting: {2}" -f $label, $threads.Count, $waiting)
+    } catch { Log "probe $label threads failed: $_" }
+}
+
 function Shot($name) {
     try {
         Add-Type -AssemblyName System.Drawing
@@ -154,10 +184,12 @@ try {
     Breakdown $proc.Id "idle"
 
     Log-Windows $proc.Id "before opening anything"
+    Probe-HandOff $proc.Id "at idle"
     Start-Process $app -ArgumentList "--budget-open", "main" | Out-Null
     if (-not (Wait-Windows $proc.Id $true 30)) { $notes += "main window did not appear" }
     Start-Sleep -Seconds 3
     Log-Windows $proc.Id "main open"
+    Probe-HandOff $proc.Id "main open"
     Shot "main-open"
     $stages["main_open"] = Sample $proc.Id
     Log "main_open: $($stages['main_open'].private_ws)"
@@ -167,6 +199,7 @@ try {
     if (-not (Wait-Windows $proc.Id $false 15)) { $notes += "main window did not close" }
     Start-Sleep -Seconds 5
     Log-Windows $proc.Id "main closed"
+    Probe-HandOff $proc.Id "main closed"
     $stages["main_closed"] = Sample $proc.Id
     Log "main_closed: $($stages['main_closed'].private_ws)"
     Breakdown $proc.Id "main_closed"
