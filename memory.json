@@ -68,6 +68,40 @@
       "notes": [
         "capture overlay did not appear"
       ]
+    },
+    {
+      "version": "0.29",
+      "commit": "cd3151e7516c0873ee99e10622c787030bb96e85",
+      "date": "2026-11-14",
+      "profile": "release (LTO)",
+      "runner": {
+        "os": "Microsoft Windows Server 2025 Datacenter 10.0.26100",
+        "cpu": "AMD EPYC 7763 64-Core Processor",
+        "logical_cpus": 4,
+        "ram_gb": 16.0,
+        "screen": "1024x768"
+      },
+      "method": "median of 5 readings 1 s apart per stage; Win32_PerfFormattedData_PerfProc_Process of the snapline.exe process",
+      "stages": {
+        "idle": {
+          "private_ws": 6668288,
+          "private_bytes": 7639040,
+          "working_set": 22249472
+        },
+        "main_open": {
+          "private_ws": 11657216,
+          "private_bytes": 13008896,
+          "working_set": 39514112
+        },
+        "main_closed": {
+          "private_ws": 188416,
+          "private_bytes": 10285056,
+          "working_set": 380928
+        }
+      },
+      "notes": [
+        "capture overlay did not appear"
+      ]
     }
   ]
 }
