@@ -79,6 +79,10 @@ pub fn taskbar_edge(work: Bounds, monitor: Bounds) -> TaskbarEdge {
     }
 }
 
+pub fn shrink_first(current: (u32, u32), target: (u32, u32)) -> (u32, u32) {
+    (current.0.min(target.0), current.1.min(target.1))
+}
+
 pub fn placement(
     icon: TrayRect,
     work: Bounds,
@@ -186,6 +190,13 @@ pub fn format_size(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_resize_never_grows_before_the_window_has_moved() {
+        assert_eq!(shrink_first((344, 228), (344, 316)), (344, 228));
+        assert_eq!(shrink_first((344, 316), (344, 228)), (344, 228));
+        assert_eq!(shrink_first((344, 228), (400, 200)), (344, 200));
+    }
 
     const MONITOR: Bounds = Bounds::new(0.0, 0.0, 1920.0, 1080.0);
     const WIDTH: f64 = 344.0;

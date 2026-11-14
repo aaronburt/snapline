@@ -19,8 +19,8 @@ use snapline_services::Services;
 use crate::backend::decode_rgba;
 use crate::host::{Host, PanelMonitor};
 use crate::panel_logic::{
-    format_duration, format_size, link_without_scheme, placement, relative_time, toggle, Bounds,
-    Toggle, TrayRect, COPIED_FOR, MAX_RECENT,
+    format_duration, format_size, link_without_scheme, placement, relative_time, shrink_first,
+    toggle, Bounds, Toggle, TrayRect, COPIED_FOR, MAX_RECENT,
 };
 use crate::{PanelRecent, PanelState, PanelUpload, QuickPanelWindow, Tokens};
 
@@ -148,10 +148,10 @@ fn place() {
         let scale = open.monitor.map_or(current, |monitor| monitor.scale);
         let width = logical_width * scale;
         let height = logical_height * scale;
-        window.set_size(slint::PhysicalSize::new(
+        let target = (
             round(width).max(1).unsigned_abs(),
             round(height).max(1).unsigned_abs(),
-        ));
+        );
         let (x, y) = match open.monitor {
             Some(monitor) => {
                 let (bx, by, bw, bh) = monitor.bounds;
@@ -166,7 +166,15 @@ fn place() {
             }
             None => (open.anchor.x, open.anchor.y),
         };
+        let live = window.size();
+        let first = shrink_first((live.width, live.height), target);
+        if first != (live.width, live.height) {
+            window.set_size(slint::PhysicalSize::new(first.0, first.1));
+        }
         window.set_position(slint::PhysicalPosition::new(round(x), round(y)));
+        if first != target {
+            window.set_size(slint::PhysicalSize::new(target.0, target.1));
+        }
     });
 }
 
