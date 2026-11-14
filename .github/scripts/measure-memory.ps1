@@ -58,17 +58,60 @@ function Sample($procId) {
     }
 }
 
-function Visible-Windows($procId) {
-    @(Get-Process -Id $procId -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })
+Add-Type @"
+using System; using System.Collections.Generic; using System.Runtime.InteropServices; using System.Text;
+public static class Wnd {
+  delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc p, IntPtr l);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public static List<IntPtr> Visible(uint pid) {
+    var found = new List<IntPtr>();
+    EnumWindows((h, l) => { uint p; GetWindowThreadProcessId(h, out p); if (p == pid && IsWindowVisible(h)) found.Add(h); return true; }, IntPtr.Zero);
+    return found;
+  }
+  public static string Describe(IntPtr h) {
+    var t = new StringBuilder(256); var c = new StringBuilder(256);
+    GetWindowText(h, t, 256); GetClassName(h, c, 256);
+    return c + " '" + t + "'";
+  }
+  public static void Close(IntPtr h) { PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero); }
 }
+"@
+
+function Visible-Windows($procId) { @([Wnd]::Visible([uint32]$procId)) }
 
 function Wait-Windows($procId, [bool]$want, $timeoutSec) {
     $end = (Get-Date).AddSeconds($timeoutSec)
     while ((Get-Date) -lt $end) {
-        if ((Visible-Windows $procId).Count -gt 0 -eq $want) { return $true }
+        $has = (Visible-Windows $procId).Count -gt 0
+        if ($has -eq $want) { return $true }
         Start-Sleep -Milliseconds 250
     }
     return $false
+}
+
+function Log-Windows($procId, $label) {
+    $w = Visible-Windows $procId
+    Log ("{0}: {1} visible window(s): {2}" -f $label, $w.Count, (($w | ForEach-Object { [Wnd]::Describe($_) }) -join "; "))
+}
+
+function Close-Windows($procId) { foreach ($h in (Visible-Windows $procId)) { [Wnd]::Close($h) } }
+
+function Shot($name) {
+    try {
+        Add-Type -AssemblyName System.Drawing
+        $b = [Windows.Forms.SystemInformation]::VirtualScreen
+        $bmp = New-Object Drawing.Bitmap $b.Width, $b.Height
+        $g = [Drawing.Graphics]::FromImage($bmp)
+        $g.CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size)
+        $dir = Split-Path -Parent $Out
+        $bmp.Save((Join-Path $dir "memory-$name.png"), [Drawing.Imaging.ImageFormat]::Png)
+        $g.Dispose(); $bmp.Dispose()
+    } catch { Log "screenshot failed: $_" }
 }
 
 $stages = [ordered]@{}
@@ -81,26 +124,36 @@ try {
     $stages["idle"] = Sample $proc.Id
     Log "idle: $($stages['idle'].private_ws)"
 
+    Log-Windows $proc.Id "before opening anything"
     Start-Process $app -ArgumentList "--budget-open", "main" | Out-Null
     if (-not (Wait-Windows $proc.Id $true 30)) { $notes += "main window did not appear" }
     Start-Sleep -Seconds 3
+    Log-Windows $proc.Id "main open"
+    Shot "main-open"
     $stages["main_open"] = Sample $proc.Id
     Log "main_open: $($stages['main_open'].private_ws)"
 
-    $null = (Get-Process -Id $proc.Id).CloseMainWindow()
+    Close-Windows $proc.Id
     if (-not (Wait-Windows $proc.Id $false 15)) { $notes += "main window did not close" }
     Start-Sleep -Seconds 5
+    Log-Windows $proc.Id "main closed"
     $stages["main_closed"] = Sample $proc.Id
     Log "main_closed: $($stages['main_closed'].private_ws)"
 
     Start-Process $app -ArgumentList "--action", "capture_region" | Out-Null
     if (Wait-Windows $proc.Id $true 15) {
         Start-Sleep -Seconds 2
+        Log-Windows $proc.Id "overlay open"
+        Shot "overlay-open"
         $stages["overlay"] = Sample $proc.Id
         Log "overlay: $($stages['overlay'].private_ws)"
-        [Windows.Forms.SendKeys]::SendWait("{ESC}")
-        if (-not (Wait-Windows $proc.Id $false 15)) { $notes += "overlay did not close on Esc" }
+        Close-Windows $proc.Id
+        if (-not (Wait-Windows $proc.Id $false 15)) {
+            [Windows.Forms.SendKeys]::SendWait("{ESC}")
+            if (-not (Wait-Windows $proc.Id $false 10)) { $notes += "overlay did not close" }
+        }
         Start-Sleep -Seconds 5
+        Log-Windows $proc.Id "overlay closed"
         $stages["overlay_closed"] = Sample $proc.Id
         Log "overlay_closed: $($stages['overlay_closed'].private_ws)"
     } else {
