@@ -239,6 +239,10 @@ try {
     } else {
         $notes += "capture overlay did not appear"
         Log-Windows $proc.Id "after capture_region"
+        foreach ($sp in (Get-CimInstance Win32_Process -Filter "Name='snapline.exe'")) {
+            Log ("snapline process {0} (parent {1}, started {2}): {3}" -f $sp.ProcessId, $sp.ParentProcessId, $sp.CreationDate.ToString("HH:mm:ss.fff"), $sp.CommandLine)
+            Log-Windows $sp.ProcessId "  windows of $($sp.ProcessId)"
+        }
         Shot "overlay-missing"
         $logs = Join-Path $env:LOCALAPPDATA "SnapLine\logs"
         $newest = Get-ChildItem $logs -Filter *.log -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
